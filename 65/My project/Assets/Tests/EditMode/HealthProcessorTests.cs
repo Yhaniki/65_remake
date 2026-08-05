@@ -82,7 +82,8 @@ namespace Sdo.Tests
             Assert.IsTrue(h.IsFailed);
         }
 
-        // Without the latch (normal mode) the old behaviour is untouched: HP recovers off the floor.
+        // Without the latch, HP recovers off the floor. (ScreenGameplay always passes lockOnDeath: true now —
+        // HP-out no longer necessarily ends the run — but the un-latched behaviour is still the class default.)
         [Test]
         public void Without_LockOnDeath_Hp_Recovers_From_Floor()
         {

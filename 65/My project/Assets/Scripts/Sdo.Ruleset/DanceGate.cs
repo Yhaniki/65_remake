@@ -58,15 +58,16 @@ namespace Sdo.Ruleset
         /// <summary>
         /// 舞者這一幀到底跳不跳(ScreenGameplay 的 <c>DanceEnabled</c> / <c>RecordGate</c> 同用這條)。
         /// 在 <see cref="NextState"/> 的結果之上再加兩道停舞:
-        ///   • <paramref name="failed"/>＝一般模式 HP 歸零(遊戲立刻中斷進 GAME OVER);
-        ///   • <paramref name="hpDead"/>＝這局死過(完奏模式歌不切斷,但血用完就回待機站到曲末)。
+        ///   • <paramref name="failed"/>＝已經出局(遊玩中斷、切 GAME OVER 結算。血空**不一定**當場出局 ——
+        ///     連線時要等房裡其他人也倒下,見 <see cref="GameOverGate.EliminatedNow"/>);
+        ///   • <paramref name="hpDead"/>＝這局死過(歌還沒切斷,但血用完就回待機站著)。
         /// <paramref name="ignoreMiss"/> 開著時**血量完全不管**(優先權最大):死了照跳。
         /// </summary>
         public static bool Enabled(bool dancing, bool failed, bool hpDead, bool ignoreMiss)
         {
             if (!dancing) return false;
-            if (failed) return false;                    // 一般模式死亡＝遊戲已中斷,畫面切走,不是「繼續跳舞」的情境
-            return !hpDead || ignoreMiss;                // 完奏模式死亡:預設停舞;opt_danceIgnoreMiss 開著則照跳
+            if (failed) return false;                    // 已經出局＝遊玩中斷,不是「繼續跳舞」的情境
+            return !hpDead || ignoreMiss;                // 死過但還在打(完奏 / 等房裡的人打完):預設停舞;opt_danceIgnoreMiss 開著則照跳
         }
 
         // ---- 遠端推導 ----------------------------------------------------------------------------------

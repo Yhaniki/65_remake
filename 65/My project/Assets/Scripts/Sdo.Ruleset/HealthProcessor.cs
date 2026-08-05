@@ -51,9 +51,10 @@ namespace Sdo.Ruleset
         /// <param name="level">System health level 0/1/2 (DAT_00674f04+0x75). Clamped.</param>
         /// <param name="invincible">player[0x9d] flag: HP changes disabled when set.</param>
         /// <param name="lockOnDeath">
-        /// 完奏模式 (ScreenGameplay.playFullSong): the song does not end on HP-out, so HP would otherwise be
-        /// healed back up by the combo that follows. Latch it instead — once HP hits the floor it stays there
-        /// for the rest of the song and no judgment moves it again.
+        /// HP-out does not necessarily end the run — the player keeps playing (完奏模式 to the song's end;
+        /// 一般模式 online until everyone in the room is down, see <see cref="GameOverGate.EliminatedNow"/>),
+        /// so HP would otherwise be healed back up by the combo that follows. Latch it instead — once HP hits
+        /// the floor it stays there for the rest of the song and no judgment moves it again.
         /// </param>
         public HealthProcessor(int level = 0, bool invincible = false, bool lockOnDeath = false)
         {

@@ -583,6 +583,33 @@ namespace Sdo.Game
             return false;
         }
 
+        /// <summary>
+        /// 房裡還有**別人**在打嗎(死了 / 中離的都不算)。本機血條見底之後靠它決定「還要不要繼續打」
+        /// (見 <see cref="Sdo.Ruleset.GameOverGate.EliminatedNow"/>)。
+        ///
+        /// 🔴 名單以 <see cref="netDancers"/>(這一場的參賽者)為準,**不是分數流**:還沒送出第一筆
+        /// frame 的人在分數流裡根本不存在,拿分數流當名單的話「大家都死光了」會在開跳第一秒就成立,
+        /// 等於這條規則沒寫。<c>DeadRemote</c>/<c>LeftRemote</c> 查不到人時回 false(= 當他活著),
+        /// 正好是這裡要的保守方向。
+        ///
+        /// 離線 / 量測 / mockOpponents(沒有 netDancers)一律 false —— 那條路上沒有真對手,
+        /// 血空照舊當場出局。旁觀者本機索引是 -1,整個名單都算「別人」,也正確。
+        /// </summary>
+        private bool AnyOpponentStillPlaying()
+        {
+            if (netDancers == null || netDancers.Length == 0) return false;
+            var opp = NetOpponents != null ? NetOpponents() : null;
+            int local = LocalDancerSlotIndex;
+            for (int i = 0; i < netDancers.Length; i++)
+            {
+                if (i == local) continue;
+                int uid = netDancers[i].UserId;
+                if (Sdo.Ruleset.GameOverGate.RemoteStillPlaying(DeadRemote(opp, uid), LeftRemote(opp, uid)))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>他人已經不在這一場了嗎(中途 Esc 回房間 / 斷線)。找不到的處理同上。</summary>
         private static bool LeftRemote(NetPlayerScore[] opp, int userId)
         {

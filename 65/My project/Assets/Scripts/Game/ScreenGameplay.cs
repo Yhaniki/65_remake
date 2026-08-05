@@ -377,8 +377,10 @@ namespace Sdo.Game
         private AudioClip _ambientClip;          // loaded ambient clip (null = this scene has no ambience)
         private float _nextAmbientAt = -1f;      // realtime when the next ambient one-shot may fire (<0 = not armed yet)
         private bool _started, _failed, _ended;
-        // HP 曾經歸零(一次性 latch,整首不再清除)。_failed = 「立刻中斷遊玩」,完奏模式不會設;_hpDead = 「這局死過」,
-        // 兩種模式都會設 —— 結算的 GAME OVER / 評分 F 看的是它,完奏模式打完整首照樣算輸。見 Update 的 HP-out 段。
+        // HP 曾經歸零(一次性 latch,整首不再清除)。_failed = 「出局:停止遊玩,這一幀切結算」;_hpDead = 「這局死過」,
+        // 結算的 GAME OVER / 評分 F 看的是它,打完整首照樣算輸。見 Update 的 HP-out 段。
+        // ⚠️ _hpDead 不等於 _failed:完奏模式永遠不中途出局;一般模式連線時,房裡還有人在打就照樣繼續打
+        //    (分數凍結、HP 鎖底、舞者停舞),等最後一個人也倒下才 _failed(見 Sdo.Ruleset.GameOverGate)。
         private bool _hpDead;
         private double _songStartDspTime, _clockStart = -1;
         // The chart's music-start offset (type-10 音樂起止 marker) in seconds — the silent count-in the notes
@@ -1345,8 +1347,10 @@ namespace Sdo.Game
             AudioSettings.OnAudioConfigurationChanged += OnAudioConfigChanged;   // 換音訊裝置 → buffer/取樣率變 → 重量
             ApplyClockOffset();   // 全域 offset（這台機器的延遲）− 輸出延遲（讓時鐘＝正在出喇叭的位置，同 StepMania）
             _score = new ScoreProcessor(_map.TotalNotes);
-            // 完奏模式：HP 歸零不結束歌曲(見 Update 的 IsFailed 判定) → HP 必須鎖死在地板，否則後面的 combo 會把血補回來。
-            _health = new HealthProcessor(healthLevel, lockOnDeath: playFullSong);
+            // HP 歸零之後**還會繼續打**(完奏模式打到曲末;一般模式在連線時要打到房裡所有人都倒下 ——
+            // 見 Update 的 GameOverGate.EliminatedNow) → HP 必須鎖死在地板，否則後面的 combo 會把血補回來。
+            // 一般模式單人時死掉當場就出局、不再判定，這個 latch 對那條路是 no-op。
+            _health = new HealthProcessor(healthLevel, lockOnDeath: true);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
             _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // clear the auto→manual handoff latches
             _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;   // gauge positions re-init empty
@@ -5524,39 +5528,43 @@ namespace Sdo.Game
             UpdateFx(); UpdateHud();
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
             // HP-out; it only ends naturally at the song's end (below).
-            // HP-out (一次性 latch _hpDead):
-            //   • 一般模式:立刻 _failed —— 判定/舞蹈凍結,馬上切進 GAME OVER 結算。
-            //   • 完奏模式(playFullSong):歌不切斷,整首照打到曲末 —— 但「死了就是死了」:
-            //       (1) 分數就地凍結 (ScoreProcessor.FreezeScore) —— 之後打再好都不再加分;
-            //       (2) P/C/B/M 判定統計、combo、特效照常繼續累計(結算的判定數是整首的);
-            //       (3) HP 鎖在地板 (HealthProcessor lockOnDeath),不會被後面的 combo 補回來;
-            //       (4) 舞者停舞 —— 血用完就不能繼續跳舞,回待機站著到曲末(DanceEnabled 看 _hpDead);
-            //       (5) 曲末結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
+            // HP-out (一次性 latch _hpDead) —— 「死了就是死了」,兩種模式一律:
+            //   (1) 分數就地凍結 (ScoreProcessor.FreezeScore) —— 之後打再好都不再加分;
+            //   (2) P/C/B/M 判定統計、combo、特效照常繼續累計(結算的判定數是整首的);
+            //   (3) HP 鎖在地板 (HealthProcessor lockOnDeath),不會被後面的 combo 補回來;
+            //   (4) 舞者停舞 —— 血用完就不能繼續跳舞,回待機站著(DanceEnabled 看 _hpDead);
+            //   (5) 結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
             if (!showtimeMode && !_hpDead && _health != null && _health.IsFailed)
             {
                 _hpDead = true;
-                if (playFullSong) _score?.FreezeScore();
-                else _failed = true;
+                _score?.FreezeScore();
             }
-            // 結束判定:等「音樂播完」再 +1 秒才進結算動作,但加 10 秒上限避免長尾奏/長音檔等太久。
-            //   notesEndMs = 最後一顆音符;musicEndMs = 音檔播完的譜面時間 (MusicCountInSec + clip.length)×1000
-            //   (clip 起播被 offset 跳過一段不影響終點,終點恆為 clip.length)。
-            //   • 音檔在最後音符後 10 秒內會結束 → 以「音檔結束」為基準(等音樂放完)。
-            //   • 音檔 10 秒內不會結束(尾奏過長/音檔比譜面長很多) → 以「最後音符」為基準,不苦等尾奏。
-            //   • 沒有音檔(觀察/爆發模式)或音檔比音符短 → 一律用最後音符。
-            //   兩種基準最後都再 +1 秒緩衝才 EnterResult(音樂/最後音符播完後的定格前置)。
+            // 出局(_failed = 停止遊玩 → 這一幀就切 GAME OVER 結算)。
+            //
+            // 🔴 血空 ≠ 當場出局:**房裡只要還有人在打,自己就照完奏模式繼續打下去**(音符照捲、照判定、
+            //    分數凍結),等到最後一個人也倒下的那一幀才出局。歌先播完的話走下面的曲末出口,一樣是
+            //    GAME OVER 結算。完奏模式永不出局(整首打到底),離線/單人沒有別人 → 血空當場出局(行為不變)。
+            //    (`_hpDead &&` 只是短路:還活著的人不必每幀去算一次對手名單 —— 規則本身在 EliminatedNow。)
+            if (!showtimeMode && !_failed && _hpDead
+                && Sdo.Ruleset.GameOverGate.EliminatedNow(_hpDead, playFullSong, AnyOpponentStillPlaying()))
+                _failed = true;
+            // 結束判定 → Sdo.Ruleset.SongEndGate(規則與理由都在那邊,這裡只餵資料、套結果)。
+            //   notesEndMs  = 最後一顆音符(長條算尾巴);
+            //   audibleEnd  = 最後還聽得到聲音的譜面時間 = max(音檔播完, 虛擬 keysound 的最後一顆自動樣本)。
+            //                 音檔播完 = (MusicCountInSec + clip.length)×1000(clip 起播被 offset 跳過一段不
+            //                 影響終點,終點恆為 clip.length)。
+            //   • 尾巴 ≤ 4 秒(音檔跟著譜一起收)→ 等音樂播完 +1 秒,原音量到底。
+            //   • 尾巴 > 4 秒(osu 多曲包那種「譜只鋪半首」)→ 從譜末淡出 4 秒再進結算,不再一刀切。
             double notesEndMs = _totalMs;
-            double baseEndMs = notesEndMs;
-            // A virtual keysound map has no backing clip; its automatic samples are the song. Honour their final
-            // audible tail under the same 10-second outro cap used for ordinary backing audio.
-            if (_osuTimelineEndMs > notesEndMs && _osuTimelineEndMs <= notesEndMs + 10000.0) baseEndMs = _osuTimelineEndMs;
+            double audibleEndMs = _osuTimelineEndMs;
             if (_audio != null && _audio.clip != null)
-            {
-                double musicEndMs = (MusicCountInSec + _audio.clip.length) * 1000.0;
-                if (musicEndMs > notesEndMs && musicEndMs <= notesEndMs + 10000.0)
-                    baseEndMs = Math.Max(baseEndMs, musicEndMs);
-            }
-            if (!_ended && (_failed || now > baseEndMs + 1000)) { _ended = true; EnterResult(); }
+                audibleEndMs = Math.Max(audibleEndMs, (MusicCountInSec + _audio.clip.length) * 1000.0);
+            var endPlan = Sdo.Ruleset.SongEndGate.For(notesEndMs, audibleEndMs);
+            // 淡出只在「長尾奏」那條路上會動(FadesOut=false 時 VolumeAt 恆為 1)。乘在使用者的音樂音量上,
+            // 不是取代它 —— 直接寫 1f 會把音量設定在最後 4 秒整個蓋掉。
+            if (endPlan.FadesOut && _audio != null && _audio.clip != null)
+                _audio.volume = AudioMix.Music * (float)endPlan.VolumeAt(now);
+            if (!_ended && (_failed || endPlan.EndedAt(now))) { _ended = true; EnterResult(); }
         }
 
         // Song finished (or HP-out): freeze gameplay, hide the note board, play the win/lose 定格 pose on the
@@ -5591,8 +5599,8 @@ namespace Sdo.Game
             if (_gameOver)
             {
                 // 血條用完死掉 (HP-out): 不放結束勝利/失敗的定格動作與 FINISHED effect;改播死亡字幕 GAME OVER (置中) +
-                // Frameextrude 音效。多人時只有「全員陣亡」才走這條;只要有人沒死,倖存者在歌曲結束照走原本輸贏流程 —
-                // 本重製為單人(mock 對手無 HP、不會死),故 _failed(本人陣亡)== 全員陣亡。
+                // Frameextrude 音效。**出局的那一幀一定走到這裡** —— 「什麼時候才算出局」由 Update 的
+                // GameOverGate.EliminatedNow 決定(一般模式要等房裡所有人都倒下,或歌自然播完)。
                 PlaySe("Frameextrude");
                 LoadGameOverFrames();                             // 依當前 note skin 選對應的 GAMEOVER 圖 (per-skin)
                 StartCoroutine(GameOverAnim());
