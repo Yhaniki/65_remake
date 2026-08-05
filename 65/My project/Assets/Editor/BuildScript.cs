@@ -57,6 +57,16 @@ public static class BuildScript
         "Sdo/SpritePremultiply",     // result YOU WIN/LOSE banner: premult-alpha so bilinear MAGNIFICATION has no 白邊
                                      // halo; stripped -> Shader.Find null -> banner falls back to straight-alpha (halo returns)
         "Sdo/MmdModel",              // MMD-avatar base+sphere+toon+outline; stripped -> Miku falls back to Unlit (no fx)
+
+        // lilToon (Assets/lilToon, MIT) — MMD 身體的第二種著色後端 (config.ini [Mmd] mmdLilToon)。同樣只在執行期
+        // 用 Shader.Find 取,而且是六支:不透明/裁切/透明 × 有無描邊,lilToon 把它們拆成各自的 shader。
+        // 被剝掉 -> MmdAvatar 退回 Sdo/MmdModel(畫面還在,但開關等於沒作用)。名稱見 MmdLilToon 的常數。
+        "lilToon",
+        "Hidden/lilToonOutline",
+        "Hidden/lilToonCutout",
+        "Hidden/lilToonCutoutOutline",
+        "Hidden/lilToonTransparent",
+        "Hidden/lilToonTransparentOutline",
     };
 
     public static void BuildWindows()

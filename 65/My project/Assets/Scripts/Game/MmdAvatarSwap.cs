@@ -110,6 +110,9 @@ namespace Sdo.Game
             catch { }
 
             if (cli && RoomConfig.IsMmdNone(RoomConfig.mmdModel)) RoomConfig.mmdModel = want ?? "";   // -mmd → 這次啟動就用選中的
+            // 著色後端要在 prewarm（＝第一次建共用材質）之前就定下來，不然預熱出來的是另一個後端的材質，
+            // 第一隻角色一上場就得整批重建 —— 預熱等於白做。
+            MmdAvatar.UseLilToon = RoomConfig.mmdLilToon;
             Rescan(want ?? RoomConfig.mmdModel);
             if (want != null && Sel != null) RoomConfig.mmdModel = Sel.Name;   // -mmdmodel 也走設定值,之後的比對才不會一直當成「變了」
             inst._applied = Snapshot();
@@ -323,7 +326,7 @@ namespace Sdo.Game
         // 12 個欄位的比對比任何一種通知機制都便宜，而且手改 config.ini 之後重讀也同樣會生效。
         private struct Snap
         {
-            public bool ShowOthers, Toon, Outline, Sphere, Physics, Aim, RootMove, FlipV;
+            public bool ShowOthers, Toon, Outline, Sphere, Physics, Aim, RootMove, FlipV, LilToon;
             public string Model;
             public float Grav, Stiff, Col, Scale;
         }
@@ -331,7 +334,7 @@ namespace Sdo.Game
 
         private static Snap Snapshot() => new Snap
         {
-            Model = RoomConfig.mmdModel ?? "", ShowOthers = RoomConfig.mmdShowOthers,
+            Model = RoomConfig.mmdModel ?? "", ShowOthers = RoomConfig.mmdShowOthers, LilToon = RoomConfig.mmdLilToon,
             Toon = RoomConfig.mmdToon, Outline = RoomConfig.mmdOutline, Sphere = RoomConfig.mmdSphere,
             Physics = RoomConfig.mmdPhysics, Aim = RoomConfig.mmdAim, RootMove = RoomConfig.mmdRootMotion,
             FlipV = RoomConfig.mmdFlipV,
@@ -365,6 +368,15 @@ namespace Sdo.Game
                 _applied = now;
                 Log($"[mmd] 看別人的 MMD → {(now.ShowOthers ? "開" : "關")}");
                 RebuildWhere(r => r.Remote);
+            }
+            else if (now.LilToon != _applied.LilToon)
+            {
+                // 換著色後端＝整批材質重建（材質是整個模型共用的，見 MmdAvatar.GetShared 的快取比對）。
+                // 這是本機的顯示設定，所以連遠端角色也一起換 —— 我畫面上的每一隻都該長一樣。
+                _applied = now;
+                MmdAvatar.UseLilToon = now.LilToon;
+                Log($"[mmd] 著色後端 → {(now.LilToon ? "lilToon（cel 陰影＋邊緣光）" : "Sdo/MmdModel（MMD 原本的畫法）")}");
+                RebuildWhere(null);
             }
             else if (!Mathf.Approximately(now.Scale, _applied.Scale))
             {

@@ -136,6 +136,10 @@ namespace Sdo.Settings
         // 這是兩件事：我想不想變成 MMD、我想不想看到別人的 MMD。關掉 → 別人一律是他的 SDO 穿搭，
         // 而且完全不會去下載別人的模型（零流量、零磁碟）。
         public static bool mmdShowOthers = true;
+        // 著色後端：關(預設)＝Sdo/MmdModel，MMD 固定管線的忠實移植（unlit、ramp 直接貼、鉛筆描邊）；
+        // 開＝lilToon（Assets/lilToon，MIT），兩段式 cel 陰影＋邊緣光＋吃光照的描邊，也就是「原神那一類」的取向。
+        // 換值要重建身體（材質是整個模型共用的），由 MmdAvatarSwap 處理。
+        public static bool mmdLilToon = false;
         public static bool mmdToon = true;          // 卡通著色（toon ramp）
         public static bool mmdOutline = true;       // 描邊（pencil edge）
         public static bool mmdSphere = true;        // sphere 反光貼圖
@@ -568,6 +572,7 @@ namespace Sdo.Settings
                     case "mmdEnabled": legacyMmdEnabled = ParseBool(val, legacyMmdEnabled); hasMmdEnabledKey = true; break;
                     case "mmdModel": mmdModel = val; break;
                     case "mmdShowOthers": mmdShowOthers = ParseBool(val, mmdShowOthers); break;
+                    case "mmdLilToon": mmdLilToon = ParseBool(val, mmdLilToon); break;
                     case "mmdToon": mmdToon = ParseBool(val, mmdToon); break;
                     case "mmdOutline": mmdOutline = ParseBool(val, mmdOutline); break;
                     case "mmdSphere": mmdSphere = ParseBool(val, mmdSphere); break;
@@ -796,6 +801,7 @@ namespace Sdo.Settings
             sb.Append("# 而且完全不會去下載別人的模型（零流量、零磁碟）。\n");
             sb.Append("mmdShowOthers=").Append(B(mmdShowOthers)).Append('\n');
             sb.Append("# 著色（1=開 0=關）：卡通著色 / 描邊 / sphere 反光。\n");
+            sb.Append("mmdLilToon=").Append(B(mmdLilToon)).Append('\n');
             sb.Append("mmdToon=").Append(B(mmdToon)).Append('\n');
             sb.Append("mmdOutline=").Append(B(mmdOutline)).Append('\n');
             sb.Append("mmdSphere=").Append(B(mmdSphere)).Append('\n');

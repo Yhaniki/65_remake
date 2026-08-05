@@ -65,10 +65,21 @@ namespace Sdo.Game
             public readonly List<KeyValuePair<Material, float>> SphereMats = new List<KeyValuePair<Material, float>>();
             public readonly List<Material> ToonMats = new List<Material>();
             public readonly List<KeyValuePair<Material, float>> EdgeMats = new List<KeyValuePair<Material, float>>();
+            // 這批材質是哪個著色後端建的（見 UseLilToon），以及三個顯示開關在那個後端要寫哪個屬性 —— SetSphere/
+            // SetToon/SetOutline 因此完全不用知道後端是誰，只是把各自清單裡記著的「開啟時的值」寫回這個屬性。
+            public bool LilToon;
+            public string SphereProp = "_SphereMode", ToonProp = "_UseToon", EdgeProp = "_EdgeSize";
             public bool HasHead; public int HeadBone = -1; public Bounds HeadLocal; public Vector3 HeadRestPos;
         }
         private static readonly Dictionary<PmxLoader, Shared> _sharedByModel = new Dictionary<PmxLoader, Shared>();
         private Shared _sh;
+
+        /// <summary>
+        /// 用 <b>lilToon</b>（Assets/lilToon，MIT）當著色後端，而不是 <c>Sdo/MmdModel</c>（MMD 固定管線的忠實移植）。
+        /// 由 <c>MmdAvatarSwap</c> 從 config.ini <c>[Mmd] mmdLilToon</c> 設進來，換值要重建身體（材質是共用的，
+        /// 見 <see cref="GetShared"/> 的快取比對）。翻譯規則與差在哪見 <see cref="MmdLilToon"/>。
+        /// </summary>
+        public static bool UseLilToon { get; set; }
 
         private Transform _mmdRoot;
         private Transform[] _bone;
@@ -426,7 +437,7 @@ namespace Sdo.Game
         private static Shared GetShared(PmxLoader pmx, string textureDir)
         {
             if (_sharedByModel.TryGetValue(pmx, out var s) && s.Mesh != null && s.Materials != null &&
-                s.Materials.Length > 0 && s.Materials[0] != null)
+                s.Materials.Length > 0 && s.Materials[0] != null && s.LilToon == UseLilToon)
             {
                 LogMilestone($"[mmd] reusing the shared mesh/materials ({pmx.VertexCount} verts, {s.Materials.Length} mats) — not rebuilt");
                 return s;
@@ -533,6 +544,15 @@ namespace Sdo.Game
         // and since the materials are shared those writes land on the same materials for all of them.
         private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh)
         {
+            // 兩個著色後端共用這一整段：貼圖是同一批、alpha 分類是同一套、三個顯示開關記的也是同一份清單。
+            // 分岔只在「拿哪支 shader、把這些值寫進哪些屬性」——見 MmdLilToon。
+            bool lil = UseLilToon;
+            sh.LilToon = lil;
+            sh.SphereProp = lil ? MmdLilToon.SphereProperty : "_SphereMode";
+            sh.ToonProp = lil ? MmdLilToon.ToonProperty : "_UseToon";
+            sh.EdgeProp = lil ? MmdLilToon.OutlineWidthProperty : "_EdgeSize";
+            if (lil) MmdKeyLight.Ensure();   // lilToon 吃光照，而這個專案本來一顆燈都沒有（其它東西全是 unlit）
+
             var shader = Shader.Find("Sdo/MmdModel") ?? Shader.Find("Unlit/Texture");
             var mats = new Material[pmx.Materials.Count];
             var _hide = sh.Hide = new bool[pmx.Materials.Count];
@@ -552,49 +572,93 @@ namespace Sdo.Game
                 if (tex != null) AlphaStats(tex, out midFrac, out holeFrac);
                 var renderMode = MmdMaterialClassifier.Classify(pm.Diffuse.a, midFrac, holeFrac, pm.DoubleSided);
 
-                var mat = new Material(shader) { name = pm.NameEn ?? pm.NameJp ?? ("mat" + i) };
-                // A PMX diffuse texture is optional. White preserves the authored diffuse colour while keeping the same
-                // cull/alpha/sphere/toon/edge path; a referenced-but-missing file uses the same visible fallback.
-                mat.SetTexture("_MainTex", tex ?? Texture2D.whiteTexture);
-                mat.SetColor("_Color", pm.Diffuse);
-                mat.SetFloat("_Cull", pm.DoubleSided ? 0f : 2f);           // Off : Back
-                mat.SetFloat("_Cutoff", 0.5f);
-                MmdMaterialClassifier.Apply(mat, renderMode);
-
                 // sphere map (matcap): the MMD "shine" — eyes/skin/metal. Sampled by view normal, so NOT UV-flipped.
-                float sphereMode = 0f;
+                Texture2D sphereTex = null; float sphereMode = 0f;
                 if ((pm.SphereMode == 1 || pm.SphereMode == 2) && pm.SphereIndex >= 0 && pm.SphereIndex < pmx.TexturePaths.Length)
                 {
-                    var sph = LoadTexture(dir, pmx.TexturePaths[pm.SphereIndex]);
-                    if (sph != null) { mat.SetTexture("_SphereTex", sph); sphereMode = pm.SphereMode; sh.SphereMats.Add(new KeyValuePair<Material, float>(mat, sphereMode)); }
+                    sphereTex = LoadTexture(dir, pmx.TexturePaths[pm.SphereIndex]);
+                    if (sphereTex != null) sphereMode = pm.SphereMode;
                 }
-                mat.SetFloat("_SphereMode", sphereMode);
 
                 // toon ramp (cel shading): a vertical light→shadow gradient sampled by N·L. Either a per-material toon
                 // TEXTURE (ToonIndex) or a built-in SHARED toon (ToonShared 0..9) → a synthesized 2-tone ramp fallback.
                 Texture2D toon = pm.ToonIndex >= 0 && pm.ToonIndex < pmx.TexturePaths.Length ? LoadTexture(dir, pmx.TexturePaths[pm.ToonIndex]) : null;
                 if (toon == null && pm.ToonShared >= 0) toon = DefaultToonRamp();
                 bool hasToon = toon != null;
-                if (hasToon) { toon.wrapMode = TextureWrapMode.Clamp; mat.SetTexture("_ToonTex", toon); sh.ToonMats.Add(mat); }
-                mat.SetFloat("_UseToon", hasToon ? 1f : 0f);
+                if (hasToon) toon.wrapMode = TextureWrapMode.Clamp;
 
                 // pencil outline: only edge-flagged materials get a non-zero edge size.
-                mat.SetColor("_EdgeColor", pm.EdgeColor);
-                // The current outline pass is opaque and writes depth. Disable it for blended surfaces so translucent
+                // The MMD outline pass is opaque and writes depth. Disable it for blended surfaces so translucent
                 // cloth does not acquire an opaque black/depth hull; cutout and opaque outlines remain unchanged.
                 bool hasEdge = pm.HasEdge && renderMode != MmdMaterialRenderMode.Blend;
-                if (hasEdge) sh.EdgeMats.Add(new KeyValuePair<Material, float>(mat, pm.EdgeSize));
-                mat.SetFloat("_EdgeSize", hasEdge ? pm.EdgeSize : 0f);
+
+                Material mat;
+                string matName = pm.NameEn ?? pm.NameJp ?? ("mat" + i);
+                if (lil)
+                {
+                    // lilToon 把「不透明/裁切/透明 × 有無描邊」拆成各自的 shader（描邊是多一個 pass），所以這裡選 shader
+                    // 就等於選了那兩件事。找不到（lilToon 沒裝 / build 把它剝掉了）就退回 MMD 那份，畫面還在。
+                    var ls = FindShader(MmdLilToon.ShaderNameFor(renderMode, hasEdge));
+                    mat = new Material(ls ?? shader) { name = matName };
+                    if (ls != null)
+                        MmdLilToon.Configure(mat, tex ?? Texture2D.whiteTexture, pm.Diffuse, pm.DoubleSided, renderMode,
+                                             sphereTex, (int)sphereMode, toon, pm.EdgeColor, hasEdge ? pm.EdgeSize : 0f);
+                    else
+                        ConfigureMmd(mat, tex, pm, renderMode, sphereTex, sphereMode, toon, hasEdge);
+                }
+                else
+                {
+                    mat = new Material(shader) { name = matName };
+                    ConfigureMmd(mat, tex, pm, renderMode, sphereTex, sphereMode, toon, hasEdge);
+                }
+
+                // 三個顯示開關記的是「打開時要寫回去的值」。後端不同、屬性不同、值也不同（lilToon 的 matcap 是
+                // 開/關而不是乘/加，描邊是它自己的 0~1 刻度），但 SetSphere/SetToon/SetOutline 一律只寫 sh.*Prop。
+                if (sphereMode > 0f) sh.SphereMats.Add(new KeyValuePair<Material, float>(mat, lil ? 1f : sphereMode));
+                if (hasToon) sh.ToonMats.Add(mat);
+                if (hasEdge) sh.EdgeMats.Add(new KeyValuePair<Material, float>(mat, lil ? MmdLilToon.OutlineWidth(pm.EdgeSize) : pm.EdgeSize));
 
                 mats[i] = mat;
                 string baseTexLabel = texName != null ? Path.GetFileName(texName) : "(none)";
-                SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{baseTexLabel}' {renderMode.ToString().ToUpperInvariant()}{(missingBaseTexture ? " FALLBACK-colour" : "")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}{(hasToon ? " +toon" : "")}{(hasEdge ? " +edge" : "")}");
+                SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{baseTexLabel}' {renderMode.ToString().ToUpperInvariant()}{(missingBaseTexture ? " FALLBACK-colour" : "")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}{(hasToon ? " +toon" : "")}{(hasEdge ? " +edge" : "")}{(lil ? " [lilToon]" : "")}");
             }
             return mats;
         }
 
+        /// <summary>Sdo/MmdModel 那一份的屬性寫入（MMD 固定管線的忠實移植）。</summary>
+        private static void ConfigureMmd(Material mat, Texture2D tex, PmxLoader.Material pm, MmdMaterialRenderMode renderMode,
+                                         Texture2D sphereTex, float sphereMode, Texture2D toon, bool hasEdge)
+        {
+            // A PMX diffuse texture is optional. White preserves the authored diffuse colour while keeping the same
+            // cull/alpha/sphere/toon/edge path; a referenced-but-missing file uses the same visible fallback.
+            mat.SetTexture("_MainTex", tex ?? Texture2D.whiteTexture);
+            mat.SetColor("_Color", pm.Diffuse);
+            mat.SetFloat("_Cull", pm.DoubleSided ? 0f : 2f);           // Off : Back
+            mat.SetFloat("_Cutoff", 0.5f);
+            MmdMaterialClassifier.Apply(mat, renderMode);
+
+            if (sphereTex != null) mat.SetTexture("_SphereTex", sphereTex);
+            mat.SetFloat("_SphereMode", sphereMode);
+
+            if (toon != null) mat.SetTexture("_ToonTex", toon);
+            mat.SetFloat("_UseToon", toon != null ? 1f : 0f);
+
+            mat.SetColor("_EdgeColor", pm.EdgeColor);
+            mat.SetFloat("_EdgeSize", hasEdge ? pm.EdgeSize : 0f);
+        }
+
+        // Shader.Find 每次都掃一遍全域 shader 表，而這裡是每個材質問一次（初音 53 個）→ 記起來。
+        private static readonly Dictionary<string, Shader> _shaderCache = new Dictionary<string, Shader>();
+        private static Shader FindShader(string name)
+        {
+            if (_shaderCache.TryGetValue(name, out var s) && s != null) return s;
+            s = Shader.Find(name);
+            _shaderCache[name] = s;
+            return s;
+        }
+
         /// <summary>Live toggle: turn all sphere maps on/off (restores each material's authored sphere mode).</summary>
-        public void SetSphere(bool on) { ShowSphere = on; if (_sh == null) return; foreach (var kv in _sh.SphereMats) if (kv.Key != null) kv.Key.SetFloat("_SphereMode", on ? kv.Value : 0f); }
+        public void SetSphere(bool on) { ShowSphere = on; if (_sh == null) return; foreach (var kv in _sh.SphereMats) if (kv.Key != null) kv.Key.SetFloat(_sh.SphereProp, on ? kv.Value : 0f); }
 
         /// <summary>Live toggle: flip the mesh UV V (find the atlas-correct orientation without a recompile).</summary>
         public void SetFlipV(bool on)
@@ -606,7 +670,7 @@ namespace Sdo.Game
         }
 
         /// <summary>Live toggle: cel-shading toon ramp on/off.</summary>
-        public void SetToon(bool on) { ShowToon = on; if (_sh == null) return; foreach (var m in _sh.ToonMats) if (m != null) m.SetFloat("_UseToon", on ? 1f : 0f); }
+        public void SetToon(bool on) { ShowToon = on; if (_sh == null) return; foreach (var m in _sh.ToonMats) if (m != null) m.SetFloat(_sh.ToonProp, on ? 1f : 0f); }
 
         // Synthesized shared-toon ramp (shadow at V=0 → lit at V=1) for materials that reference a built-in MMD toon
         // (toon01..toon10) we don't bundle. Cached; the shader samples it at (0.5, N·L) so lit=top, shadow=bottom.
@@ -624,7 +688,7 @@ namespace Sdo.Game
         }
 
         /// <summary>Live toggle: pencil outline on/off (restores each material's authored edge size).</summary>
-        public void SetOutline(bool on) { ShowOutline = on; if (_sh == null) return; foreach (var kv in _sh.EdgeMats) if (kv.Key != null) kv.Key.SetFloat("_EdgeSize", on ? kv.Value : 0f); }
+        public void SetOutline(bool on) { ShowOutline = on; if (_sh == null) return; foreach (var kv in _sh.EdgeMats) if (kv.Key != null) kv.Key.SetFloat(_sh.EdgeProp, on ? kv.Value : 0f); }
 
         /// <summary>Live toggle / tune of the hair-skirt spring-bone sway.</summary>
         public void SetPhysics(bool on) { _physicsOn = on; UpdateSpring(); }

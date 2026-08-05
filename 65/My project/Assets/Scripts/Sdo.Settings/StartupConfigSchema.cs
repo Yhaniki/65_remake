@@ -493,8 +493,18 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
+                Key = "mmdLilToon", Category = CatMmd, Label = "lilToon 卡通渲染", Kind = ConfigFieldKind.Toggle,
+                Help = "關(預設)＝照 MMD 原本的畫法（unlit、模型自帶的 toon ramp 直接貼、純色鉛筆描邊）。"
+                     + "開＝改用 lilToon 著色：兩段式 cel 陰影、邊緣光、描邊會跟著明暗變色，也就是「原神那一類」的取向。"
+                     + "★這是換一整套著色，不是加效果 —— 開/關會重建身體。"
+                     + "★注意 lilToon 吃光照，開了會自動補一顆平行光（其它東西全是 unlit，不受影響）。",
+                Get = () => B(RoomConfig.mmdLilToon), Set = v => RoomConfig.mmdLilToon = ParseBool(v),
+            });
+            f.Add(new ConfigField
+            {
                 Key = "mmdToon", Category = CatMmd, Label = "卡通著色", Kind = ConfigFieldKind.Toggle,
-                Help = "MMD 的 toon ramp（明暗只分兩段的卡通上色）。關＝一般平光。",
+                Help = "MMD 的 toon ramp（明暗只分兩段的卡通上色）。關＝一般平光。"
+                     + "★開著 lilToon 時這一格改成管 lilToon 的 cel 陰影（關＝沒有陰影分界，整片平光）。",
                 Get = () => B(RoomConfig.mmdToon), Set = v => RoomConfig.mmdToon = ParseBool(v),
             });
             f.Add(new ConfigField

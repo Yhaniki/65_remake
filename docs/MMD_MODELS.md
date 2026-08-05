@@ -32,6 +32,7 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 | `mmdShowOthers` | **看不看得到別人的 MMD 模型**(1=看,預設)。與上面那個互相獨立:可以自己維持 SDO 原角色卻看得到別人的 MMD,也可以反過來 |
 | `mmdPhysics` | 頭髮/裙擺布料模擬。**嫌進場慢就關這個** —— 布料是建一隻 MMD 角色最貴的一段 |
 | `mmdGravity` / `mmdStiffness` / `mmdColliderScale` | 布料手感:重力倍率 / 硬度 / 身體碰撞半徑倍率 |
+| `mmdLilToon` | **著色後端**:0(預設)= MMD 原本的畫法,1 = lilToon(cel 陰影 + 邊緣光)。見下面「著色後端」 |
 | `mmdToon` / `mmdOutline` / `mmdSphere` | 卡通著色 / 描邊 / sphere 反光 |
 | `mmdFlipV` | 貼圖 V 翻轉(某個模型貼圖上下顛倒時關掉) |
 | `mmdAim` / `mmdRootMotion` | 重定向方式 / 根骨位移(診斷用,平常都開著) |
@@ -43,6 +44,39 @@ assets/MODEL/<模型名>/textures/…       模型自己的 textures/Toon/Sph �
 
 > 改版前這一整組是遊戲裡一塊自己畫的 IMGUI 除錯面板(F7 切換 / F9 換模型 / F10 開關面板),值只活在記憶體、
 > 關掉遊戲就沒了。現在全部搬進設定面板 + `config.ini`,那三顆鍵與那塊面板都拿掉了。
+
+## 著色後端:MMD 原本的畫法 vs lilToon
+
+`config.ini [Mmd] mmdLilToon`(設定面板 MMD 分頁「lilToon 卡通渲染」)在兩套著色之間切。**這是換一整套,不是加效果** —— 開/關會重建身體(材質是整個模型共用的)。
+
+| | `mmdLilToon=0`(預設) | `mmdLilToon=1` |
+|---|---|---|
+| shader | `Sdo/MmdModel`(`Assets/Shaders/MmdModel.shader`) | lilToon(`Assets/lilToon`,MIT) |
+| 明暗 | unlit,模型自帶的 toon ramp 直接貼 | 兩段式 cel 陰影(border/blur 決定分界,不是貼 ramp) |
+| 描邊 | 純色鉛筆邊(inverted hull) | lilToon 的描邊,**吃光照**(暗部的線跟著沉下去) |
+| 邊緣光 | 沒有 | 有(「原神那一類」最好認的一味) |
+| sphere | `.sph` 乘算 / `.spa` 加算 | 同樣兩種,翻成 lilToon 的 matcap |
+| 光照 | 不吃光 | **吃光**,所以會自動補一顆平行光(`MmdKeyLight`) |
+
+翻譯規則寫在 `MmdLilToonMaterials.cs`(純函式,有單元測試 `MmdLilToonTests`),`MmdAvatar.BuildMaterials` 依 `MmdAvatar.UseLilToon` 分岔;貼圖載入與 alpha 分類兩邊共用,分岔只在「拿哪支 shader、把值寫進哪些屬性」。
+
+### 先講清楚:這不會變成原神
+
+原神那種畫面**有一半在貼圖裡**,不在 shader 裡 —— 官方每個角色帶一組專屬貼圖:ILM/lightmap(RGBA 分通道存高光強度、陰影 ramp 索引、AO、描邊寬度)、shadow ramp 條圖、臉部 SDF 陰影圖。PMX 沒有這些通道,所以能對過去的只有 base 貼圖、diffuse 顏色、sphere、toon ramp、edge 顏色/寬度。開了 lilToon 拿到的是**乾淨的兩段式 cel + 邊緣光**,不會有原神那種臉部陰影分界與布料層次(那要嘛用拆包的原神模型,要嘛替每件材質手工畫 ILM)。
+
+真正的原神/星鐵 shader(`stalomeow/StarRailNPRShader` 等)也是同一個前提,而且要接 Renderer Feature 與 post-processing、授權是 GPL-3.0。
+
+### lilToon 不入庫,要自己裝
+
+跟 Magica Cloth 2 一樣不進版控(7 MB、幾千個檔,一行指令就能重來)。重新 clone 之後:
+
+```sh
+git clone --depth 1 --branch 2.3.4 https://github.com/lilxyzw/lilToon.git /tmp/lilToon
+cp -r "/tmp/lilToon/Assets/lilToon" "65/My project/Assets/lilToon"
+cp "/tmp/lilToon/Assets/lilToon.meta" "65/My project/Assets/lilToon.meta"
+```
+
+沒裝也不會壞:`Shader.Find` 找不到就退回 `Sdo/MmdModel`,只是那個開關等於沒作用。
 
 ## 載入成本(實測,打包版 dance.exe)
 

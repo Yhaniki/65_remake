@@ -178,6 +178,13 @@ tools/kgn_export/gn_notes.json
 # Unity 產生的資料夾 meta 也一併忽略。
 65/My project/Assets/MagicaCloth2/
 65/My project/Assets/MagicaCloth2.meta
+
+# lilToon (MIT) —— MMD 身體的第二種著色後端。7 MB / 幾千個檔,一行指令就能重來,所以不入庫
+# (重裝指令見 docs/MMD_MODELS.md「著色後端」)。沒裝也不會壞:Shader.Find 找不到就退回 Sdo/MmdModel。
+65/My project/Assets/lilToon/
+65/My project/Assets/lilToon.meta
+# lilToon 的 Editor 自己產生的 shader 設定(裝了才有,沒裝就是垃圾)
+65/My project/ProjectSettings/lilToonSetting.json
 /bubble_log*.txt
 /server_run.log
 
