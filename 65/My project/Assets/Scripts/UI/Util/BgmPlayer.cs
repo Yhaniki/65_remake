@@ -151,10 +151,9 @@ namespace Sdo.UI.Util
                     {
                         var ext = Path.GetExtension(f).ToLowerInvariant();
                         if (ext != ".ogg" && ext != ".mp3") continue;
-                        // LoadClip 走 file:// —— 需要「保證有實體」的路徑。BGM 目前刻意維持散裝
-                        // （見 data-packaging.md §2.1），這裡等於零成本直通；哪天真的打包了也不會默默消失。
-                        var real = VfsFile.MaterialiseRealPath(f);
-                        if (real != null) list.Add(real);
+                        // BGM 刻意維持散裝（見 data-packaging.md §2.1），但 LoadClip 兩條路都吃得下：
+                        // 有實體走 file://，沒實體走記憶體解碼 —— 哪天真的打包了也不會默默消失。
+                        list.Add(f);
                     }
             }
             catch { }
@@ -164,6 +163,11 @@ namespace Sdo.UI.Util
 
         private IEnumerator LoadClip(string path, System.Action<AudioClip> done)
         {
+            // pak 內的曲子沒有實體 → 從記憶體解。散裝（現況）走原本的 file:// 串流。
+            var real = VfsFile.ResolveRealPath(path);
+            if (real == null) { done(Sdo.Game.MemoryAudio.Load(path, "bgm")); yield break; }
+            path = real;
+
             var type = path.EndsWith(".mp3", System.StringComparison.OrdinalIgnoreCase) ? AudioType.MPEG : AudioType.OGGVORBIS;
             using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
             {

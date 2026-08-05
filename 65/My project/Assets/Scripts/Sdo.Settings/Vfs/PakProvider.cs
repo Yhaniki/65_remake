@@ -148,8 +148,82 @@ namespace Sdo.Settings.Vfs
 
         public Stream OpenRead(string normalized)
         {
+            int i = IndexOf(normalized);
+            if (i < 0) return null;
+            var e = _entries[i];
+            if (e.IsWhiteout) return null;
+
+            // store 的條目可以邊讀邊解 —— 不必先把整份解出來。
+            //
+            // 為什麼值得特別處理:只想看檔頭的呼叫端不少 —— AudioFileType.Of 判格式、
+            // Mp3Decoder.OsuGaplessTrimForFile 算 gapless 偏移,兩個都只讀前面幾 KB,而且**每首歌都會走**。
+            // 沒有這條路的話,滑歌單時每首 8 MB 的 mp3 都會被整份讀出來加驗 CRC。
+            // (deflate 的條目本來就得整份解開才拿得到中間的位元組,沒有捷徑。)
+            if (e.Compression == PakFormat.CompressionStore)
+                return new PakEntryStream(this, e);
+
             var bytes = ReadAllBytes(normalized);
             return bytes == null ? null : new MemoryStream(bytes, false);
+        }
+
+        /// <summary>store 條目的唯讀串流:seek + 讀 + 就地解密,不整份具現化。
+        ///
+        /// ⚠️ <b>不驗 CRC</b> —— CRC 是整份資料的,部分讀取算不出來。要完整性保證請走
+        /// <see cref="ReadAllBytes"/>。這是刻意的取捨:只讀檔頭的呼叫端不該為了驗一個它不會用到的
+        /// 尾巴而付整份讀取的代價。</summary>
+        private sealed class PakEntryStream : Stream
+        {
+            private readonly PakProvider _owner;
+            private readonly PakFormat.Entry _entry;
+            private long _pos;
+
+            public PakEntryStream(PakProvider owner, PakFormat.Entry entry) { _owner = owner; _entry = entry; }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => true;
+            public override bool CanWrite => false;
+            public override long Length => _entry.StoredSize;
+
+            public override long Position
+            {
+                get { return _pos; }
+                set { _pos = value < 0 ? 0 : value; }
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (buffer == null) throw new ArgumentNullException("buffer");
+                if (offset < 0 || count < 0 || count > buffer.Length - offset) throw new ArgumentOutOfRangeException("count");
+
+                long remaining = Length - _pos;
+                if (remaining <= 0 || count == 0) return 0;
+                if (count > remaining) count = (int)remaining;
+
+                int got;
+                lock (_owner._readGate)
+                {
+                    long at = _owner._header.DataOffset + _entry.DataOffset + _pos;
+                    got = ReadAt(_owner._stream, at, buffer, offset, count);
+                }
+                if (got <= 0) return 0;
+
+                _owner.DecryptRange(buffer, offset, got, _entry, _pos);
+                _pos += got;
+                return got;
+            }
+
+            public override long Seek(long offset, SeekOrigin origin)
+            {
+                long target = origin == SeekOrigin.Begin ? offset
+                            : origin == SeekOrigin.Current ? _pos + offset
+                            : Length + offset;
+                _pos = target < 0 ? 0 : target;
+                return _pos;
+            }
+
+            public override void Flush() { }
+            public override void SetLength(long value) { throw new NotSupportedException(); }
+            public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
         }
 
         public IEnumerable<VfsEntry> EnumerateUnder(string normalizedDir, bool recursive)
@@ -184,14 +258,28 @@ namespace Sdo.Settings.Vfs
 
         private void Decrypt(byte[] buf, PakFormat.Entry e)
         {
-            if (_dataKey == null || e.CryptRange == PakFormat.CryptNone) return;
+            DecryptRange(buf, 0, buf.Length, e, 0);
+        }
 
-            int count = e.CryptRange == PakFormat.CryptHeaderOnly
-                ? Math.Min(PakFormat.HeaderCryptBytes, buf.Length)
-                : buf.Length;
+        /// <summary>解密「條目內位移 <paramref name="entryOffset"/> 起、<paramref name="count"/> bytes」那一段。
+        ///
+        /// CTR 可以從任意位置解就是靠這個:streamPos = 條目在資料區的位移 + 條目內的位移。
+        /// <c>CryptHeaderOnly</c> 時只有前 4096 bytes 是密文,所以要取這次讀到的範圍與加密範圍的交集 ——
+        /// 讀到 4096 之後的部分原封不動,誤解會把明文 XOR 成亂碼。</summary>
+        private void DecryptRange(byte[] buf, int offset, int count, PakFormat.Entry e, long entryOffset)
+        {
+            if (_dataKey == null || e.CryptRange == PakFormat.CryptNone || count <= 0) return;
 
-            // streamPos = 這一段在資料區裡的絕對位移 —— 就是「同金鑰絕不重用 counter」的保證。
-            PakCrypto.XorKeystream(_dataKey, buf, 0, count, e.DataOffset);
+            long encEnd = e.CryptRange == PakFormat.CryptHeaderOnly
+                ? Math.Min(PakFormat.HeaderCryptBytes, (long)e.StoredSize)
+                : e.StoredSize;
+
+            if (entryOffset >= encEnd) return;                       // 整段都在明文區
+            long end = Math.Min(entryOffset + count, encEnd);
+            int n = (int)(end - entryOffset);
+            if (n <= 0) return;
+
+            PakCrypto.XorKeystream(_dataKey, buf, offset, n, e.DataOffset + entryOffset);
         }
 
         /// <summary>從 <paramref name="at"/> 讀滿 <paramref name="count"/> bytes;回實際讀到的數量。</summary>

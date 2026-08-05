@@ -59,20 +59,27 @@ VOLUMES: list[dict] = [
          dirs=["SE"]),
     dict(name="music", pak_id=20, compress=False, crypt=sdopak.CRYPT_HEADER_ONLY,
          dirs=["MUSIC"], split_bytes=1024 * 1024 * 1024),   # 每卷約 1 GB
-    # BGM 刻意維持散裝：那是玩家最可能想自己換掉的東西，散裝資料夾丟進去就生效。
-    # 散裝層的優先權在所有 pak 之上，所以「不打包」在 VFS 那邊零成本。
+    # 🔴 以下維持散裝（loose=True）—— 都是**玩家會自己放東西進去**的地方。
+    #    打包它們等於把那個功能關掉，而且是靜默關掉：玩家把檔案丟進資料夾，遊戲就是看不到。
+    #    散裝層的優先權在所有 pak 之上，所以「不打包」在 VFS 那邊零成本。
     dict(name="bgm", pak_id=15, compress=False, crypt=sdopak.CRYPT_HEADER_ONLY,
          dirs=["BGM"], loose=True),
+    # MMD 模型在 ADDON/MODEL —— ADDON 是 reserved 目錄，scan() 本來就會跳過，
+    # 所以這裡**不需要**任何規則。舊安裝可能還有 <DATA>/MODEL，那個會落到 base_misc
+    # 並印警告（dirs 空 → 不會刪散裝樹，見 volume_spec 的說明）。
 ]
 
-# 音訊怎麼從 pak 裡放出來
+# 音訊怎麼從 pak 裡放出來（**不落地**）
 #
-# Unity 沒有記憶體 ogg 解碼器：UnityWebRequestMultimedia 只吃 file://，Mp3Decoder.Decode 吃的是路徑。
-# 所以音訊條目在要播的當下由 VfsFile.MaterialiseRealPath 解出來寫到 DATA/CACHE/AUDIO/ 再交給既有的
-# 載入路徑 —— 對 wav/ogg/mp3 一致，也不必動到 gapless 對拍與試聽那些很敏感的程式碼。
+# Unity 沒有記憶體 ogg 解碼器：UnityWebRequestMultimedia 只吃 file://。所以自己帶解碼器：
+#   ogg → sdovorbis.dll（stb_vorbis 包裝，public domain）
+#   wav → WavDecoder.cs（自己 parse RIFF）
+#   mp3 → sdomad.dll（libmad，與 StepMania 逐位相同）—— 那條路一行都沒動
+# 入口是 MemoryAudio.Load：VFS 位元組 → 看內容判格式 → PCM → AudioClip.Create。
 #
-# 取捨：解出來的檔在 CACHE 裡是明碼。這讓「不能整包拷走直接用」弱一點，但只弱在玩家真的播放過的
-# 那些檔，而且 CACHE 本來就是可刪的。詳見 docs/architecture/data-packaging.md §2.1。
+# mp3 永遠不會從 pak 讀：官方 MUSIC 是 100% ogg，mp3 只出現在 ADDON/SONG（reserved，永不打包），
+# 所以那一整套 gapless/priming 修正完全不受影響。
+# 詳見 docs/architecture/data-packaging.md §2.1。
 
 #: 頂層的零星檔案（iteminfo.dat / shop_names.tsv …）跟著 base_core 走。
 ROOT_FILES_VOLUME = "base_core"
@@ -157,6 +164,10 @@ def volume_spec(name: str) -> dict:
     for v in VOLUMES:
         if v["name"] == name:
             return v
+    # 沒對到分卷表 → 收進 base_misc。dirs 刻意留空:packed_dirs.json 因此不會列到它們，
+    # package_build 也就**不會刪掉那些散裝目錄**。那是保險，不是疏漏 ——
+    # 分卷表漏掉的東西通常正是「玩家會自己放檔案進去」的地方（MODEL 就是這樣被發現的），
+    # 打包了還把散裝樹刪掉，那個功能就靜默失效了。看到 base_misc 出現就去補 VOLUMES。
     return dict(name=UNASSIGNED_VOLUME, pak_id=UNASSIGNED_PAK_ID,
                 compress=True, crypt=sdopak.CRYPT_WHOLE, dirs=[])
 

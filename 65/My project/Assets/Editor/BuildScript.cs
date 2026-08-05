@@ -75,6 +75,13 @@ public static class BuildScript
         Directory.CreateDirectory(outDir);
 
         ApplyAppIcon();
+
+        // 🔴 加進 Always Included Shaders 之後**一定要還原**（跟下面的 productName 同一個道理）。
+        //    留在 ProjectSettings/GraphicsSettings.asset 裡的話，**editor 也會一併載入 lilToon 的全部變體** ——
+        //    MmdLilToonRenderTests 建 RenderTexture 時就把 GPU 打到 TDR（nvlddmkm 重置），
+        //    之後每一個渲染測試連鎖假紅 + Unity 原生崩潰，而且看起來完全像是「自己改壞了」。
+        //    2026-08-05 為此連丟三輪測試才定位。
+        int originalShaderCount = CaptureAlwaysIncludedShaderCount();
         EnsureShadersIncluded();
 
         // Stamp the git version into the window title (PlayerSettings.productName). Captured so we can put it back
@@ -103,6 +110,7 @@ public static class BuildScript
 
             // Restore before any exit: EditorApplication.Exit() does not run finally blocks, so put it back here.
             RestoreWindowTitle(originalTitle);
+            RestoreAlwaysIncludedShaders(originalShaderCount);
 
             if (s.result != BuildResult.Succeeded)
             {
@@ -183,8 +191,44 @@ public static class BuildScript
         catch { return null; }
     }
 
+    /// <summary>Always Included Shaders 目前的長度。<see cref="EnsureShadersIncluded"/> **只會往後追加**，
+    /// 所以還原＝截回這個長度就好。
+    ///
+    /// 🔴 不要改成「抓一份 Shader 參照的快照再寫回去」—— 那份清單裡可能有**懸空參照**
+    /// （指向已刪除／來自套件的 shader，YAML 長成 <c>{fileID: 4800000, guid: …}</c> 但資產不在）。
+    /// <c>objectReferenceValue as Shader</c> 對它們回 null，寫回去就變成 <c>{fileID: 0}</c>，
+    /// 檔案於是「還原完還是髒的」。踩過一次：本專案就有兩筆這種懸空條目。
+    /// 讀不到屬性 → -1，<see cref="RestoreAlwaysIncludedShaders"/> 會當成 no-op。</summary>
+    private static int CaptureAlwaysIncludedShaderCount()
+    {
+        var so = new SerializedObject(GraphicsSettings.GetGraphicsSettings());
+        var arr = so.FindProperty("m_AlwaysIncludedShaders");
+        return arr == null ? -1 : arr.arraySize;
+    }
+
+    /// <summary>把 Always Included Shaders 截回 build 之前的長度。
+    ///
+    /// 為什麼要還原:那份清單留在工作樹裡會讓 **editor** 也一併載入 lilToon 的全部變體，
+    /// EditMode 的渲染測試(MmdLilToonRenderTests)建 RenderTexture 時就把 GPU 打到 TDR，
+    /// 整批假紅 + Unity 原生崩潰 —— 而且症狀看起來完全像是自己改壞了程式碼。
+    /// build 需要它、測試受不了它，所以 build 完必須放回去。</summary>
+    private static void RestoreAlwaysIncludedShaders(int originalCount)
+    {
+        if (originalCount < 0) return;
+
+        var so = new SerializedObject(GraphicsSettings.GetGraphicsSettings());
+        var arr = so.FindProperty("m_AlwaysIncludedShaders");
+        if (arr == null || arr.arraySize <= originalCount) return;   // 沒被動過 → 不要白寫一次檔
+
+        arr.arraySize = originalCount;
+        so.ApplyModifiedProperties();
+        AssetDatabase.SaveAssets();
+        Debug.Log($"[Build] restored always-included shaders = {originalCount}");
+    }
+
     // Append every RequiredShaders entry to GraphicsSettings' "Always Included Shaders" list (idempotent) so the
-    // runtime Shader.Find() calls resolve in the built player. Persists to ProjectSettings/GraphicsSettings.asset.
+    // runtime Shader.Find() calls resolve in the built player. Persists to ProjectSettings/GraphicsSettings.asset —
+    // 但 build 結束前會由 RestoreAlwaysIncludedShaders 放回原狀（見那裡的說明）。
     private static void EnsureShadersIncluded()
     {
         var so = new SerializedObject(GraphicsSettings.GetGraphicsSettings());

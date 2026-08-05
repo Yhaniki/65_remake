@@ -295,6 +295,72 @@ namespace Sdo.Tests
             Assert.AreEqual("art", S(VfsFile.ReadAllBytes(listed[0])), "列舉回來的路徑要能直接餵回去讀");
         }
 
+        // ---------------- store 條目的有界串流 ----------------
+
+        [Test]
+        public void OpenRead_OnStoreEntry_StreamsWithoutMaterialisingEverything()
+        {
+            // 只想看檔頭的呼叫端不少（AudioFileType.Of 判格式、Mp3Decoder 算 gapless 偏移），
+            // 而且每首歌都會走。沒有這條路的話，滑歌單時每首 8 MB 的 mp3 都會被整份讀出來。
+            var payload = HeaderOnlyPayload();     // 4608 bytes，跨過 4096 的表頭加密邊界
+            var path = WritePak(new PakWriter(9, encrypt: true)
+                .Add("MUSIC/song.mp3", payload, compress: false, cryptRange: PakFormat.CryptHeaderOnly));
+
+            using (var pak = Open(path))
+            using (var s = pak.OpenRead("MUSIC/song.mp3"))
+            {
+                Assert.IsNotNull(s);
+                Assert.IsTrue(s.CanSeek, "store 條目要能 seek");
+                Assert.AreEqual(payload.Length, s.Length);
+
+                // 逐段小口讀，故意讓某一段剛好跨過加密邊界 —— 交集算錯就會在這裡露餡。
+                var got = new byte[payload.Length];
+                int at = 0;
+                foreach (var chunk in new[] { 100, 3900, 200, 408 })
+                {
+                    int n = s.Read(got, at, chunk);
+                    Assert.AreEqual(chunk, n, "位移 " + at + " 應該讀滿 " + chunk);
+                    at += n;
+                }
+                CollectionAssert.AreEqual(payload, got, "分段讀出來的內容必須跟原始資料一致");
+            }
+        }
+
+        [Test]
+        public void OpenRead_SeeksToArbitraryOffsets()
+        {
+            var payload = HeaderOnlyPayload();
+            var path = WritePak(new PakWriter(9, encrypt: true)
+                .Add("MUSIC/song.mp3", payload, compress: false, cryptRange: PakFormat.CryptHeaderOnly));
+
+            using (var pak = Open(path))
+            using (var s = pak.OpenRead("MUSIC/song.mp3"))
+            {
+                // 密文區中間、邊界、明文區 —— 三種位置都要對。
+                foreach (int at in new[] { 0, 1, 4095, 4096, 4097, payload.Length - 16 })
+                {
+                    s.Seek(at, SeekOrigin.Begin);
+                    var buf = new byte[16];
+                    int n = s.Read(buf, 0, buf.Length);
+                    for (int i = 0; i < n; i++)
+                        Assert.AreEqual(payload[at + i], buf[i], "位移 " + at + " 的第 " + i + " 個位元組");
+                }
+            }
+        }
+
+        [Test]
+        public void OpenRead_OnDeflatedEntry_StillWorks()
+        {
+            // deflate 的條目沒有捷徑（要拿中間的位元組就得整份解開）—— 但行為必須一樣。
+            var path = WritePak(new PakWriter(9, encrypt: true)
+                .Add("AVATAR/x.dds", B("compressible payload aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")));
+
+            using (var pak = Open(path))
+            using (var s = pak.OpenRead("AVATAR/x.dds"))
+            using (var r = new StreamReader(s))
+                StringAssert.StartsWith("compressible payload", r.ReadToEnd());
+        }
+
         // ---------------- 開機自動掛載 ----------------
 
         [Test]

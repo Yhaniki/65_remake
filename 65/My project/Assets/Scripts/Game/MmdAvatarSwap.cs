@@ -690,10 +690,18 @@ namespace Sdo.Game
         /// all, and the editor then reports「沒有模型」 while the model sits right there in the repo.</summary>
         public static IEnumerable<string> ModelRoots()
         {
+            // 正式位置:<DATA>/ADDON/MODEL —— ADDON 就是「玩家自己丟東西進來」的那棵樹
+            // (SONG / NOTESKIN / THEME / MODEL),EnsureAddonDirs 會把它建好，config.ini 的
+            // AddonFolder= 還能把整棵 ADDON 指到別的碟。**而且 ADDON 是 reserved 目錄、永遠不進 pak**，
+            // 所以模型放這裡自動就不會被打包 —— 不必在 build_pak.py 另外開一條 loose 規則。
+            string addonModel = null; try { addonModel = SdoExtracted.AddonModelDir; } catch { }
+            if (!string.IsNullOrEmpty(addonModel)) yield return addonModel;
+
             string root = null; try { root = SdoExtracted.Root; } catch { }
             if (!string.IsNullOrEmpty(root))
             {
-                yield return Path.Combine(root, "MODEL");                                  // built / overridden: <DATA>/MODEL
+                // 舊位置 <DATA>/MODEL —— 早期打包腳本放這裡。仍然掃，免得既有安裝的模型突然消失。
+                yield return Path.Combine(root, "MODEL");
                 string beside = null;
                 try { beside = Directory.GetParent(root)?.Parent?.FullName; } catch { }     // <repo>/assets, when DATA is in-repo
                 if (!string.IsNullOrEmpty(beside))

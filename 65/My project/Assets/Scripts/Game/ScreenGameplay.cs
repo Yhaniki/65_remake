@@ -1679,17 +1679,13 @@ namespace Sdo.Game
         private IEnumerator LoadAmbientCo(string name)
         {
             var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
-            // 🔴 這裡問的**不是**「檔案存在嗎」而是「有沒有實體可以餵給 file://」—— UnityWebRequestMultimedia
-            //    只吃真實路徑。pak 化之後 VfsFile.Exists 會對 pak 內的檔說 true，然後 file:// 直接 404。
-            //    ResolveRealPath 才是今天明天都對的問法（見 docs/architecture/data-packaging.md §7.1）。
-            path = VfsFile.MaterialiseRealPath(path);
-            if (path == null) { Debug.LogWarning("[ambient] missing " + path); yield break; }
-            using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
-            {
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success) _ambientClip = DownloadHandlerAudioClip.GetContent(req);
-                else Debug.LogWarning("[ambient] load fail: " + req.error);
-            }
+            // 從 VFS 的位元組解 —— 散裝或 pak 都一樣，不需要實體檔案（SE 是 wav，WavDecoder 就解得開）。
+            // 以前這裡走 UnityWebRequestMultimedia + file://，pak 化之後那條路對 pak 內的檔會 404。
+            // 見 docs/architecture/data-packaging.md §2.1。
+            _ambientClip = MemoryAudio.Load(path, name);
+            if (_ambientClip == null) { Debug.LogWarning("[ambient] missing/undecodable " + path); yield break; }
+            yield return null;   // 解碼是同步的；讓出一幀，維持這個 coroutine 原本的節奏
+
             // Guarantee one play right at the opening: a venue that carries an ambience should always sound it once
             // the moment you arrive, then fall back to the intermittent gap timer (clip length + rand 0..29s) for
             // every play after that. Arming at "now" makes TickAmbient fire on the first eligible frame (once _started).
@@ -2271,10 +2267,11 @@ namespace Sdo.Game
             // 示範曲 Bassdrop.mp3 撈出來播 —— 校時的時候背後放歌是最不該發生的事。
             if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
             yield return LoadOsuKeysoundsCo();
-            // 音訊一律問 ResolveRealPath 而不是 Exists：這條路最後會走到 file://（UnityWebRequestMultimedia）
-            // 或吃真實路徑的解碼器，pak 內的檔對它們來說等於不存在。見 docs/architecture/data-packaging.md §7.1。
+            // 音訊問的是 Exists（VFS）而不是實體路徑 —— pak 內的歌一樣算「有」。
+            // 實際載入時再分流：有實體走原本那條（含 mp3 的 gapless 修正），沒實體走記憶體解碼。
+            // 見 docs/architecture/data-packaging.md §2.1。
             bool externalTrackMissing = chartFormat != 0 &&
-                (IsVirtualOsuTrack || string.IsNullOrEmpty(oggPath) || VfsFile.MaterialiseRealPath(oggPath) == null);
+                (IsVirtualOsuTrack || string.IsNullOrEmpty(oggPath) || !VfsFile.Exists(oggPath));
             if (externalTrackMissing)
             {
                 Debug.Log(IsVirtualOsuTrack ? "[keysound] virtual osu track: using silent transport" : "[Step1] external audio missing: using silent transport");
@@ -2285,8 +2282,33 @@ namespace Sdo.Game
                 StartCoroutine(OpeningSequence());
                 yield break;
             }
-            string path = (!string.IsNullOrEmpty(oggPath) ? VfsFile.MaterialiseRealPath(oggPath) : null)
-                ?? Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
+            string path = (!string.IsNullOrEmpty(oggPath) && VfsFile.Exists(oggPath))
+                ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
+
+            // 🔴 只存在於 pak 裡的歌（官方 MUSIC 全是 .ogg）→ 從記憶體解，不落地。
+            //    mp3 走不到這裡：mp3 只出現在 ADDON/SONG（外部歌），那是 reserved 目錄、永遠不打包，
+            //    所以永遠有實體 → 照走下面那條含 gapless 修正的原路，那套程式碼一行都沒動。
+            // 只存在於 pak 裡的歌（官方 MUSIC 全是 .ogg）→ 從記憶體解，不落地。
+            // mp3 走不到這條分支：mp3 只出現在 ADDON/SONG（外部歌），那是 reserved 目錄、永遠不打包，
+            // 所以永遠有實體 → 照走下面那條含 gapless 修正的原路，那套程式碼一行都沒動。
+            AudioClip memClip = null;
+            var realAudioPath = VfsFile.ResolveRealPath(path);
+            if (realAudioPath == null)
+            {
+                memClip = MemoryAudio.Load(path, "song");
+                if (memClip != null)
+                {
+                    _audio.clip = memClip;
+                    _audio.volume = AudioMix.Music;
+                    Debug.Log($"[Step1] pak 內音訊走記憶體解碼:{System.IO.Path.GetFileName(path)} "
+                              + $"({memClip.length:F3}s, {memClip.channels}ch, {memClip.frequency}Hz)");
+                }
+                else Debug.LogWarning("[Step1] pak 內音訊解不開 → 無聲:" + path);
+            }
+            else path = realAudioPath;
+
+            if (memClip == null)
+            {
             // 走哪個解碼器看**檔案內容**，不是副檔名 —— 外面撿來的歌曲庫常有名不符實的檔（[NX] 那包就有 4 個
             // Ogg 取名叫 .mp3）。餵錯解碼器不會報錯，只會解出 0 個取樣 → 這首歌整首沒聲音。見 AudioFileType。
             var kind = AudioFileType.Of(path);
@@ -2320,6 +2342,7 @@ namespace Sdo.Game
                     else Debug.LogWarning("[Step1] audio unavailable (ok for headless): " + req.error);
                 }
             }
+            }   // if (memClip == null)
             _audioReady = true;   // song decoded (or failed) → the loading screen may now reveal the stage
             // 編輯器：沒有 READY/GO 開場，也不自己起播 —— 停在 0ms 等使用者按播放（見 EditorOpeningCo）。
             if (editorMode) { StartCoroutine(EditorOpeningCo()); yield break; }

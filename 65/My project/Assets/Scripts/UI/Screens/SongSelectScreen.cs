@@ -1430,20 +1430,31 @@ namespace Sdo.UI.Screens
             }
             else
             {
-                // 試聽最後走 file://（UnityWebRequestMultimedia）—— pak 內的檔沒有實體，
-                // 要先具現化到 CACHE。散裝時這是零成本的直通。見 data-packaging.md §2.1。
-                var real = VfsFile.MaterialiseRealPath(path);
-                if (real == null) { _previewCo = null; yield break; }
-                var req = UnityWebRequestMultimedia.GetAudioClip(Sdo.Game.SdoExtracted.FileUri(real), audioType);
-                yield return req.SendWebRequest();
-                if (!IsCurrentPreview(fileId, virtualChartPath)) { req.Dispose(); yield break; }   // superseded mid-load
-                if (req.result == UnityWebRequest.Result.Success)
+                // pak 內的檔沒有實體 → 從記憶體解（官方試聽都是 .ogg）。散裝時走原本的 file://，
+                // 外部歌的 mp3 也照舊。見 data-packaging.md §2.1。
+                var real = VfsFile.ResolveRealPath(path);
+                if (real == null)
                 {
-                    try { clip = DownloadHandlerAudioClip.GetContent(req); }
-                    catch (System.Exception ex) { clip = null; Debug.LogWarning("[SongSelect] preview decode fail: " + ex.Message); }
+                    // 解碼是同步的，沒有 web request 那一段等待 —— 下面的 race guard 一樣會擋掉過期的選取。
+                    var memClip = Sdo.Game.MemoryAudio.Load(path, "preview");
+                    if (memClip != null)
+                        _previewDecodedClip = memClip;   // AudioClip.Create → ours to destroy (StopPreview does it)
+                    clip = memClip;
+                    if (clip == null) Debug.LogWarning("[SongSelect] pak 內試聽解不開: " + path);
                 }
-                else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
-                req.Dispose();
+                else
+                {
+                    var req = UnityWebRequestMultimedia.GetAudioClip(Sdo.Game.SdoExtracted.FileUri(real), audioType);
+                    yield return req.SendWebRequest();
+                    if (!IsCurrentPreview(fileId, virtualChartPath)) { req.Dispose(); yield break; }   // superseded mid-load
+                    if (req.result == UnityWebRequest.Result.Success)
+                    {
+                        try { clip = DownloadHandlerAudioClip.GetContent(req); }
+                        catch (System.Exception ex) { clip = null; Debug.LogWarning("[SongSelect] preview decode fail: " + ex.Message); }
+                    }
+                    else Debug.LogWarning("[SongSelect] preview load fail: " + req.error);
+                    req.Dispose();
+                }
             }
 
             // race guard: selection changed (or hidden) while loading -> drop the stale clip.

@@ -70,7 +70,19 @@ namespace Sdo.Game
             byte[] bytes;
             try { bytes = System.IO.File.ReadAllBytes(path); }
             catch { return null; }
-            if (bytes.Length <= 4) return null;
+            return Decode(bytes, out droppedFrames, out pretendFrames, path);
+        }
+
+        /// <summary>從**記憶體**解 —— DATA 打包成 pak 之後歌沒有實體檔案,這是唯一走得通的路。
+        ///
+        /// 原生函式本來就吃 <c>const unsigned char *</c>,所以這只是把 <see cref="Decode(string,out int,out int)"/>
+        /// 裡「先 ReadAllBytes」那一步讓給呼叫端 —— **解碼行為完全相同**,對拍不受影響。
+        /// <paramref name="label"/> 只用於 log。</summary>
+        public static Mp3Pcm Decode(byte[] bytes, out int droppedFrames, out int pretendFrames, string label = null)
+        {
+            droppedFrames = 0; pretendFrames = 0;
+            if (!Available || bytes == null || bytes.Length <= 4) return null;
+            string path = label ?? "(memory)";
 
             IntPtr p = IntPtr.Zero;
             try

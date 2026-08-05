@@ -127,46 +127,56 @@ LocalLow 資料夾與登錄檔 key**。這本身就是該把東西搬進 build �
 > 原因是官方那批 DDS 有大量重複區塊(共用模板、大面積純色),deflate 吃得很好。
 > 這也表示**壓縮不是白做的** —— 省下的 2.3 GB 幾乎全來自 AVATAR 這一卷。
 
-### 2.1 音訊:打包,但播放時具現化到 CACHE
+### 2.1 音訊:打包,而且**不落地**
 
 `SE` 與 `MUSIC` 有打包(store + 只加密表頭 4 KB);**`BGM` 刻意維持散裝**
-—— 那是玩家最可能想自己換掉的東西,散裝資料夾丟進去就生效。散裝層的優先權在所有 pak 之上,
-所以「不打包」在 VFS 那邊零成本,不需要任何特別處理。
+—— 那是玩家最可能想自己換掉的東西,散裝資料夾丟進去就生效。
 
-**問題**:Unity 沒有記憶體 ogg 解碼器。三條路都要求檔案在磁碟上真的存在:
+**問題**:Unity 沒有記憶體 ogg 解碼器 —— `UnityWebRequestMultimedia` 只吃 `file://`,
+而 `Mp3Decoder.Decode` 吃的是路徑。pak 內的音訊對它們來說等於不存在,
+症狀是**靜默無聲而且不報錯**。
 
-| 路徑 | 要求 |
-|---|---|
-| `BgmPlayer.LoadClip` / `UiSfx` / `ScreenGameplay.LoadAmbientCo` / 選歌試聽 | `UnityWebRequestMultimedia("file://" + path)` |
-| `Mp3Decoder.Decode(path)` | 吃路徑,不吃 `byte[]` |
-| `SdoExtracted.ResolveSeDir` | 靠 `<候選>/Bubble.wav` 存在與否找 SE 目錄 |
+**解法**:自己帶解碼器,全部從記憶體解。入口是
+[`MemoryAudio`](../../65/My%20project/Assets/Scripts/Game/MemoryAudio.cs)
+——「VFS 位元組 → 看**內容**判格式 → PCM → `AudioClip.Create`」。
 
-**解法**:[`VfsFile.MaterialiseRealPath`](../../65/My%20project/Assets/Scripts/Sdo.Settings/Vfs/VfsFile.cs)
-—— 拿一條保證能餵給 `file://` 的真實路徑:
+| 格式 | 解碼器 | 授權 |
+|---|---|---|
+| ogg | `sdovorbis.dll`([`tools/sdovorbis`](../../tools/sdovorbis),stb_vorbis 包裝) | public domain |
+| wav | [`WavDecoder.cs`](../../65/My%20project/Assets/Scripts/Game/WavDecoder.cs)(自己 parse RIFF) | — |
+| mp3 | `sdomad.dll`([`tools/sdomad`](../../tools/sdomad),libmad,與 StepMania 逐位相同) | **GPL v2** |
 
-- 散裝層命中 → 直接回傳(零成本直通;開發常態,BGM 也走這條)
-- 只在 pak 裡 → 解出來寫到 `DATA/CACHE/AUDIO/<雜湊>.<副檔名>`,回傳那個位置;已解過的沿用
+> ⚠️ **`libmad` 是 GPL v2** —— 只要出貨包含 `sdomad.dll`,整個散布的作品就要以 GPL v2 授權
+> 並附原始碼。那是加 libmad 當下就決定的事,跟打包無關。stb_vorbis 是 public domain,
+> 不會再增加義務。
 
-選這條而不是把解碼路徑全改成 `byte[]` 版,是因為後者會碰到剛修好的 gapless 對拍與試聽
-(見 §8 坑 1),風險高很多;而具現化對 wav/ogg/mp3 一致,將來多一種格式也不用再改。
+#### 為什麼 ogg 可以換解碼器、mp3 不行
 
-> ⚠️ **取捨**:解出來的檔在 CACHE 裡是**明碼**,這讓「不能整包拷走直接用」弱一點。
-> 但只弱在玩家真的播放過的那些檔,而且 CACHE 本來就是可刪的。對「防君子」可以接受
-> —— 決心要拆的人直接讀記憶體就好。
+mp3 沒有精確的樣本位置:編碼器延遲要靠 Xing/LAME 表頭猜,壞幀處理各家不同 ——
+`sdomad` 才要逐條照抄 StepMania 的錯誤處理(見那邊的 README:NLayer 會讓某些歌晚 **0.62 秒**)。
 
-`VfsFile.AudioCacheLimitBytes`(預設 512 MB)會把 `CACHE/AUDIO` 修剪到上限以下,
-依最後存取時間由舊到新刪。沒有上限的話,把 8.3 GB 的曲庫全播過一輪就會再長出 8.3 GB。
+**Vorbis 沒有這個問題。** 格式本身帶 granule position,天生 gapless,任何合規解碼器輸出的 PCM 都一致。
+StepMania 自己的 `RageSoundReader_Vorbisfile.cpp` 也沒有任何偏移補償(只用 `ov_pcm_tell` 追位置)
+—— 那就是證據。
 
-其餘的音訊打包策略:
+**而且 mp3 永遠不會從 pak 讀**:官方 `MUSIC` 是 **100% ogg**(4,356 ogg + 2,180 `.gn`),
+mp3 只出現在 `ADDON/SONG`(外部歌,reserved 目錄、永不打包)。所以那一整套 gapless/priming
+修正**一行都沒動**。
 
-- **MUSIC 一定要 store**:mp3/ogg 再壓收益是 0,純燒 CPU 跟打包時間。
-- **只加密前 4096 bytes**:播放器直接開會失敗,但只需解前 4 KB,CPU 幾乎免費。
-- MUSIC 分卷讓「加一批歌」只需要發一個新的 `music_NNN.pak`。
+#### 呼叫點的規則
 
-`package_build.ps1` 刪散裝樹時**只刪 `packed_dirs.json` 說有打包的那些**
-—— 不能寫成「除了 reserved 以外全刪」,那會把 BGM 一起刪掉。清單由打包器產出,兩邊才不會漂移。
+**有實體就走原路,沒實體才從記憶體解。** 六處(遊玩主音訊、環境音、UI 音效、大廳 BGM、
+選歌試聽)統一成這條。散裝時完全走原本的路徑,行為零變化。
 
----
+實測(打包版、加密 pak):
+
+```
+[Step1] pak 內音訊走記憶體解碼:sdom5085.ogg (94.810s, 2ch, 44100Hz)
+CACHE/AUDIO: 不存在        ← 一個檔都沒落地
+錯誤: 0
+```
+
+`94.810s` 與離線自測(`tools/sdovorbis/selftest.exe`)、EditMode 測試三邊一致。
 
 ### 2.2 載入速度:內容讀取快 1.46×,開機慢 300ms
 

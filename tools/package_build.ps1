@@ -11,7 +11,7 @@
       DATA/                                                 (SdoExtracted.Root)
         <Extracted contents> + SE/ + BGM/ + MUSIC/ + REPLAY/
         PROFILE/            <- SEEDED only (existing saves/settings are NEVER overwritten by re-packaging)
-        MODEL/<name>/*.pmx  <- MMD models (from assets\MODEL); one folder per model, picked in the 設定 panel
+        ADDON/MODEL/<name>/*.pmx  <- MMD models (from assets\MODEL); one folder per model, picked in the 設定 panel
         UI/MUSIC/ICONS      <- overlaid with the FULL online (DatasSDO) icon set
         UI/STATIS/STATISTIC <- overlaid with the online result-screen art (safety; usually already in Extracted)
 
@@ -234,10 +234,12 @@ Copy-Tree (Join-Path $Off 'music') (Join-Path $Data 'MUSIC') 'MUSIC'
 # 3b) MMD models -> DATA/MODEL. One sub-folder per model, each holding its .pmx plus its own textures/Toon/Sph — the
 #     same layout the editor reads from assets\MODEL, so a model that works in play mode works in the built player.
 #     Without this the packaged game finds no model and the MMD swap (F7) silently stays on the SDO body.
-Copy-Tree (Join-Path $assetsDir 'MODEL') (Join-Path $Data 'MODEL') 'MMD models'
+# ADDON/MODEL 才是正式位置（ADDON = 玩家自己丟東西的那棵樹：SONG / NOTESKIN / THEME / MODEL）。
+# 順帶好處：ADDON 是 reserved 目錄、永遠不進 pak，模型放這裡自動就不會被打包。
+Copy-Tree (Join-Path $assetsDir 'MODEL') (Join-Path $Data 'ADDON\MODEL') 'MMD models'
 # The original single-model layout (assets\IkaHatunemiku2025, before DATA\MODEL existed) still ships, as DATA\MODEL\<its name>.
 $mmdLegacy = Join-Path $assetsDir 'IkaHatunemiku2025'
-if (Test-Path $mmdLegacy) { Copy-Tree $mmdLegacy (Join-Path $Data 'MODEL\IkaHatunemiku2025') 'MMD model (legacy folder)' }
+if (Test-Path $mmdLegacy) { Copy-Tree $mmdLegacy (Join-Path $Data 'ADDON\MODEL\IkaHatunemiku2025') 'MMD model (legacy folder)' }
 
 # 4) Writable folders: replay saves (under DATA) and screenshots (beside the exe)
 New-Item -ItemType Directory -Force -Path (Join-Path $Data 'REPLAY')   | Out-Null

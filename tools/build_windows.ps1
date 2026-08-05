@@ -64,7 +64,13 @@ param(
     [switch]$SkipData,                             # 只出 exe,不組 DATA
     [string]$Product = 'Dance',                    # 最終資料夾名的產品字,例:"Dance v1.7.0-dev-3c1e7"
     [string]$Name,                                 # 直接指定最終資料夾名(蓋掉 git 算出來的)
-    [switch]$NoRename                              # 不改名,結果留在 <repo>\Build\Windows
+    [switch]$NoRename,                             # 不改名,結果留在 <repo>\Build\Windows
+
+    # 組完 DATA 之後打包成 SDOPAK 分卷(toolsuild_pak.py)並刪掉散裝樹。
+    # 預設關 —— 開發時散裝樹好查、改一個檔就生效。出貨才開。
+    [switch]$Pack,
+    # 打包時加密。⚠️ 混淆不是保護:金鑰必然在執行檔裡。見 docsrchitecture\data-packaging.md §5。
+    [switch]$Encrypt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -184,13 +190,51 @@ if ($code -eq 0 -and -not $SkipData) {
         # 原始 assets 只有主 worktree 有 —— 沒有就安靜跳過(其它 worktree 出的 exe 本來就沒模型可放)。
         $mmdSrc = Join-Path $Repo 'assets\MODEL'
         if (Test-Path $mmdSrc) {
-            $mmdOut = Join-Path $dataOut 'MODEL'
+            # ADDON/MODEL 才是正式位置（ADDON = 玩家自己丟東西的那棵樹）。順帶好處：ADDON 是 reserved 目錄、
+            # 永遠不進 pak，所以模型放這裡自動就不會被打包。舊位置 <DATA>/MODEL 執行期仍然會掃（相容既有安裝）。
+            $mmdOut = Join-Path $dataOut 'ADDON\MODEL'
             & robocopy $mmdSrc $mmdOut /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 | Out-Null
             if ($LASTEXITCODE -ge 8) { Write-Host "[build] WARNING: MODEL robocopy exit=$LASTEXITCODE" -ForegroundColor Yellow }
             $n = (Get-ChildItem -LiteralPath $mmdOut -Directory -ErrorAction SilentlyContinue | Measure-Object).Count
             Write-Host "[build] MMD models: $mmdSrc -> $mmdOut ($n 個)"
         }
         Write-Host "[build] DATA ready: $dataOut"
+
+        # ---- 打包成 SDOPAK 分卷 ----
+        # 順序是刻意的:先把散裝 DATA 完整組好(clean 包 + MODEL 都放進去了),再一次打包 ——
+        # 打包器看到的就是最終狀態,不必知道任何組裝規則。
+        if ($Pack) {
+            $pyPack = Join-Path $PSScriptRoot 'build_pak.py'
+            if (-not (Test-Path $pyPack)) { throw "找不到 $pyPack" }
+
+            # manifest 寫到 build 目錄旁邊,**不進 DATA** —— 它是每一條路徑的明文
+            # (base_avatar 那份 5.4 MB),跟著出貨等於索引加密白做。留著是因為下次產 patch 卷要拿它比對。
+            $manifestDir = Join-Path $BuildOut 'pak_manifests'
+            Write-Host "[build] pack: $dataOut -> SDOPAK$(if ($Encrypt) { '(加密)' } else { '(明碼)' })"
+            $packArgs = @($pyPack, '--source', $dataOut, '--out', $dataOut, '--manifest-dir', $manifestDir)
+            if ($Encrypt) { $packArgs += '--encrypt' }
+            $env:PYTHONIOENCODING = 'utf-8'
+            & python @packArgs
+            if ($LASTEXITCODE -ne 0) { throw "build_pak.py 失敗 exit=$LASTEXITCODE" }
+
+            # 打包成功才刪散裝樹 —— 失敗時留著,至少 build 還是能跑的。
+            # 🔴 **只刪 packed_dirs.json 說有打包的那些**。不能寫成「除了 PROFILE/ADDON/… 以外全刪」——
+            #    BGM 刻意維持散裝(見 build_pak.py 的 VOLUMES),那種寫法會把它一起刪掉,
+            #    症狀是「大廳完全沒有音樂而且不報錯」。清單由打包器產出,兩邊才不會漂移。
+            $packedJson = Join-Path $manifestDir 'packed_dirs.json'
+            if (-not (Test-Path $packedJson)) { throw "build_pak.py 沒有產生 packed_dirs.json —— 不敢刪散裝樹" }
+            $packed = (Get-Content $packedJson -Raw -Encoding UTF8 | ConvertFrom-Json).packed
+
+            Get-ChildItem -LiteralPath $dataOut -Directory | Where-Object { $packed -contains $_.Name } | ForEach-Object {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force
+            }
+            # 頂層零星檔(iteminfo.dat / shop_names.tsv…)已經進了 base_core.pak。出貨的 DATA 只留 *.pak。
+            Get-ChildItem -LiteralPath $dataOut -File | Where-Object { $_.Extension -ne '.pak' } |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+
+            $mb = ((Get-ChildItem -LiteralPath $dataOut -Filter *.pak | Measure-Object Length -Sum).Sum / 1MB)
+            Write-Host ("[build] pack: {0} 卷,{1:N0} MB" -f (Get-ChildItem -LiteralPath $dataOut -Filter *.pak).Count, $mb)
+        }
     }
 }
 

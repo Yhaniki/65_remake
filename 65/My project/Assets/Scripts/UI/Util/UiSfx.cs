@@ -56,7 +56,7 @@ namespace Sdo.UI.Util
         public static void Play(string name)
         {
             if (string.IsNullOrEmpty(name)) return;
-            Instance.StartCoroutine(Instance.PlayCo(name));
+            Instance.PlayNow(name);
         }
 
         /// <summary>Wire the standard button-press click (<see cref="Click"/>) onto a uGUI Button's onClick.</summary>
@@ -73,19 +73,15 @@ namespace Sdo.UI.Util
             b.onClick.AddListener(() => Play(sound));
         }
 
-        private IEnumerator PlayCo(string name)
+        /// <summary>載入(第一次)並播一次。**同步** —— 從 VFS 的位元組解，散裝或 pak 都一樣，
+        /// 不需要實體檔案(SE 是 wav，WavDecoder 幾十行就解得開，不必為它走 file://)。
+        /// 以前走 UnityWebRequestMultimedia 才需要 coroutine；現在按鈕按下去就出聲，少一幀延遲。
+        /// 見 docs/architecture/data-packaging.md §2.1。</summary>
+        private void PlayNow(string name)
         {
             if (!_cache.TryGetValue(name, out var clip))
             {
-                var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
-                // 走 file://，所以要的是「保證有實體」的路徑：pak 內的檔會被具現化到 CACHE。見 data-packaging.md §2.1。
-                path = VfsFile.MaterialiseRealPath(path);
-                if (path != null)
-                    using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
-                    {
-                        yield return req.SendWebRequest();
-                        if (req.result == UnityWebRequest.Result.Success) clip = DownloadHandlerAudioClip.GetContent(req);
-                    }
+                clip = MemoryAudio.Load(Path.Combine(SdoExtracted.SeDir, name + ".wav"), name);
                 _cache[name] = clip;   // cache null too (missing file -> never re-hit disk)
             }
             if (clip != null && _src != null) _src.PlayOneShot(clip, AudioMix.Sfx);   // 遊戲音效 音量
