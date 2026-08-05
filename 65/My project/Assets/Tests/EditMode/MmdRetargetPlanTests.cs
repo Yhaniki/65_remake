@@ -122,6 +122,46 @@ namespace Sdo.Tests
             Assert.AreEqual(MmdDriveMode.WorldDelta, Of(Plan(names.ToArray(), pos.ToArray()), "左足首", names.ToArray()).Mode);
         }
 
+        // ---------------------------------------------------------------- 規則③ MMD 那端重合時借 SDO 的 rest 方向
+        [Test]
+        public void The_Pelvis_Still_Aims_When_The_Model_Stacks_UpperBody_On_LowerBody()
+        {
+            // 🔴 回歸點:很多 PMX 把 上半身 跟 下半身 放在同一個腰點(La+Darknesss 相距 6.4e-5)。少了規則③,
+            //    下半身→上半身 量不出方向 → aim 被當退化跳過 → 骨盆退回 FollowParent,而父骨照規則① 不吃旋轉,
+            //    於是整條下半身鏈一格都不轉:掛在它底下的裙子/大衣物理骨,人轉一圈回來還朝著正面。
+            var pos = (Vector3[])MmdPos.Clone();
+            pos[System.Array.IndexOf(MmdNames, "上半身")] = pos[System.Array.IndexOf(MmdNames, "下半身")];
+
+            var pelvis = Of(Plan(MmdNames, pos), "下半身");
+            Assert.AreEqual(MmdDriveMode.Aim, pelvis.Mode, "重合不該讓骨盆失去驅動");
+            Assert.AreEqual("Bip01_Spine", HrcNames[pelvis.AimChildHrc]);
+
+            // 借的是 SDO 那段 bind 方向 —— 兩具骨架 rest 都站直,脊椎在兩邊都是 +Y。
+            Vector3 expect = (HrcBind[System.Array.IndexOf(HrcNames, "Bip01_Spine")]
+                            - HrcBind[System.Array.IndexOf(HrcNames, "Bip01_Pelvis")]).normalized;
+            Assert.That(Vector3.Distance(pelvis.AimRestDir, expect), Is.LessThan(1e-5f));
+        }
+
+        [Test]
+        public void A_Model_Whose_Spine_Is_Not_Stacked_Keeps_Its_Own_Rest_Direction()
+        {
+            // 規則③ 只在退化時才接手:量得出方向的模型(初音那類)一個數字都不能動。
+            var pelvis = Of(Plan(), "下半身");
+            Vector3 expect = (MmdPos[System.Array.IndexOf(MmdNames, "上半身")]
+                            - MmdPos[System.Array.IndexOf(MmdNames, "下半身")]).normalized;
+            Assert.That(Vector3.Distance(pelvis.AimRestDir, expect), Is.LessThan(1e-5f));
+        }
+
+        [Test]
+        public void A_Degenerate_Sdo_Segment_Still_Refuses_To_Aim()
+        {
+            // 規則③ 借的是 SDO 的方向,所以 SDO 那端零長度時不能反過來借 MMD 的 —— センター(Bip01→Pelvis 重疊)
+            //    仍必須落在 FollowParent,否則規則① 又被繞過去。
+            var pos = (Vector3[])MmdPos.Clone();
+            pos[System.Array.IndexOf(MmdNames, "上半身")] = pos[System.Array.IndexOf(MmdNames, "下半身")];
+            Assert.AreEqual(MmdDriveMode.FollowParent, Of(Plan(MmdNames, pos), "センター").Mode);
+        }
+
         // ---------------------------------------------------------------- 真實 FEMALE.HRC 有分支,不能靠 child 檔案順序猜 Aim
         [Test]
         public void BranchedHrc_UsesCanonicalContinuation_NotTheFirstMappedSibling()

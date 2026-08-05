@@ -17,7 +17,7 @@
   python tools/mmd_retarget_validate.py --mot ...\\W_005663.MOT --pmx ...\\miku.pmx
   python tools/mmd_retarget_validate.py --compare                         # 修改前/後逐項對照
 
---mode 可以單獨關掉某條規則來做 A/B(對照 MmdRetargetPlan 的規則①②與 MmdFootIk):
+--mode 可以單獨關掉某條規則來做 A/B(對照 MmdRetargetPlan 的規則①②③與 MmdFootIk):
   --no-root-fix    センター 吃回 SDO Bip01 的世界旋轉(改壞前的行為)
   --ankle follow   足首 跟著小腿(改壞前的行為) / aim(瞄 つま先,曾經試過的錯方向) / delta(現行)
   --no-ik          關掉腳部 IK
@@ -276,8 +276,10 @@ class Rig:
                 continue
             rd = self.mpos[mc] - self.mpos[i]
             hd = np.array(self.bind[hc][:3, 3]) - np.array(self.bind[h][:3, 3])
-            if np.dot(rd, rd) < 1e-6 or np.dot(hd, hd) < 1e-6:
+            if np.dot(hd, hd) < 1e-6:      # SDO 那端退化(Bip01→Pelvis 重疊)→ 沒得瞄
                 continue
+            if np.dot(rd, rd) < 1e-6:      # MMD 那端重合(上半身/下半身 同點)→ 規則③ 借 SDO 的 rest 方向
+                rd = hd
             self.aim[i], self.aim_child[i], self.aim_dir[i] = True, hc, rd/np.linalg.norm(rd)
 
         head = b2m.get("Bip01_Head", -1)

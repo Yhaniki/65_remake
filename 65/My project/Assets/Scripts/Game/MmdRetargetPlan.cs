@@ -46,6 +46,19 @@ namespace Sdo.Game
     ///
     ///    手腕/手指不能比照辦理 —— 那裡 rest 姿勢的語義真的不同(SDO 是 T-pose、MMD 是 A-pose),世界差量會把手轉爛,
     ///    所以它們留在 FollowParent。腳沒有這個問題:站姿就是站姿。
+    ///
+    /// ③ <b>MMD 那端兩根骨重合時,aim 的 rest 方向改借 SDO 的</b>。很多 PMX 把 上半身 跟 下半身 放在同一個腰點
+    ///    (La+Darknesss 兩者相距 6.4e-5,初音是 0.063),下半身→上半身 因此量不出方向,aim 被當成退化跳過,
+    ///    下半身 退回 FollowParent —— 而它的父(グルーブ/センター)照規則① 不吃旋轉,結果整個骨盆一格都不轉。
+    ///    掛在 下半身 底下的裙子/大衣物理骨跟著永遠朝正面:人轉一圈回來,裙子還在原地。退化的只有 MMD 這一端,
+    ///    兩具骨架的 rest 都是站直、脊椎在兩邊都是世界 +Y,所以拿 SDO 的 bind 方向當 rest 方向即可 ——
+    ///    swing≈identity,twist 照樣把身體的 yaw 帶進來。離線重跑(PDANCE320_DDUNG,SDO 骨盆轉 471.6°):
+    ///
+    ///      現況        下半身 yaw span   0.0° / 裙骨   0.0°   ← 整條鏈不動
+    ///      借 SDO 方向 下半身 yaw span 471.4° / 裙骨 471.4°   ← 等於不重合模型(初音)本來就有的值
+    ///
+    ///    腳部四項指標同時變好(W_005663 + La+Darknesss):支撐腳滑動 1.06x→1.03x、腳踝高度誤差 0.77→0.22。
+    ///    rd 沒退化的模型走原路,一個數字都不動。
     /// </summary>
     public static class MmdRetargetPlan
     {
@@ -92,7 +105,8 @@ namespace Sdo.Game
                 if (hrcChild >= hrcBindPos.Count || h >= hrcBindPos.Count) continue;
                 Vector3 rd = mmdPos[mmdChild] - mmdPos[i];               // MMD rest 方向
                 Vector3 hd = hrcBindPos[hrcChild] - hrcBindPos[h];       // SDO bind 方向
-                if (rd.sqrMagnitude < 1e-6f || hd.sqrMagnitude < 1e-6f) continue;   // 退化(Bip01→Pelvis 重疊)→ 不 aim
+                if (hd.sqrMagnitude < 1e-6f) continue;                   // SDO 那端退化(Bip01→Pelvis 重疊)→ 沒得瞄
+                if (rd.sqrMagnitude < 1e-6f) rd = hd;                    // MMD 那端重合(上半身/下半身 同點)→ 規則③
                 drive[i].Mode = MmdDriveMode.Aim;
                 drive[i].AimChildHrc = hrcChild;
                 drive[i].AimRestDir = rd.normalized;
