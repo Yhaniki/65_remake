@@ -212,9 +212,12 @@ if ($code -eq 0 -and -not $SkipData) {
             $pyPack = Join-Path $PSScriptRoot 'build_pak.py'
             if (-not (Test-Path $pyPack)) { throw "找不到 $pyPack" }
 
-            # manifest 寫到 build 目錄旁邊,**不進 DATA** —— 它是每一條路徑的明文
-            # (base_avatar 那份 5.4 MB),跟著出貨等於索引加密白做。留著是因為下次產 patch 卷要拿它比對。
-            $manifestDir = Join-Path $BuildOut 'pak_manifests'
+            # 🔴 manifest 要放在**出貨資料夾外面**。它是每一條路徑的明文(base_avatar 那份 5.4 MB)——
+            #    跟著出貨等於把索引加密整個作廢,別人拿到就有完整檔案清單。
+            #    放 $BuildOut 底下不夠遠:那個資料夾最後會被改名成 Build\Dance v<版本>\,
+            #    正是要壓縮寄出去的東西。所以放到它的**上一層**(Build\pak_manifests\)。
+            #    留著是因為下次產 patch 卷要拿它比對差異。
+            $manifestDir = Join-Path (Split-Path -Parent $BuildOut) 'pak_manifests'
             Write-Host "[build] pack: $dataOut -> SDOPAK$(if ($Encrypt) { '(加密)' } else { '(明碼)' })"
             $packArgs = @($pyPack, '--source', $dataOut, '--out', $dataOut, '--manifest-dir', $manifestDir)
             if ($Encrypt) { $packArgs += '--encrypt' }

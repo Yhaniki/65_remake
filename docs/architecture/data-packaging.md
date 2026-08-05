@@ -53,6 +53,21 @@ Build/Windows/
 [`SdoExtracted.AddonDir`](../../65/My%20project/Assets/Scripts/Game/SdoExtracted.cs)、`ReplayDir`
 都不用改,也不需要寫存檔遷移程式。
 
+### 1.0 🔴 出貨時**不能**跟著寄出去的東西
+
+| 東西 | 為什麼不能寄 |
+|---|---|
+| `pak_manifests/` | **每一條路徑的明文**(`base_avatar` 那份 5.4 MB)。跟著出貨等於把索引加密整個作廢 —— 別人拿到就有完整檔案清單。但**要自己留著**:下次產 patch 卷要拿它比對差異 |
+| `test-output/` | 測試與 build 的 log |
+| `*_BurstDebugInformation_DoNotShip/` | 名字就寫了(build 腳本會自動刪) |
+
+所以 `pak_manifests` 放在**出貨資料夾的上一層**(`Build/pak_manifests/`),不是裡面 ——
+`Build/Windows/` 最後會被改名成 `Build/Dance v<版本>/`,那就是要壓縮寄出去的東西,
+放裡面等於還是寄出去了。
+
+出貨資料夾裡該有的只有:`dance.exe` + `dance_Data/` + `MonoBleedingEdge/` + `D3D12/` +
+`*.dll` + `DATA/` + `screensave/`。
+
 ### 1.1 不得有東西落在 `Build/Windows` 之外
 
 這是硬性要求。目前有四處會漏,全部要修:

@@ -267,9 +267,10 @@ if ($Pack) {
     $pyPack = Join-Path $PSScriptRoot 'build_pak.py'
     if (-not (Test-Path $pyPack)) { throw "找不到 $pyPack" }
 
-    # manifest 寫到 build 目錄旁邊，**不進 DATA** —— 它是每一條路徑的明文（base_avatar 那份 5.4 MB），
-    # 跟著出貨等於索引加密白做。留在 build 目錄是因為下次產 patch 卷要拿它比對。
-    $ManifestDir = Join-Path $BuildDir 'pak_manifests'
+    # 🔴 manifest 要放在**出貨資料夾外面**。它是每一條路徑的明文（base_avatar 那份 5.4 MB）——
+    #    跟著出貨等於把索引加密整個作廢，別人拿到就有完整檔案清單。
+    #    留著是因為下次產 patch 卷要拿它比對差異。
+    $ManifestDir = Join-Path (Split-Path -Parent $BuildDir) 'pak_manifests'
 
     Write-Host "[package] pack: $Data -> SDOPAK$(if ($Encrypt) { '（加密）' } else { '（明碼）' })"
     $packArgs = @($pyPack, '--source', $Data, '--out', $Data, '--manifest-dir', $ManifestDir)
