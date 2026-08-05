@@ -51,8 +51,15 @@ namespace Sdo.Game
         {
             switch (mode)
             {
-                case MmdMaterialRenderMode.Cutout: return hasEdge ? ShaderCutoutOutline : ShaderCutout;
-                case MmdMaterialRenderMode.Blend:  return hasEdge ? ShaderTransparentOutline : ShaderTransparent;
+                // 🔴 半透明也走 **Cutout** 那一支,不是 Transparent 那一支 —— 因為 MMD 的半透明是
+                // 「alpha 混色 + 寫深度 + 丟掉 alpha=0」(見 MmdMaterialClassifier.Apply),而 lilToon 只有
+                // LIL_RENDER==1(Cutout)那一支會 clip;Transparent 那一支不 clip,一旦開 ZWrite,全透明的
+                // texel 就會在深度緩衝裡留下看不見的牆。混色/深度/queue 都是材質上的 _SrcBlend/_ZWrite/
+                // renderQueue 決定的(見 ApplyRenderMode),所以拿 Cutout 那支 shader 一樣畫得出半透明,
+                // 差別只在它多了那個 clip —— 而那正是我們要的。裁切線由 _Cutoff 區分:
+                // Cutout=0.5,Blend=BlendClipCutoff(≈0)。
+                case MmdMaterialRenderMode.Cutout:
+                case MmdMaterialRenderMode.Blend:  return hasEdge ? ShaderCutoutOutline : ShaderCutout;
                 default:                           return hasEdge ? ShaderOpaqueOutline : ShaderOpaque;
             }
         }
@@ -217,12 +224,15 @@ namespace Sdo.Game
                     break;
 
                 case MmdMaterialRenderMode.Blend:
+                    // 半透明也寫深度 + 只丟 alpha=0 —— 理由與 MmdMaterialClassifier.Apply 那份一字不差
+                    // （整具身體是一個 SkinnedMeshRenderer，不寫深度就變成「材質順序決定誰蓋誰」）。
                     mat.SetOverrideTag("RenderType", "Transparent");
                     mat.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
                     mat.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
                     mat.SetFloat("_SrcBlendAlpha", (float)BlendMode.One);
                     mat.SetFloat("_DstBlendAlpha", (float)BlendMode.OneMinusSrcAlpha);
-                    mat.SetFloat("_ZWrite", 0f);
+                    mat.SetFloat("_ZWrite", 1f);
+                    mat.SetFloat("_Cutoff", MmdMaterialClassifier.BlendClipCutoff);
                     mat.renderQueue = (int)RenderQueue.Transparent;
                     break;
 

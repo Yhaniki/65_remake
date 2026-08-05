@@ -51,7 +51,8 @@ namespace Sdo.Game
             public bool Cloth = true;
             public bool Remote;          // 這一隻是別人(不是本機玩家)
             public string Pack = "";     // 遠端玩家身上的模型 packId(本機一律空)
-            public string BuiltFrom;     // 現在畫出來的這具身體是從哪個資料夾建的(換模型時比對用)
+            public string BuiltFrom;     // 現在畫出來的這具身體是從哪個 .pmx 建的(換模型時比對用)
+                                         // 🔴 是 .pmx 路徑不是資料夾:一個資料夾可以裝好幾個模型(見 MmdModelCatalog)
             public bool Shown;           // 上一次套用的結果是「畫 MMD」嗎(只有變了才寫 log)
         }
         private readonly List<Reg> _regs = new List<Reg>();
@@ -402,7 +403,8 @@ namespace Sdo.Game
                 if (r.Mmd != null) { if (probe) HideSdoBody(r); continue; }
                 if (r.Failed || !r.Avatar.gameObject.activeInHierarchy) continue;
                 if (r.Remote && !probe) continue;  // 遠端那條要 Directory.Exists → 節流(本機那條每幀都跑)
-                if (DirFor(r) == null) continue;   // 沒東西可建(沒選模型 / 別人沒穿 / 他的模型還沒到)
+                ResolveModel(r, out _, out string want);
+                if (want == null) continue;        // 沒東西可建(沒選模型 / 別人沒穿 / 他的模型還沒到)
                 Apply(r);
             }
         }
@@ -559,26 +561,27 @@ namespace Sdo.Game
         private bool Apply(Reg r)
         {
             if (r.Avatar == null) return false;
-            string dir = r.Failed ? null : DirFor(r);
+            string dir = null, pmxPath = null;
+            if (!r.Failed) ResolveModel(r, out dir, out pmxPath);
 
             // 已經畫著的身體不是現在該畫的那一份(換了模型 / 別人換了 / 關掉了)→ 丟掉,下面重建或就此回 SDO。
-            if (r.Mmd != null && (dir == null || !string.Equals(r.BuiltFrom, dir, StringComparison.OrdinalIgnoreCase)))
+            if (r.Mmd != null && (pmxPath == null || !string.Equals(r.BuiltFrom, pmxPath, StringComparison.OrdinalIgnoreCase)))
                 DropBody(r);
 
-            if (dir != null && r.Mmd == null)
+            if (pmxPath != null && r.Mmd == null)
             {
                 // An inactive dancer (the gender preview parks the unselected gender) can't be built yet — the rig and
                 // Magica Cloth need a live GameObject. Leave it on its SDO body; Update() swaps it the moment it's shown.
                 if (!r.Avatar.gameObject.activeInHierarchy) return true;
 
-                var pmx = ParsePmx(dir);
-                if (pmx == null) { r.Failed = true; Debug.LogWarning("[mmd] 解析不了 " + dir + " → staying on SDO body"); dir = null; }
+                var pmx = ParsePmxFile(pmxPath);
+                if (pmx == null) { r.Failed = true; Debug.LogWarning("[mmd] 解析不了 " + pmxPath + " → staying on SDO body"); pmxPath = null; }
                 else
                 {
                     // 布料是建一隻 rig 最貴的一段 → 設定關掉布料時就整組不建(不是建了再關),換場景才會明顯變快。
                     r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics);
-                    if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); dir = null; }
-                    else { r.BuiltFrom = dir; ApplyOptsTo(r.Mmd); }
+                    if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); pmxPath = null; }
+                    else { r.BuiltFrom = pmxPath; ApplyOptsTo(r.Mmd); }
                 }
             }
 
@@ -615,19 +618,37 @@ namespace Sdo.Game
         }
 
         /// <summary>
-        /// 這一隻角色要用哪個資料夾的模型,null = 畫 SDO 原本的身體。
+        /// 這一隻角色要載哪一份模型:<paramref name="dir"/> ＝貼圖的基準資料夾,<paramref name="pmxPath"/> ＝
+        /// 要解析的那個 .pmx。<paramref name="pmxPath"/> null = 畫 SDO 原本的身體。
+        ///
+        /// 🔴 <b>本機這一條一定要走 <see cref="Entry.PmxPath"/></b>,不能從資料夾反推:一個資料夾可以裝
+        /// 好幾個模型(見 <see cref="MmdModelCatalog"/>),反推只會永遠拿到同一個,設定裡選另一個等於沒選。
+        /// 遠端那一條相反 —— 我們手上只有一個下載回來的 packId 資料夾,那裡就是一包一個模型。
         ///
         /// 🔴 遠端角色**只可能**用他自己宣告的 packId。本機還沒有那份模型時回 null —— 那不是失敗,
         /// 是「還沒到」,他就先維持自己的 SDO 穿搭(絕不拿本機選的模型頂上去:那會讓同房沒穿 MMD 的人
         /// 全變成我的模型)。
         /// </summary>
-        private static string DirFor(Reg r)
+        private static void ResolveModel(Reg r, out string dir, out string pmxPath)
         {
+            dir = null; pmxPath = null;
             switch (SourceOf(r))
             {
-                case MmdSource.RemoteModel: return MmdModelStore.DirForPack(r.Pack, _models);
-                case MmdSource.LocalModel:  return Sel?.Dir;
-                default:                    return null;
+                case MmdSource.RemoteModel:
+                    string d = MmdModelStore.DirForPack(r.Pack, _models);
+                    if (string.IsNullOrEmpty(d)) return;
+                    string p;
+                    try { p = MmdModelCatalog.PickPmx(Directory.GetFiles(d)); }
+                    catch { p = null; }
+                    if (p == null) return;
+                    dir = d; pmxPath = p;
+                    return;
+
+                case MmdSource.LocalModel:
+                    var e = Sel;
+                    if (e == null || string.IsNullOrEmpty(e.PmxPath)) return;
+                    dir = e.Dir; pmxPath = e.PmxPath;
+                    return;
             }
         }
 
@@ -637,19 +658,20 @@ namespace Sdo.Game
         {
             var e = Sel;
             if (e == null) { _status = "NO MODEL"; Debug.LogWarning("[mmd] " + _lastError); return null; }
-            return ParsePmx(e.Dir);
+            return ParseEntry(e);
         }
 
-        /// <summary>解析這個資料夾裡的模型(依 .pmx 路徑快取)。同一份模型第二次要用是免費的,
-        /// 而且 <see cref="MmdAvatar"/> 的共用 mesh/材質快取是以 PmxLoader 實例為 key,所以也跟著暖著。</summary>
-        private static PmxLoader ParsePmx(string dir)
+        /// <summary>解析這一個 .pmx(依路徑快取)。同一份模型第二次要用是免費的,而且
+        /// <see cref="MmdAvatar"/> 的共用 mesh/材質快取是以 PmxLoader 實例為 key,所以也跟著暖著。</summary>
+        private static PmxLoader ParsePmxFile(string pmxPath)
         {
-            if (string.IsNullOrEmpty(dir)) return null;
-            string pmxPath;
-            try { pmxPath = MmdModelCatalog.PickPmx(Directory.GetFiles(dir)); }
-            catch { pmxPath = null; }
-            if (pmxPath == null) { _status = "NO MODEL"; return null; }
-            var e = new MmdModelCatalog.Entry { Dir = dir, PmxPath = pmxPath, Name = MmdModelCatalog.LeafName(dir) };
+            if (string.IsNullOrEmpty(pmxPath)) { _status = "NO MODEL"; return null; }
+            var e = new MmdModelCatalog.Entry
+            {
+                Dir = MmdModelCatalog.DirOf(pmxPath),
+                PmxPath = pmxPath,
+                Name = Path.GetFileNameWithoutExtension(pmxPath),
+            };
             return ParseEntry(e);
         }
 

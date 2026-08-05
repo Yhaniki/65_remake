@@ -361,18 +361,29 @@ namespace Sdo.Game
         }
 
         /// <summary><paramref name="mul"/> is the debug panel's knob; the profile's own colliderRadiusMul multiplies on
-        /// top, so a saved profile keeps its collider scale while the panel still starts from 1×.</summary>
+        /// top, so a saved profile keeps its collider scale while the panel still starts from 1×.
+        ///
+        /// 🔴 <c>SetSize</c> 只寫進 collider 自己的欄位 —— 已經在跑的 solver 讀的是註冊時抄過去的一份，
+        /// 要 <see cref="ColliderComponent.UpdateParameters"/> 才會推過去（MC2 自己的註解就這樣寫：
+        /// 「すでに実行状態の場合はこの関数を呼び出さないとプロパティの変更が反映されません」）。少了這一步，
+        /// 這根旋鈕在**任何**已經建好的身體上都是完全無效的，只有下次重建（換場景/換模型）才會生效 ——
+        /// 症狀就是「性別選擇畫面拖了沒反應，進房間就變了」：那個「變」是重建，不是這根旋鈕。
+        /// <c>cloth.SetParameterChange()</c> 推的是布料自己的參數，不含 collider 尺寸。</summary>
         public void SetColliderRadius(float mul)
         {
             _liveCol = mul;
             float m = mul * _profileColMul;
             for (int i = 0; i < _colliders.Count; i++)
             {
+                var c = _colliders[i];
+                if (c == null) continue;
                 var s = _colBaseSize[i];
-                if (_colliders[i] is MagicaSphereCollider sp) sp.SetSize(s.x * m);
-                else if (_colliders[i] is MagicaCapsuleCollider cap) cap.SetSize(s.x * m, s.y * m, s.z);   // scale radius, keep length
+                if (c is MagicaSphereCollider sp) sp.SetSize(s.x * m);
+                else if (c is MagicaCapsuleCollider cap) cap.SetSize(s.x * m, s.y * m, s.z);   // scale radius, keep length
+                else continue;
+                c.UpdateParameters();   // ← 沒有這行，上面那些 SetSize 進不了 solver
             }
-            foreach (var c in _cloths) if (c != null) c.SetParameterChange();
+            foreach (var cl in _cloths) if (cl != null) cl.SetParameterChange();
         }
 
         private static Vector3 MmdBonePos(PmxLoader pmx, string nameJp) { foreach (var b in pmx.Bones) if (b.NameJp == nameJp) return b.Position; return Vector3.zero; }

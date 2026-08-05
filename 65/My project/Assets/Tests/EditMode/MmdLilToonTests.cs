@@ -24,12 +24,15 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void CutoutAndBlendKeepTheirOwnShaderFamilies()
+        public void CutoutAndBlendBothTakeTheClippingShaderFamily()
         {
             Assert.AreEqual(MmdLilToon.ShaderCutout, MmdLilToon.ShaderNameFor(MmdMaterialRenderMode.Cutout, false));
             Assert.AreEqual(MmdLilToon.ShaderCutoutOutline, MmdLilToon.ShaderNameFor(MmdMaterialRenderMode.Cutout, true));
-            Assert.AreEqual(MmdLilToon.ShaderTransparent, MmdLilToon.ShaderNameFor(MmdMaterialRenderMode.Blend, false));
-            Assert.AreEqual(MmdLilToon.ShaderTransparentOutline, MmdLilToon.ShaderNameFor(MmdMaterialRenderMode.Blend, true));
+            // 半透明也走 Cutout 那一支:MMD 的半透明是「混色 + 寫深度 + 丟掉 alpha=0」,而 lilToon 只有
+            // Cutout(LIL_RENDER==1)那支會 clip。混色/深度是材質狀態,不是 shader 選的 → 拿它畫得出半透明,
+            // 而且不會因為開了 ZWrite 就讓全透明的 texel 在深度緩衝裡留下看不見的牆。
+            Assert.AreEqual(MmdLilToon.ShaderCutout, MmdLilToon.ShaderNameFor(MmdMaterialRenderMode.Blend, false));
+            Assert.AreEqual(MmdLilToon.ShaderCutoutOutline, MmdLilToon.ShaderNameFor(MmdMaterialRenderMode.Blend, true));
         }
 
         [Test]
@@ -123,11 +126,15 @@ namespace Sdo.Tests
         // ---------------------------------------------------------------- 混色/深度狀態
 
         [Test]
-        public void BlendMaterialsDoNotWriteDepthAndSitInTheTransparentQueue()
+        public void BlendMaterialsWriteDepthClipAtZeroAndSitInTheTransparentQueue()
         {
             var mat = NewMaterial();
             MmdLilToon.ApplyRenderMode(mat, MmdMaterialRenderMode.Blend);
-            Assert.AreEqual(0f, mat.GetFloat("_ZWrite"));
+            // 整具身體是一個 SkinnedMeshRenderer,Unity 不對 submesh 做距離排序 → 不寫深度就變成
+            // 「材質順序決定誰蓋誰」(雙馬尾蓋過袖子、髮影蓋過瀏海)。MMD 自己也是全程寫深度的。
+            Assert.AreEqual(1f, mat.GetFloat("_ZWrite"));
+            Assert.AreEqual(MmdMaterialClassifier.BlendClipCutoff, mat.GetFloat("_Cutoff"), 1e-6f,
+                "寫深度就一定要丟掉 alpha=0 的 texel,否則它們會在深度緩衝裡留下看不見的牆");
             Assert.AreEqual((int)RenderQueue.Transparent, mat.renderQueue);
             Assert.AreEqual((float)BlendMode.SrcAlpha, mat.GetFloat("_SrcBlend"));
             // alpha 通道單獨配：alpha 也用 SrcAlpha 會把底下的 A=1 變成 a²+(1−a)，在頭貼/房間的 RT 上打出半透明的洞。

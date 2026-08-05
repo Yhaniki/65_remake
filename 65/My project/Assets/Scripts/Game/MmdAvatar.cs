@@ -556,6 +556,7 @@ namespace Sdo.Game
             var shader = Shader.Find("Sdo/MmdModel") ?? Shader.Find("Unlit/Texture");
             var mats = new Material[pmx.Materials.Count];
             var _hide = sh.Hide = new bool[pmx.Materials.Count];
+            var alpha = MeasureMaterialAlpha(pmx, dir);   // 逐材質、只看它自己的 UV 區(見 MeasureMaterialAlpha)
             for (int i = 0; i < pmx.Materials.Count; i++)
             {
                 var pm = pmx.Materials[i];
@@ -568,8 +569,7 @@ namespace Sdo.Game
                 string texName = (pm.TextureIndex >= 0 && pm.TextureIndex < pmx.TexturePaths.Length) ? pmx.TexturePaths[pm.TextureIndex] : null;
                 Texture2D tex = texName != null ? LoadTexture(dir, texName) : null;
                 bool missingBaseTexture = texName != null && tex == null;
-                float midFrac = 0f, holeFrac = 0f;
-                if (tex != null) AlphaStats(tex, out midFrac, out holeFrac);
+                float midFrac = alpha[i].x, holeFrac = alpha[i].y;
                 var renderMode = MmdMaterialClassifier.Classify(pm.Diffuse.a, midFrac, holeFrac, pm.DoubleSided);
 
                 // sphere map (matcap): the MMD "shine" — eyes/skin/metal. Sampled by view normal, so NOT UV-flipped.
@@ -725,29 +725,78 @@ namespace Sdo.Game
         }
         private static int FindBoneIndex(PmxLoader pmx, string nameJp) { for (int i = 0; i < pmx.Bones.Count; i++) if (pmx.Bones[i].NameJp == nameJp) return i; return -1; }
 
-        // Per-TEXTURE cache. AlphaStats only looks at ~20k sampled texels, but GetPixels32 copies the ENTIRE texture to
-        // managed memory first (a 2048² sheet = 4M Color32 = 16 MB, allocated and thrown away). It is called once per
-        // MATERIAL and this model has 53 materials over far fewer textures — so the same sheets were being copied over
-        // and over. The answer only depends on the texture, so compute it once.
-        private static readonly Dictionary<Texture2D, Vector2> _alphaStats = new Dictionary<Texture2D, Vector2>();
+        /// <summary>取樣上限:一個材質最多看這麼多個三角形(每個取三個頂點 + 重心 = 4 個 texel)。</summary>
+        private const int MaxSampledTriangles = 8000;
 
-        private static void AlphaStats(Texture2D tex, out float midFrac, out float holeFrac)
+        /// <summary>
+        /// 每個材質的 (半透明佔比, 洞佔比) —— <b>只統計這個材質自己貼到的那塊 UV</b>。
+        ///
+        /// 🔴 這裡以前是拿「整張貼圖」的統計去餵 <see cref="MmdMaterialClassifier"/>,而 MMD 模型幾乎都是
+        /// 一張 atlas 餵好幾個材質:YYB 初音的 C.png(外套/袖子/裙子共 7 個材質)整張有 27% 的 texel 落在
+        /// 225~254 那條雜訊帶,可是袖子與外套真正貼到的那幾塊是**全不透明**的。整張統計 → 那 7 個材質全被
+        /// 判成半透明 → 全進 Transparent 佇列 → 同一個 SkinnedMeshRenderer 內改照材質順序畫 → 雙馬尾
+        /// (mat 22) 蓋過袖子 (mat 11~14)。同一份 body.png 也讓臉/身體那 8 個材質被別人的洞拖去當 cutout。
+        ///
+        /// 走訪順序是**按貼圖分組**,不是按材質:<c>GetPixels32</c> 會把整張圖複製到 managed 記憶體
+        /// (2048² = 16 MB),一次只留一張,量完就丟 —— 峰值記憶體與材質數無關。
+        /// </summary>
+        private static Vector2[] MeasureMaterialAlpha(PmxLoader pmx, string dir)
         {
-            midFrac = 0f; holeFrac = 0f;
-            if (tex == null) return;
-            if (_alphaStats.TryGetValue(tex, out var hit)) { midFrac = hit.x; holeFrac = hit.y; return; }
-            Measure(tex, out midFrac, out holeFrac);
-            _alphaStats[tex] = new Vector2(midFrac, holeFrac);
+            var outv = new Vector2[pmx.Materials.Count];
+            // 貼圖 → 用到它的材質。同一張只解一次 GetPixels32。
+            var byTexture = new Dictionary<Texture2D, List<int>>();
+            for (int i = 0; i < pmx.Materials.Count; i++)
+            {
+                var pm = pmx.Materials[i];
+                if (pm.Diffuse.a < 0.05f) continue;                    // 反正會被藏起來,不用量
+                if (pm.TextureIndex < 0 || pm.TextureIndex >= pmx.TexturePaths.Length) continue;
+                var tex = LoadTexture(dir, pmx.TexturePaths[pm.TextureIndex]);   // 已快取,不會重讀
+                if (tex == null) continue;
+                if (!byTexture.TryGetValue(tex, out var list)) byTexture[tex] = list = new List<int>();
+                list.Add(i);
+            }
+            foreach (var kv in byTexture)
+            {
+                Color32[] px;
+                try { px = kv.Key.GetPixels32(); } catch { continue; }
+                foreach (int i in kv.Value)
+                    outv[i] = MeasureUvRegion(px, kv.Key.width, kv.Key.height, pmx, pmx.Materials[i]);
+                px = null;   // 下一張之前就放掉這 16 MB
+            }
+            return outv;
         }
 
-        private static void Measure(Texture2D tex, out float midFrac, out float holeFrac)
+        /// <summary>一個材質貼到的那塊 UV 的 (半透明佔比, 洞佔比)。</summary>
+        private static Vector2 MeasureUvRegion(Color32[] px, int w, int h, PmxLoader pmx, PmxLoader.Material m)
         {
-            midFrac = 0f; holeFrac = 0f;
-            Color32[] px; try { px = tex.GetPixels32(); } catch { return; }
-            if (px.Length == 0) return;
-            int step = Mathf.Max(1, px.Length / 20000), mid = 0, hole = 0, n = 0;
-            for (int k = 0; k < px.Length; k += step) { byte a = px[k].a; if (a < 16) hole++; else if (a < 250) mid++; n++; }
-            if (n > 0) { midFrac = (float)mid / n; holeFrac = (float)hole / n; }
+            if (px == null || w <= 0 || h <= 0 || px.Length < w * h) return Vector2.zero;
+            int triCount = m.IndexCount / 3;
+            if (triCount <= 0) return Vector2.zero;
+            int step = Mathf.Max(1, triCount / MaxSampledTriangles);
+            int mid = 0, hole = 0, n = 0;
+            var quad = new Vector2[4];
+            for (int t = 0; t < triCount; t += step)
+            {
+                int o = m.IndexStart + t * 3;
+                if (o + 2 >= pmx.Indices.Length) break;
+                int i0 = pmx.Indices[o], i1 = pmx.Indices[o + 1], i2 = pmx.Indices[o + 2];
+                if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= pmx.Uvs.Length || i1 >= pmx.Uvs.Length || i2 >= pmx.Uvs.Length) continue;
+                quad[0] = pmx.Uvs[i0]; quad[1] = pmx.Uvs[i1]; quad[2] = pmx.Uvs[i2];
+                quad[3] = (quad[0] + quad[1] + quad[2]) / 3f;   // 重心:大三角形內部也要有樣本,不能只看邊
+                for (int k = 0; k < 4; k++)
+                {
+                    float u = quad[k].x, v = quad[k].y;
+                    u -= Mathf.Floor(u); v -= Mathf.Floor(v);                    // wrap = Repeat,與 shader 一致
+                    int col = Mathf.Clamp((int)(u * w), 0, w - 1);
+                    // PMX 的 UV 是 V-down(v=0 ＝ 圖的上緣);GetPixels32 的第 0 列是圖的**下**緣。
+                    int row = Mathf.Clamp((int)((1f - v) * h), 0, h - 1);
+                    byte a = px[row * w + col].a;
+                    if (MmdMaterialClassifier.IsHole(a)) hole++;
+                    else if (MmdMaterialClassifier.IsTranslucent(a)) mid++;
+                    n++;
+                }
+            }
+            return n > 0 ? new Vector2((float)mid / n, (float)hole / n) : Vector2.zero;
         }
 
         // Resolve + decode a PMX texture. NO vertical flip: the PMX's verbatim (D3D) UVs sample correctly against this

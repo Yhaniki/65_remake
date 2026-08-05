@@ -122,6 +122,54 @@ namespace Sdo.Game
             return p;
         }
 
+        /// <summary>
+        /// 只讀表頭就回答「這個 .pmx 有幾個頂點」——<b>不解析任何幾何</b>,只讀檔案最前面那幾 KB
+        /// (magic + 版本 + globals + 模型名/註解四段字串 + 頂點數)。壞檔 / 讀不到 / 註解長到超出
+        /// <see cref="ProbeBytes"/> 都回 -1(＝「不知道」,呼叫端要當成無資訊,不能當成 0)。
+        ///
+        /// 用途是 <see cref="MmdModelCatalog"/> 的「組立キット」篩選:一包模型裡幾十個 .pmx 到底哪幾個是
+        /// 完整角色、哪幾個是可以拼上去的零件(裙子/靴子/手套),零件的 mesh 依定義是成品的子集合,所以頂點數
+        /// 分得開 —— 但真的把每個檔都完整解析一遍(這包 61 個檔、~40 MB)就太貴了。
+        /// </summary>
+        public const int ProbeBytes = 64 * 1024;
+
+        /// <inheritdoc cref="ProbeVertexCount(byte[], int)"/>
+        public static int ProbeVertexCount(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return -1;
+            try
+            {
+                using (var fs = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read))
+                {
+                    var head = new byte[ProbeBytes];
+                    int got = fs.Read(head, 0, head.Length);
+                    return ProbeVertexCount(head, got);
+                }
+            }
+            catch { return -1; }
+        }
+
+        /// <summary>表頭裡的頂點數,或 -1 =「這幾個 byte 裡看不出來」。</summary>
+        public static int ProbeVertexCount(byte[] d, int len)
+        {
+            if (d == null || len < 12) return -1;
+            if (!(d[0] == (byte)'P' && d[1] == (byte)'M' && d[2] == (byte)'X' && d[3] == (byte)' ')) return -1;
+            int p = 8;                                    // magic(4) + version float(4)
+            int globals = d[p++];
+            if (globals < 1 || p + globals > len) return -1;
+            p += globals;
+            for (int i = 0; i < 4; i++)                   // 模型名 local/universal + 註解 local/universal
+            {
+                if (p + 4 > len) return -1;
+                int n = BitConverter.ToInt32(d, p); p += 4;
+                if (n < 0 || p + n > len) return -1;      // 註解比 ProbeBytes 還長 → 這裡答不出來
+                p += n;
+            }
+            if (p + 4 > len) return -1;
+            int vc = BitConverter.ToInt32(d, p);
+            return vc >= 0 ? vc : -1;
+        }
+
         private int _pos;
         private byte[] _d;
 
