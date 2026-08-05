@@ -191,3 +191,91 @@ dotnet run -c Release -- rest 4                      # [情境] [秒數] [參考
 基準(2026-08-04,player 探針,初音):Magica 路線 **20 PASS / 18 FAIL** ——
 瀏海 9/10、雙馬尾 6/10(per-chain 之前是 3/10)、領帶 4/9、裙子 2/10(刻意)。
 穿模欄:靜態情境 0.00cm / 0 幀、舞蹈情境 0.16cm / 28 幀。
+
+---
+
+## 三模型自動轉換 corpus（2026-08-05）
+
+這套 corpus 是用來驗證「任意 PMX 先經過同一套自動分析與轉換」，不是為三個模型各寫一份硬編參數。固定 fixture 記錄在
+`tools/mmd_cloth_validate/model_corpus.json`，每個 fixture 都指定確定的 PMX 與 SHA-256，避免模型包內有多個角色或材質變體時誤測到另一個檔案。
+
+| ID | fixture | 預設位置 |
+|---|---|---|
+| `ika_miku_2025` | Ika Hatsune Miku 2025 | repo 內的 `assets/MODEL/IkaHatunemiku2025` |
+| `yyb_miku_10th` | YYB Hatsune Miku 10th v1.02 | `H:/sdo/sdo_mot/bak/YYB Hatsune Miku_10th` |
+| `izayoi_sakuya_220_rq` | 十六夜咲夜 Ver2.20 RQ Type-A | `H:/sdo/sdo_mot/bak/十六夜咲夜Ver2.20_RQスタイル` |
+
+在 repo 根目錄重跑：
+
+```powershell
+python tools/mmd_cloth_validate/mmd_corpus.py
+```
+
+報告會寫到：
+
+- `test-output/mmd-physics-corpus/structural-report.json`
+- `test-output/mmd-physics-corpus/structural-report.md`
+
+外部 fixture 搬家後不用改 manifest；以環境變數覆寫根目錄即可：
+
+```powershell
+$env:MMD_FIXTURE_YYB_10TH = 'D:/MMD/YYB Hatsune Miku_10th'
+$env:MMD_FIXTURE_SAKUYA_220_RQ = 'D:/MMD/十六夜咲夜Ver2.20_RQスタイル'
+python tools/mmd_cloth_validate/mmd_corpus.py
+```
+
+也可只檢查單一模型，或做單次根目錄覆寫：
+
+```powershell
+python tools/mmd_cloth_validate/mmd_corpus.py --model yyb_miku_10th
+python tools/mmd_cloth_validate/mmd_corpus.py --root 'yyb_miku_10th=D:/MMD/YYB Hatsune Miku_10th'
+```
+
+目前三個 fixture 的結構覆蓋結果：
+
+| ID | 可對應動態剛體 | 自動分出的 chain roots | 結構等級 |
+|---|---:|---:|---|
+| `ika_miku_2025` | 650 / 650 | 47 | approximate |
+| `yyb_miku_10th` | 275 / 275 | 32 | approximate |
+| `izayoi_sakuya_220_rq` | 39 / 39 | 20 | approximate |
+
+**100% 結構對應不等於 Bullet 動作等價。** 這只證明現行轉換器可以將每個動態剛體對應到布料骨，並建立可交給 Magica Cloth 2 的 chain。它沒有證明限位、回彈、碰撞、阻尼或動作軌跡與 MMD/Bullet 一致。三個模型仍有以下風險：
+
+- YYB 與咲夜含 mode 2 剛體，目前只能近似。
+- PMX 6DOF joint 的線性位移限位/彈簧沒有被 BoneCloth 完整保留。
+- 作者的 rigidbody joint graph 可能分支、成環，或不同於 bone parent hierarchy；現行轉換會將它簡化成 bone chains。
+- 動態剛體之間的形狀、group/mask 與剛體碰撞並未原樣保留；YYB 與咲夜的 kinematic box 也會被近似。
+
+因此 structural corpus 是「自動轉換的入口與結構覆蓋」回歸測試；下面的 player probe 則證明同一套 runtime 轉換在三個 fixture 上能完成基本模擬。
+
+### 三模型 player probe
+
+`run_magica_probe.ps1` 可以用 `-ModelPath` 指定任意 PMX、`-ModelId` 標記 fixture，並用 `-OutputDir` 將每個模型的結果隔離在目前 worktree 內。第一個模型 build player，其餘模型加 `-SkipBuild` 重用同一份 `dance.exe`：
+
+```powershell
+./tools/mmd_cloth_validate/run_magica_probe.ps1 `
+  -ModelPath 'assets/MODEL/IkaHatunemiku2025/Ika-HatsuneMiku 2025-JP.Pmx' `
+  -ModelId ika_miku_2025 `
+  -OutputDir 'test-output/mmd-physics-corpus/player/ika_miku_2025'
+
+# YYB 與咲夜使用 manifest 中的 PMX/ID，並加 -SkipBuild。
+```
+
+每次 probe 都有嚴格 gate，任一項失敗就不接受該輪結果：
+
+- 輸出必須剛好包含 `rest`、`turn`、`walk`、`spin`、`dance` 五個情境，不可缺檔或混入前一輪的額外情境。
+- `model.json` 記錄的 SHA-256 必須與 `-ModelPath` 的實際 PMX 一致。
+- runtime 必須驗證所有 physics bone 每個採樣都是 finite；任何 NaN/Infinity 都失敗。
+- 四條 trace chain 不能全部剛性不動（相對形變門檻 1 mm），否則視為 MC2 沒有 step。
+
+最終結果來自同一份 player build；「接受幀數」是五個情境合計，`warmup dropped` 是 finite gate 允許在正式錄製前丟棄的暖機幀：
+
+| ID | bones / rigid / dynamic / structural roots | trace chains | 接受幀數 | warmup dropped | 最大形變 | 最大穿模深度 |
+|---|---:|---:|---:|---:|---:|---:|
+| `ika_miku_2025` | 815 / 723 / 650 / 47 | 4 | 4,293 | 1 | 1.0627 m | 0.0016 m |
+| `yyb_miku_10th` | 439 / 298 / 275 / 32 | 4 | 10,743 | 0 | 0.6486 m | 0.0656 m |
+| `izayoi_sakuya_220_rq` | 171 / 58 / 39 / 20 | 4 | 23,934 | 0 | 0.0271 m | 0 m |
+
+原始錄製在 `test-output/mmd-physics-corpus/player/<id>/magica_<scenario>.json`，模型身分在同目錄的 `model.json`，嚴格 gate 摘要在 `probe-validation.json`。結構報告仍在 `test-output/mmd-physics-corpus/structural-report.json` 與 `structural-report.md`。
+
+這證明 **3/3 player smoke stability**：三個模型都能載入、建立 MC2 cloth、完成五情境並產生非剛性軌跡。它仍然 **不是 MMD/Bullet 動作等價證明**；最大形變是 cloth liveness 證據，不代表動作正確。YYB 的穿模是真實轉換缺口：`dance` 有 520 / 2,689 幀命中，`turn` 有 4 / 1,777 幀命中，而非可以忽略的 probe 雜訊。mode 2、線性 joint、rigidbody graph 與碰撞簡化等結構風險也仍未解決；要判斷 Unity 中是否接近 MMD，仍需以相同動作、fixed timestep 與可信的 Bullet 參考軌跡比較。

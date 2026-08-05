@@ -23,6 +23,8 @@ Shader "Sdo/MmdModel"
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend ("Dst Blend", Float) = 0
+        [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlendAlpha ("Src Blend Alpha", Float) = 1
+        [Enum(UnityEngine.Rendering.BlendMode)] _DstBlendAlpha ("Dst Blend Alpha", Float) = 0
         _ZWrite ("ZWrite", Float) = 1
     }
     SubShader
@@ -33,7 +35,9 @@ Shader "Sdo/MmdModel"
         Pass
         {
             Cull [_Cull]
-            Blend [_SrcBlend] [_DstBlend]
+            // RGB uses normal straight-alpha blending. Alpha is configured separately: using SrcAlpha for alpha too
+            // turns A=1 underneath into a²+(1-a), punching translucent holes into room/portrait RenderTextures.
+            Blend [_SrcBlend] [_DstBlend], [_SrcBlendAlpha] [_DstBlendAlpha]
             ZWrite [_ZWrite]
             CGPROGRAM
             #pragma vertex vert

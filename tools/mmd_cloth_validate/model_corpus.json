@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "id": "ika_miku_2025",
+      "label": "Ika Hatsune Miku 2025",
+      "root": "${REPO_ROOT}/assets/MODEL/IkaHatunemiku2025",
+      "pmx": "Ika-HatsuneMiku 2025-JP.Pmx",
+      "sha256": "C15DC8096225945FE5569C6FD4C9C007A677D3C3F04B7B57A8AB31812CFF86BF"
+    },
+    {
+      "id": "yyb_miku_10th",
+      "label": "YYB Hatsune Miku 10th v1.02",
+      "root_env": "MMD_FIXTURE_YYB_10TH",
+      "root": "H:/sdo/sdo_mot/bak/YYB Hatsune Miku_10th",
+      "pmx": "YYB Hatsune Miku_10th_v1.02.pmx",
+      "sha256": "2E75F6284BC17C3F331E66E3D4F2E55F04B0DD427C0A5FCA0751A5371FAB8853"
+    },
+    {
+      "id": "izayoi_sakuya_220_rq",
+      "label": "Izayoi Sakuya Ver2.20 RQ Type-A",
+      "root_env": "MMD_FIXTURE_SAKUYA_220_RQ",
+      "root": "H:/sdo/sdo_mot/bak/十六夜咲夜Ver2.20_RQスタイル",
+      "pmx": "十六夜咲夜Ver2.20_RQスタイル/十六夜咲夜Ver2.20_RQスタイル/01-モデル/十六夜咲夜/RQ01_十六夜咲夜Ver2.20_Type-A(ダンス_帽子_ポニテA_チューブトップ_ボレロ_ショーパン_ピンヒール).pmx",
+      "sha256": "07C2AE8485910983C4B240C71D1F149E21BE4428E2E62A3022AC91B045E25FEC"
+    }
+  ]
+}

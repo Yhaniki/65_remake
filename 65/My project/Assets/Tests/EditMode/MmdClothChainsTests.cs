@@ -300,8 +300,11 @@ namespace Sdo.Tests
         [Test]
         public void AngularDampingOnlyCountsWhereItBeatsTheLinearOne()
         {
-            // twintail-shaped: barely any linear damping, but authored angular 2.0 (Bullet clamps to 1)
-            Assert.AreEqual(0.5f, MmdClothChains.EffectiveDamping(0.2f, 2f), 1e-4f);
+            // twintail-shaped: barely any linear damping, but authored angular 2.0. Above 1 is past Bullet's clamp =
+            // pure "settle quickly" intent, so it counts fully; at half weight the twintails kept ringing.
+            Assert.AreEqual(1f, MmdClothChains.EffectiveDamping(0.2f, 2f), 1e-4f);
+            // an ORDINARY angular damping still counts half — a chained bone's rotation is constrained by its neighbours
+            Assert.AreEqual(0.5f, MmdClothChains.EffectiveDamping(0.2f, 1f), 1e-4f);
             // skirt/tie/fringe-shaped: the linear term already dominates → unchanged
             Assert.AreEqual(0.999f, MmdClothChains.EffectiveDamping(0.999f, 1f), 1e-4f);
             Assert.AreEqual(0.537f, MmdClothChains.EffectiveDamping(0.537f, 0.995f), 1e-4f);

@@ -293,12 +293,16 @@ namespace Sdo.Game
         /// clamps that to 1 = the angular velocity is gone within the second) — reading only the linear term made them
         /// the least damped thing on the model, which measured as "never settles" and a 3.5× over-strong spin fling
         /// against the reference sim. The rotation of a bone in a chain is not free, though (its neighbours constrain
-        /// it), but it is taken at FULL weight: authoring 2.0 is how MMD says "settle quickly", and at half weight the
-        /// twintails kept ringing — reference settles them in 1.9 s, the probe measured "never", and on screen that is
-        /// springy bouncing. It only matters where it EXCEEDS what the linear term already removes, which leaves the
-        /// skirt/tie/fringe (authored linear 0.5…0.999) untouched.</summary>
-        public static float EffectiveDamping(float linearDamp, float angularDamp, float angularWeight = 1f)
-            => Mathf.Max(Mathf.Clamp01(linearDamp), Mathf.Clamp01(angularDamp) * angularWeight);
+        /// it), so an ORDINARY angular damping is worth roughly HALF a linear one. A value ABOVE 1 is different: Bullet
+        /// clamps it, so it buys the author nothing inside the sim and is purely how MMD says "settle quickly" — that
+        /// one is taken at FULL weight, because at half the twintails kept ringing (reference settles them in 1.9 s,
+        /// the probe measured "never", and on screen that is springy bouncing). Weighting EVERY angular term fully
+        /// instead would also drag the skirt/tie root damping 0.5 → 0.995 (they are authored angular 0.99…1.0), which
+        /// is not what the twintail fix was after: the probe measured that as ~40% less droop and stream on both.
+        /// Either way it only matters where it EXCEEDS what the linear term already removes, so the skirt/tie/fringe
+        /// (authored linear 0.5…0.999) stay untouched.</summary>
+        public static float EffectiveDamping(float linearDamp, float angularDamp, float angularWeight = 0.5f)
+            => Mathf.Max(Mathf.Clamp01(linearDamp), Mathf.Clamp01(angularDamp) * (angularDamp > 1f ? 1f : angularWeight));
 
         /// <summary>The authored data → the Magica knobs. Unchanged formulas from the per-part converter; what changed
         /// is that they are now fed ONE chain's numbers instead of a whole part's average.</summary>
