@@ -92,6 +92,10 @@ namespace Sdo.Settings
         /// <summary>Choice：目前值在選項裡的索引（找不到 → 0）。</summary>
         public int GetChoiceIndex() => Math.Max(0, RawChoiceIndex());
 
+        /// <summary>Choice：目前值在選項裡的索引，**找不到回 -1**（動態選項要分得出「不在清單裡」：
+        /// 下拉選單靠它決定要不要把某一列標成「選中」—— 設定檔指名的模型沒裝時，一列都不該被標起來）。</summary>
+        public int SelectedChoiceIndex() => RawChoiceIndex();
+
         /// <summary>Choice：目前值在選項裡的索引，**找不到回 -1**（動態選項要分得出「不在清單裡」）。</summary>
         private int RawChoiceIndex()
         {
@@ -114,18 +118,29 @@ namespace Sdo.Settings
             Set?.Invoke(opts[i]);
         }
 
+        /// <summary>Choice：直接選第 <paramref name="i"/> 個選項（下拉選單用；越界＝不動作）。</summary>
+        public void SelectChoice(int i)
+        {
+            var opts = Options();
+            if (i < 0 || i >= opts.Length) return;
+            Set?.Invoke(opts[i]);
+        }
+
+        /// <summary>Choice：第 <paramref name="i"/> 個選項的顯示名稱（有 <see cref="ChoiceLabels"/> 就用它）。</summary>
+        public string ChoiceTextAt(int i)
+        {
+            var opts = Options();
+            if (i < 0 || i >= opts.Length) return "";
+            return ChoiceLabels != null && i < ChoiceLabels.Length ? ChoiceLabels[i] : opts[i];
+        }
+
         /// <summary>Choice：目前值的顯示名稱。</summary>
         public string ChoiceText()
         {
-            var opts = Options();
             int i = RawChoiceIndex();
-            if (i < 0)
-            {
-                var cur = (Get?.Invoke() ?? "").Trim();
-                return UnknownChoiceText != null ? UnknownChoiceText(cur) : cur;
-            }
-            if (ChoiceLabels != null && i < ChoiceLabels.Length) return ChoiceLabels[i];
-            return opts[i];
+            if (i >= 0) return ChoiceTextAt(i);
+            var cur = (Get?.Invoke() ?? "").Trim();
+            return UnknownChoiceText != null ? UnknownChoiceText(cur) : cur;
         }
 
         /// <summary>Slider：目前值的顯示字串（不能打字的那種才用 <see cref="Format"/>）。</summary>

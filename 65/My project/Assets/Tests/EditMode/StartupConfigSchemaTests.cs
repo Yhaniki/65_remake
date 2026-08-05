@@ -204,6 +204,60 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Dynamic_Choice_Picks_Straight_From_The_Dropdown()
+        {
+            // 下拉選單是直接選第幾個（不是一格一格推過去）——裝了幾十個模型時那才是唯一找得到人要的那個的方式。
+            var f = StartupConfigSchema.ByKey("mmdModel");
+            var saved = StartupConfigSchema.MmdModelsProvider;
+            try
+            {
+                StartupConfigSchema.MmdModelsProvider = () => new[] { RoomConfig.mmdModelNone, "Miku", "Rin" };
+                f.SelectChoice(2);
+                Assert.AreEqual("Rin", RoomConfig.mmdModel);
+                Assert.AreEqual(2, f.SelectedChoiceIndex());
+                f.SelectChoice(0);
+                Assert.AreEqual(RoomConfig.mmdModelNone, RoomConfig.mmdModel, "第一列＝不使用");
+
+                // 越界（清單在按下去那一刻剛好被重掃過）→ 不動作，不能把值寫成空的
+                f.SelectChoice(9);
+                f.SelectChoice(-1);
+                Assert.AreEqual(RoomConfig.mmdModelNone, RoomConfig.mmdModel);
+            }
+            finally { StartupConfigSchema.MmdModelsProvider = saved; }
+        }
+
+        [Test]
+        public void Choice_Rows_Show_Their_Labels_Not_The_Raw_Values()
+        {
+            // 下拉每一列畫的是 ChoiceTextAt(i)：有 ChoiceLabels 就用人看得懂的那個。
+            var f = StartupConfigSchema.ByKey("DifficultyCalc");
+            Assert.AreEqual("MinaCalc (MSD)", f.ChoiceTextAt(0));
+            Assert.AreEqual("osu! 星數", f.ChoiceTextAt(1));
+            Assert.AreEqual("", f.ChoiceTextAt(5), "越界不能爆");
+            f.SelectChoice(1);
+            Assert.AreEqual("osu", RoomConfig.difficultyCalc);
+            Assert.AreEqual(f.ChoiceTextAt(1), f.ChoiceText());
+        }
+
+        [Test]
+        public void Dynamic_Choice_Marks_Nothing_When_The_Value_Is_Not_Installed()
+        {
+            // 下拉靠 SelectedChoiceIndex 決定要把哪一列標成「選中」。設定檔指名的模型沒裝時，
+            // 一列都不該被標起來（GetChoiceIndex 會回 0 ＝ 誤標成第一列「不使用」）。
+            var f = StartupConfigSchema.ByKey("mmdModel");
+            var saved = StartupConfigSchema.MmdModelsProvider;
+            try
+            {
+                StartupConfigSchema.MmdModelsProvider = () => new[] { RoomConfig.mmdModelNone, "Miku" };
+                f.Set("NotInstalled");
+                Assert.AreEqual(-1, f.SelectedChoiceIndex());
+                f.Set("Miku");
+                Assert.AreEqual(1, f.SelectedChoiceIndex());
+            }
+            finally { StartupConfigSchema.MmdModelsProvider = saved; }
+        }
+
+        [Test]
         public void Dynamic_Choice_Shows_A_Value_That_Is_Not_Installed_Verbatim()
         {
             // 設定檔指名的模型被刪掉/還沒掃到時，面板要照實說「找不到」而不是默默跳成別的模型
