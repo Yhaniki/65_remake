@@ -339,18 +339,33 @@ namespace Sdo.Net.Server
         ///
         /// 換歌會**保留所有人的準備意願,並把所有人的 avail 設回 unknown**。
         /// availability 重新確認為 have 前不能開始；下載完成後原本已準備的人不必再按一次。
+        ///
+        /// **同一首歌只換難度**是第三種情形(不是重送、也不是換歌):換上新的那份參照,
+        /// 但 avail / ready 都不動 —— 難度不影響「我有沒有這首歌」。
         /// </summary>
         public NetRoomOp SetSong(int actorId, NetSongRef song)
         {
             if (!_state.IsHost(actorId)) return NetRoomOp.NotHost;
             if (_state.Status != RoomStatus.Open) return NetRoomOp.BadState;
 
-            // 🔴 **同一張譜重送一次不算換歌** —— 直接返回,不要把大家的 avail 打回 unknown。
+            // 🔴 **同一張譜、同一個難度重送一次不算換歌** —— 直接返回,不要把大家的 avail 打回 unknown。
             // 房主的 client 每次進房間畫面都會發布一次(含遊戲結束回房),那不是換歌;
             // 但重設 avail 會讓所有人重新回報,缺歌的人於是「莫名其妙又開始傳歌一次」。
             // 實機就是這樣:沒換歌,結算回房卻突然傳一次歌。
-            // 用 SameChartAs 而不是自己比 —— 它只比識別欄位(標題會因簡繁/metadata 而不同)。
-            if (song != null && song.SameChartAs(_state.Song)) return NetRoomOp.Ok;
+            // 用 SameChoiceAs 而不是自己比 —— 它只比識別欄位 + 難度(標題會因簡繁/metadata 而不同)。
+            if (song != null && song.SameChoiceAs(_state.Song)) return NetRoomOp.Ok;
+
+            // 🔴 **同一首歌只換難度**:換上新的那份就好,avail / ready 一個都不動 ——
+            // 「我有沒有這首歌」跟難度無關(同一個檔,三個難度都在裡面),清掉只會讓缺歌的人再傳一次歌。
+            // 少了這一段的後果不是「難度不同步」而已:client 那邊同樣的守門會讓它根本不送,
+            // server 手上的難度永遠停在進房時預設的 easy,開場 matchStarting 再把房主自己選的 hard 蓋回 easy
+            // (見 NetSongRef.SameChoiceAs)。
+            if (song != null && song.SameChartAs(_state.Song))
+            {
+                _state.Song = song;
+                Touch();
+                return NetRoomOp.Ok;
+            }
 
             _state.Song = song;
 

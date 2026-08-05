@@ -435,6 +435,34 @@ namespace Sdo.Tests
             Assert.AreEqual(Availability.Unknown, r.State.SeatOf(User(Bob).UserId).Avail);
         }
 
+        [Test]
+        public void ChangingOnlyTheDifficultyIsStoredWithoutResettingAvailability()
+        {
+            // 🔴 「房主選了 hard,進遊戲還是 easy」的 server 那一半。
+            // 官方歌三個難度共用同一個 gn → SameChartAs 回 true → 舊寫法直接 return,
+            // server 手上的難度永遠停在第一次發布的 easy,而開場 matchStarting 帶的就是那一份。
+            // 但同一首歌換難度**不是**換歌:「我有沒有這首歌」沒有改變 → avail / ready 一個都不能動,
+            // 否則缺歌的人會因為房主按了一下難度就重傳一次歌。
+            var r = MakeRoom();
+            JoinMany(r, Bob);
+            SetSongAndHave(r, Host, Bob);
+            Assert.AreEqual(NetRoomOp.Ok, r.SetReady(Bob, true));
+
+            var hard = OfficialSong();
+            hard.Difficulty = 2;
+            hard.ChartIndex = 2;
+            int rev = r.State.Rev;
+            Assert.AreEqual(NetRoomOp.Ok, r.SetSong(Host, hard));
+
+            Assert.AreEqual(2, r.State.Song.Difficulty, "換難度一定要進到 server 手上那份");
+            Assert.AreEqual(2, r.State.Song.ChartIndex);
+            Assert.Greater(r.State.Rev, rev, "全房要收到新的快照,難度顯示才跟得上");
+            Assert.AreEqual(Availability.Have, r.State.SeatOf(User(Bob).UserId).Avail,
+                "同一首歌換難度不是換歌 —— 不能把大家打回 unknown 再傳一次");
+            Assert.AreEqual(Availability.Have, r.State.SeatOf(User(Host).UserId).Avail);
+            Assert.IsTrue(r.State.SeatOf(Bob).Ready, "也不該清掉準備意願");
+        }
+
         // ==================== R6:離開 idempotent ====================
 
         [Test]

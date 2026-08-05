@@ -86,6 +86,20 @@ namespace Sdo.Net
                 && ChartIndex == other.ChartIndex;
         }
 
+        /// <summary>
+        /// 房主**選的東西**完全一樣嗎? = 同一張譜(<see cref="SameChartAs"/>)**而且同一個難度**。
+        ///
+        /// 🔴 為什麼難度要另外算一條:官方歌三個難度共用同一個 <see cref="Gn"/>,所以
+        /// <see cref="SameChartAs"/> 對「同一首歌 easy → hard」會回 true —— 那是識別層正確的答案
+        /// (確實是同一個檔),但拿它當「房間選的有沒有變」就會把換難度整個吃掉:
+        /// client 不送(<c>NetSongPublisher.SameRoomSelection</c>)、server 也不收(<c>NetRoom.SetSong</c>)
+        /// → server 手上那份的難度永遠停在第一次發布的值(進房預設是 easy)→ 開場 matchStarting
+        /// 帶著它回來,把房主**自己**的 session 難度蓋回 easy。
+        /// (實機症狀:房主選了 hard,進遊戲還是 easy;換一首別的歌就正常 —— 因為那時 gn 變了。)
+        /// </summary>
+        public bool SameChoiceAs(NetSongRef other)
+            => SameChartAs(other) && Difficulty == other.Difficulty && ChartIndex == other.ChartIndex;
+
         // ---- codec ----
 
         public JObj Encode()
