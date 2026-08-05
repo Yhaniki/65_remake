@@ -963,7 +963,7 @@ namespace Sdo.Game
             // 只在 Layout 階段重篩：IMGUI 的 Layout 與 Repaint 兩趟必須產生一樣多的控制項，
             // 在 Repaint 時改清單長度會直接丟 "GUILayout: Mismatched LayoutGroup"。
             if (Event.current.type == EventType.Layout) Refilter();
-            GUILayout.Label($"{_filtered.Count} / {SongCatalog.Primary.Count} 首　搜尋：名稱／曲師／gn／編號 #fileId　（點一下換歌，難度用 Tab）");
+            GUILayout.Label($"{_filtered.Count} / {SongCatalog.Primary.Count} 首　搜尋：名稱／曲師／gn／編號 #fileId（限官方歌）　（點一下換歌，難度用 Tab）");
             _listScroll = GUILayout.BeginScrollView(_listScroll);
             int shown = 0;
             foreach (var e in _filtered)
@@ -983,6 +983,7 @@ namespace Sdo.Game
         //
         // 搜尋比對交給 SongCatalog.Matches（名稱／曲師／gn／fileId 編號都吃）：打編號能直接找到歌，
         // 而且 fileId 跟 gn 檔名的號碼不同（k 譜是 10000+N），拿編號去比 gn 是找不到的 —— 這正是這個功能的用處。
+        // 編號那條路**只認官方歌**：外部歌的 fileId 是掃描流水號，不是編號（理由寫在 SongCatalog.Matches）。
         private void Refilter()
         {
             string q = (_search ?? "").Trim();

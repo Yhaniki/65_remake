@@ -332,12 +332,18 @@ namespace Sdo.Game
             => float.IsNaN(ms) ? 0f : (ms < -MaxOffsetMs ? -MaxOffsetMs : (ms > MaxOffsetMs ? MaxOffsetMs : ms));
 
         /// <summary>
-        /// 這首歌是否符合搜尋字串 —— 比對 標題／曲師／gn 檔名／<b>fileId 編號</b>，全部是 case-insensitive 子字串。
-        /// 空字串／null／全空白 → 一律符合（＝不過濾）。純邏輯、不碰硬碟，給歌單搜尋用（見 SongCatalogSearchTests）。
+        /// 這首歌是否符合搜尋字串 —— 比對 標題／曲師／gn 檔名／<b>fileId 編號（只有官方歌）</b>，
+        /// 全部是 case-insensitive 子字串。空字串／null／全空白 → 一律符合（＝不過濾）。
+        /// 純邏輯、不碰硬碟，給歌單搜尋用（見 SongCatalogSearchTests）。
         ///
         /// fileId 是歌曲編號，封面圖（<c>NNNN.PNG</c>）、試聽（<c>exper/NNNN.ogg</c>）、編舞（<c>DANCE/NNNN.DPS</c>）都用它，
         /// 跟 gn 檔名裡的號碼**不一樣**：sdom0001<b>k</b>.gn 的 fileId 是 10001、sdom0001<b>t</b>.gn 是 1。
         /// 所以「照封面上的編號找歌」只有這個欄位辦得到 —— 拿編號去比 gn 子字串是找不到的。
+        ///
+        /// 🔴 <b>外部歌（<see cref="Entry.external"/>）不吃編號比對</b>：它們沒有官方編號，
+        /// <c>fileId</c> 是掃描時發的流水號 <c>-(第幾首 + 1000)</c>（見 ExternalSongLibrary.ToEntry）——
+        /// 換一台電腦就完全不同、玩家也從來沒看過這個數字。放著比對只會讓「打 1002 找官方 1002 號」
+        /// 順手撈出 fileId = -1002 的那首外部歌（負號中間的數字照樣是子字串）。編號查只對官方歌有意義。
         /// </summary>
         public static bool Matches(Entry e, string query)
         {
@@ -345,8 +351,9 @@ namespace Sdo.Game
             if (string.IsNullOrWhiteSpace(query)) return true;
             query = query.Trim();
             return Has(e.title, query) || Has(e.artist, query) || Has(e.gn, query)
-                || e.fileId.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                       .IndexOf(query, StringComparison.Ordinal) >= 0;   // 編號一律 ASCII 數字 → Ordinal
+                || (!e.external
+                    && e.fileId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                           .IndexOf(query, StringComparison.Ordinal) >= 0);   // 編號一律 ASCII 數字 → Ordinal
         }
 
         private static bool Has(string hay, string needle)
