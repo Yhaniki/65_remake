@@ -44,6 +44,34 @@ namespace Sdo.Game
             return pos;
         }
 
+        /// <summary>
+        /// 旁觀席專用的相機平移。旁觀者站在官方 looker 位置上不能走動(<see cref="RoomLayout.SpectatorAnchors"/>),
+        /// 所以左右鍵改成推「相機錨點」的 X:人不動、視角橫移過去看房間裡的別人。
+        /// 上/下(dir 0/2)不動 —— 房間相機的 Z 是跟著人走的,人不走就沒有前後。
+        /// 速度與走路同一條式子(<see cref="Step"/>),夾在相機停止框的 X 範圍內,免得推到框外要按很久才回得來。
+        /// </summary>
+        public static float StepCameraPanX(float anchorX, int dir, float dtMs, float speedMult, float minX, float maxX)
+        {
+            float d = dtMs * MoveScale * speedMult;
+            if (dir == 1) anchorX -= d;
+            else if (dir == 3) anchorX += d;
+            return Mathf.Clamp(anchorX, minX, maxX);
+        }
+
+        /// <summary>
+        /// 旁觀席專用的相機推軌(拉遠/拉近)。房間相機看的方向就是 +Z,所以「拉近」＝把眼睛往 +Z 推向站位、
+        /// 「拉遠」＝往 −Z 退開:上(dir 0)拉近、下(dir 2)拉遠,跟走路時上=往房間深處走的方向感一致。
+        /// 左/右(dir 1/3)不動 —— 那是 <see cref="StepCameraPanX"/> 的橫移。
+        /// <paramref name="minZ"/>=後牆前的極限(再退就穿牆)、<paramref name="maxZ"/>=最近距離(再近就穿進人身上)。
+        /// </summary>
+        public static float StepCameraDollyZ(float eyeZ, int dir, float dtMs, float speedMult, float minZ, float maxZ)
+        {
+            float d = dtMs * MoveScale * speedMult;
+            if (dir == 0) eyeZ += d;         // UP → 眼睛往前推(拉近)
+            else if (dir == 2) eyeZ -= d;    // DOWN → 眼睛往後退(拉遠)
+            return Mathf.Clamp(eyeZ, minZ, Mathf.Max(minZ, maxZ));
+        }
+
         /// <summary>Clamp X/Z to the room walk box (RoomLayout.Min/MaxX/Z); Y is left free (StateRoom_ClampCameraPos).</summary>
         public static Vector3 Clamp(Vector3 pos)
         {

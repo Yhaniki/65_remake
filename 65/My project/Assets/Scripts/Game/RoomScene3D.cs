@@ -60,6 +60,9 @@ namespace Sdo.Game
         public float cameraEyeRise = 20f;                        // eye sits this much ABOVE the head → slight down-tilt (官方 eye 比頭高一點)
         public float cameraBackDistance = -235f;                 // eye Z offset from the anchor (signed; X locked)
         public float cameraEyeMinZ = -378f;                      // keep the eye in front of the back wall (no clip)
+        // 旁觀席的推軌極限(人不能走,鏡頭自己拉遠拉近 —— 見 Update 的旁觀分支)。遠端就用 cameraEyeMinZ
+        // (退到後牆前為止);近端是「錨點再往前這麼多」,別讓鏡頭推進站著的人身體裡。
+        public float cameraZoomNearDistance = -60f;
         // CAMERA stop box — SEPARATE from the avatar walk (官方: 人還能繼續往下/左右走一段, 但 camera 提早停). The camera
         // anchor is clamped here and the camera LOOKS at the anchor, so it stops at this box while the avatar keeps
         // walking via the MASK (furniture collision) and drifts toward the frame edge. Tighter than the mask floor on
@@ -94,6 +97,8 @@ namespace Sdo.Game
         private bool _walking;
         private bool _ready;
         private int _localSeat;       // 本機座位 → 出生點(見 SpawnSpot);離線恆 0
+        private float _camPanX;       // 相機錨點 X:座位上=本機位置,旁觀席=左右鍵推出來的視角(見 UpdateCamera)
+        private float _camEyeZ;       // 眼睛 Z:座位上=錨點+固定後退,旁觀席=上/下鍵推出來的遠近(同上)
         private bool _hasWalked;      // 本機走過一步了嗎 —— 走過之後就不許再被 SetLocalSeat 挪動
 
         public float headMarkerRise = 18f;   // world Y above the head bone for the floating head portrait (EXE +15)
@@ -153,6 +158,11 @@ namespace Sdo.Game
             if (first && _hasWalked) return;           // 晚到的快照 + 已經自己走過 → 位置不動
             Vector3 spawn = SpawnSpot(seat);
             _walkPos = new Vector3(spawn.x, floorY, spawn.z);
+            // 搬到新 slot → 相機錨點跟著搬。旁觀席之後就靠方向鍵自己推(UpdateCamera 不再寫回人的位置),
+            // 所以這裡不對齊的話,站上旁觀位的那一刻鏡頭會留在原本座位那邊、看不到自己,而且遠近會沿用
+            // 上一個站位算出來的值(旁觀位的 Z 跟座位差很多 → 一進去就貼臉或退到牆邊)。
+            _camPanX = Mathf.Clamp(_walkPos.x, cameraBoundsMin.x, cameraBoundsMax.x);
+            _camEyeZ = Mathf.Max(CamAnchorZ + cameraBackDistance, cameraEyeMinZ);
             ApplyAvatarTransform();
         }
 
@@ -1086,6 +1096,26 @@ namespace Sdo.Game
             }
 
             int dir = InputEnabled ? CurrentDir() : -1;   // 選歌 modal 開著時凍結走動(房間仍在後面 render)
+
+            // 🔴 旁觀席(slot 6..15)不能走動:交出座位就站上官方的 looker 位置看戲,那十種 cat-0x21
+            // 姿勢就是「他在旁觀」在畫面上的樣子,走來走去等於沒有旁觀這個狀態。方向鍵整組改成運鏡:
+            // 左右 = 橫移看房間裡的別人,上下 = 拉近/拉遠。
+            if (IsSpectatorSlot(_localSeat))
+            {
+                if (_walking) { _walking = false; _avatar.SetClip(_idleMot); ApplyAvatarTransform(); }
+                if (dir >= 0)
+                {
+                    float dtMs = Time.deltaTime * 1000f;
+                    _camPanX = RoomMovement.StepCameraPanX(_camPanX, dir, dtMs, walkSpeed,
+                                                           cameraBoundsMin.x, cameraBoundsMax.x);
+                    _camEyeZ = RoomMovement.StepCameraDollyZ(_camEyeZ, dir, dtMs, walkSpeed,
+                                                             cameraEyeMinZ, CamEyeNearZ);
+                }
+                TickHover();
+                UpdateCamera();
+                return;
+            }
+
             if (dir >= 0)
             {
                 if (_chatActionUntil > 0f)
@@ -1119,6 +1149,12 @@ namespace Sdo.Game
             TickHover();
             UpdateCamera();
         }
+
+        /// <summary>相機錨點的 Z(＝人的 Z 夾進相機停止框)。眼睛與推軌極限都相對它算。</summary>
+        private float CamAnchorZ => Mathf.Clamp(_walkPos.z, cameraBoundsMin.y, cameraBoundsMax.y);
+
+        /// <summary>旁觀推軌的近端:錨點再往前 <see cref="cameraZoomNearDistance"/>。</summary>
+        private float CamEyeNearZ => CamAnchorZ + cameraZoomNearDistance;
 
         // current movement direction from the held arrow keys (priority UP/DOWN/LEFT/RIGHT), or -1 if none.
         private static int CurrentDir()
@@ -1165,9 +1201,22 @@ namespace Sdo.Game
             // never YAWs the camera; it only translates in X and stops at the X box edge (人漂到側邊、相機不左右轉). In Z,
             // the eye is clamped but LOOK uses the REAL (unclamped) avatar Z, so walking FRONT/BACK PITCHES the camera
             // (前後有轉) to keep tracking the avatar past the Z stop. Y looks at the head (50); eye sits above it.
-            float ax = Mathf.Clamp(_walkPos.x, cameraBoundsMin.x, cameraBoundsMax.x);
-            float az = Mathf.Clamp(_walkPos.z, cameraBoundsMin.y, cameraBoundsMax.y);
-            float ez = Mathf.Max(az + cameraBackDistance, cameraEyeMinZ);
+            // 相機錨點 X:平常鎖在人身上(走路 → 相機跟著平移);旁觀席人不能走,錨點改由左右鍵自己推
+            // (見 Update)。非旁觀時每幀寫回人的位置,所以站回座位那一刻相機就接回本機角色,不用另外重設。
+            // 眼睛的 Z 同理:平常是「錨點 + 固定後退距離」,旁觀席改由上/下鍵推遠推近(_camEyeZ)。
+            float az = CamAnchorZ;
+            float ez;
+            if (IsSpectatorSlot(_localSeat))
+            {
+                ez = Mathf.Clamp(_camEyeZ, cameraEyeMinZ, CamEyeNearZ);
+            }
+            else
+            {
+                _camPanX = Mathf.Clamp(_walkPos.x, cameraBoundsMin.x, cameraBoundsMax.x);
+                ez = Mathf.Max(az + cameraBackDistance, cameraEyeMinZ);
+                _camEyeZ = ez;
+            }
+            float ax = _camPanX;
             Vector3 eye = new Vector3(ax, floorY + cameraLookHeight + cameraEyeRise, ez);
             Vector3 look = new Vector3(ax, floorY + cameraLookHeight, _walkPos.z);   // look.X = eye.X → no yaw; look.Z = avatar → pitch
             _cam.transform.position = eye;

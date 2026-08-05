@@ -67,6 +67,65 @@ namespace Sdo.Tests
             Assert.AreEqual(p, RoomMovement.Clamp(p));
         }
 
+        // ---- 旁觀席:人不能走,左右鍵改推相機錨點(RoomScene3D.Update 的旁觀分支) ----
+
+        [Test]
+        public void StepCameraPanX_Left_Right_Move_At_Walk_Speed()
+        {
+            // 同一條式子:1000 ms * 0.02 * 3.0 = 60
+            Assert.AreEqual(-60f, RoomMovement.StepCameraPanX(0f, 1, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+            Assert.AreEqual(60f, RoomMovement.StepCameraPanX(0f, 3, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+        }
+
+        [Test]
+        public void StepCameraPanX_Up_Down_Do_Nothing()
+        {
+            Assert.AreEqual(12f, RoomMovement.StepCameraPanX(12f, 0, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+            Assert.AreEqual(12f, RoomMovement.StepCameraPanX(12f, 2, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+            Assert.AreEqual(12f, RoomMovement.StepCameraPanX(12f, -1, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+        }
+
+        [Test]
+        public void StepCameraPanX_Clamps_To_The_Camera_Stop_Box()
+        {
+            // 推到框外不會累積成「按了半天才回得來」:每一步都夾住
+            Assert.AreEqual(-120f, RoomMovement.StepCameraPanX(-100f, 1, 5000f, RoomMovement.WalkSpeed, -120f, 100f), 1e-4f);
+            Assert.AreEqual(100f, RoomMovement.StepCameraPanX(90f, 3, 5000f, RoomMovement.WalkSpeed, -120f, 100f), 1e-4f);
+            // 起點就在框外(旁觀站位可以比相機停止框還外面,例如 x=-178)→ 第一步就被拉進框內
+            Assert.AreEqual(-120f, RoomMovement.StepCameraPanX(-178f, 3, 1f, RoomMovement.WalkSpeed, -120f, 100f), 1e-4f);
+        }
+
+        [Test]
+        public void StepCameraDollyZ_Up_Pulls_In_Down_Pulls_Out()
+        {
+            // 房間相機看 +Z:上=眼睛往前推(拉近)、下=往後退(拉遠),與走路的方向感一致
+            Assert.AreEqual(-175f, RoomMovement.StepCameraDollyZ(-235f, 0, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+            Assert.AreEqual(-295f, RoomMovement.StepCameraDollyZ(-235f, 2, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+        }
+
+        [Test]
+        public void StepCameraDollyZ_Left_Right_Do_Nothing()
+        {
+            Assert.AreEqual(-235f, RoomMovement.StepCameraDollyZ(-235f, 1, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+            Assert.AreEqual(-235f, RoomMovement.StepCameraDollyZ(-235f, 3, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+            Assert.AreEqual(-235f, RoomMovement.StepCameraDollyZ(-235f, -1, 1000f, RoomMovement.WalkSpeed, -999f, 999f), 1e-4f);
+        }
+
+        [Test]
+        public void StepCameraDollyZ_Clamps_Between_Back_Wall_And_Nearest()
+        {
+            // 遠端 = 後牆前(cameraEyeMinZ)、近端 = 錨點再往前一點(不推進人身上)
+            Assert.AreEqual(-378f, RoomMovement.StepCameraDollyZ(-360f, 2, 5000f, RoomMovement.WalkSpeed, -378f, -60f), 1e-4f);
+            Assert.AreEqual(-60f, RoomMovement.StepCameraDollyZ(-80f, 0, 5000f, RoomMovement.WalkSpeed, -378f, -60f), 1e-4f);
+        }
+
+        [Test]
+        public void StepCameraDollyZ_Survives_An_Inverted_Range()
+        {
+            // 站位太靠後時近端可能算得比後牆還後面(near < min)—— 夾出來的區間不能翻過來變成 NaN/亂跳
+            Assert.AreEqual(-378f, RoomMovement.StepCameraDollyZ(-300f, 0, 1000f, RoomMovement.WalkSpeed, -378f, -400f), 1e-4f);
+        }
+
         [Test]
         public void FacingDegrees_Match_RE_Table()
         {
