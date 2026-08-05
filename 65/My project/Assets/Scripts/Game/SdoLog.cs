@@ -14,8 +14,9 @@ namespace Sdo.Game
     ///
     /// Location (printed on the first line and to the console): <c>SDO_LOG</c> if that env var is set (multi-instance
     /// testing NEEDS it — see <see cref="ResolvePath"/>), else &lt;exeDir&gt;/log.txt when the exe folder is
-    /// writable — the most discoverable spot, right beside dance.exe and DATA/ — else
-    /// Application.persistentDataPath/log.txt (always writable). The previous run is kept as log.txt.prev.
+    /// writable — the most discoverable spot, right beside dance.exe and DATA/ — else DATA/CACHE/log.txt
+    /// (never Application.persistentDataPath: nothing may land outside the build folder). The previous run is
+    /// kept as log.txt.prev.
     ///
     /// This class touches NO Unity API from the log callback (which can arrive on a worker thread): the file path is
     /// resolved once on the main thread at install; the callback only does DateTime + a locked File.AppendAllText.
@@ -93,8 +94,17 @@ namespace Sdo.Game
                 }
             }
             catch { }
-            try { return System.IO.Path.Combine(Application.persistentDataPath, "log.txt"); }
-            catch { return "log.txt"; }
+            // exe 旁寫不進去(裝在 Program Files 之類)→ 退到 DATA/CACHE/log.txt,**不是**
+            // Application.persistentDataPath:build 產生的東西一律不准落在 build 資料夾之外
+            // (docs/architecture/data-packaging.md §1.1)。連 CACHE 都建不出來就只剩相對路徑,
+            // 那條路 Install() 寫檔會失敗然後轉成 console-only —— 那正是這種情況下該有的行為。
+            try
+            {
+                var cache = Sdo.Settings.SdoDataRoot.CachePath("log.txt");
+                if (!string.IsNullOrEmpty(cache)) return cache;
+            }
+            catch { }
+            return "log.txt";
         }
 
         private static void OnLog(string msg, string stack, LogType type)

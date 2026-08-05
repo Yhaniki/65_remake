@@ -27,6 +27,9 @@ namespace Sdo.Settings
         /// <summary>存檔資料夾名（root 底下）：config.ini + keymaps.ini + favorites.json + 每個使用者一個 8 位數編號資料夾。</summary>
         public const string ProfileDirName = "PROFILE";
 
+        /// <summary>快取資料夾名（root 底下）：掃歌快取、解出來的 keysound 等「刪掉會自己長回來」的東西。</summary>
+        public const string CacheDirName = "CACHE";
+
         private static string _root;
 
         /// <summary>SDO 資料樹根目錄。第一次取用時解析；可設值（測試/工具覆寫）。</summary>
@@ -38,6 +41,45 @@ namespace Sdo.Settings
 
         /// <summary>存檔根目錄：&lt;root&gt;/PROFILE。</summary>
         public static string ProfileDir { get { return Path.Combine(Root, ProfileDirName); } }
+
+        /// <summary>快取根目錄：&lt;root&gt;/CACHE。整個刪掉是安全的 —— 裡面每一樣東西都能自己重建。
+        ///
+        /// 存在的理由是「build 產生的東西不准落在 build 資料夾之外」：以前掃歌快取寫
+        /// <c>Application.persistentDataPath</c>（= <c>%USERPROFILE%\AppData\LocalLow\…</c>）、解出來的 keysound 寫
+        /// <c>Application.temporaryCachePath</c>（= <c>%LOCALAPPDATA%\Temp\…</c>），兩個都在遊戲資料夾外面：
+        /// 整包搬機器會掉、玩家想清也找不到。詳見 <c>docs/architecture/data-packaging.md</c> §1.1。
+        ///
+        /// 這也是 pak 化後的四個 reserved 目錄之一（<c>PROFILE</c> / <c>ADDON</c> / <c>CACHE</c> / <c>REPLAY</c>）：
+        /// 永遠是明碼、可寫、不進 pak。</summary>
+        public static string CacheDir { get { return Path.Combine(Root, CacheDirName); } }
+
+        /// <summary>確保 &lt;root&gt;/CACHE 存在並回傳它；建不出來（唯讀安裝目錄）→ null。
+        /// 呼叫端拿到 null 就該安靜地放棄那份快取，而不是往遊戲資料夾外面找地方寫。</summary>
+        public static string EnsureCacheDir()
+        {
+            try
+            {
+                var dir = CacheDir;
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>&lt;root&gt;/CACHE/&lt;relative&gt; 的絕對路徑，並確保它的上層目錄存在；建不出來 → null。</summary>
+        public static string CachePath(string relative)
+        {
+            var dir = EnsureCacheDir();
+            if (dir == null || string.IsNullOrEmpty(relative)) return null;
+            try
+            {
+                var full = Path.Combine(dir, relative);
+                var parent = Path.GetDirectoryName(full);
+                if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                return full;
+            }
+            catch { return null; }
+        }
 
         // ---------------- pure (unit-tested) ----------------
 
@@ -135,6 +177,10 @@ namespace Sdo.Settings
                 if (Directory.Exists(Path.Combine(root, "3DEFT"))) return true;
                 if (Directory.Exists(Path.Combine(root, "SCENE"))) return true;
                 if (Directory.Exists(Path.Combine(root, "UI", "GAMEPLAY"))) return true;
+
+                // 打包版：上面那些路徑在 pak 化之後**磁碟上都不存在**了。少了這一條，PickRoot 會整個
+                // 認不出打包好的 DATA、退回 fallback 去讀一棵不存在的樹 —— 症狀是「遊戲開起來什麼美術都沒有」。
+                if (Directory.GetFiles(root, "*.pak", SearchOption.TopDirectoryOnly).Length > 0) return true;
             }
             catch { }
             return false;

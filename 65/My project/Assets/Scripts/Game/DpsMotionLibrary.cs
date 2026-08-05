@@ -2,6 +2,7 @@ using System.IO;
 using System.Collections.Generic;
 using Sdo.Osu;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -58,7 +59,7 @@ namespace Sdo.Game
             try
             {
                 string path = Path.Combine(SdoExtracted.Root, DpsIndex.RelPath.Replace('/', Path.DirectorySeparatorChar));
-                return File.Exists(path) ? File.ReadAllText(path) : "";
+                return VfsFile.Exists(path) ? VfsFile.ReadAllText(path) : "";
             }
             catch { return ""; }
         }

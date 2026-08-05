@@ -5,6 +5,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI
 {
@@ -45,7 +46,7 @@ namespace Sdo.UI
         {
             var v = ScreenGameplay.DevVar("SDO_PROBE");
             if (string.IsNullOrEmpty(v) || v == "0") return false;
-            try { if ((v.Contains("/") || v.Contains("\\")) && Directory.Exists(v)) SdoExtracted.Root = v; } catch { }
+            try { if ((v.Contains("/") || v.Contains("\\")) && VfsFile.DirectoryExists(v)) SdoExtracted.Root = v; } catch { }
             var go = new GameObject("UsedAssetsProbe");
             DontDestroyOnLoad(go);
             go.AddComponent<UsedAssetsProbe>();
@@ -132,9 +133,13 @@ namespace Sdo.UI
         {
             try
             {
-                if (string.IsNullOrEmpty(abs) || !File.Exists(abs)) { _missing++; return; }
-                using (var fs = new FileStream(abs, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                if (string.IsNullOrEmpty(abs) || !VfsFile.Exists(abs)) { _missing++; return; }
+                // 🔴 一定要走 VfsFile —— 原生 FileStream 對 pak 內的條目會直接丟例外，被 catch 吞掉之後
+                //    _touched 不會加，整個 probe 看起來「跑完了」其實什麼都沒讀到（touched=2231/missing=43010）。
+                //    踩過一次：那讓 pak vs 散裝的效能比較完全失真。
+                using (var fs = VfsFile.OpenRead(abs))
                 {
+                    if (fs == null) { _missing++; return; }
                     var b = new byte[64];
                     fs.Read(b, 0, b.Length);
                 }
@@ -158,7 +163,7 @@ namespace Sdo.UI
         private IEnumerator TouchDirRel(string rel, bool recurse = true, HashSet<string> skipExts = null)
         {
             var abs = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (!Directory.Exists(abs)) yield break;
+            if (!VfsFile.DirectoryExists(abs)) yield break;
             IEnumerator<string> it = null;
             try { it = EnumFiles(abs, recurse).GetEnumerator(); } catch { yield break; }
             int i = 0;
@@ -173,16 +178,18 @@ namespace Sdo.UI
             }
         }
 
+        // VfsFile 而不是 Directory.EnumerateFiles：後者對只存在於 pak 裡的目錄會回空集合，
+        // 於是整棵樹被靜默跳過 —— 死檔探測會把一堆還活著的資產判成死的。
         private static IEnumerable<string> EnumFiles(string dir, bool recurse)
-            => Directory.EnumerateFiles(dir, "*", recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+            => VfsFile.GetFiles(dir, "*", recurse);
 
         private byte[] ReadAll(string rel)
         {
             try
             {
                 var abs = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(abs)) { _missing++; return null; }
-                var b = File.ReadAllBytes(abs);
+                if (!VfsFile.Exists(abs)) { _missing++; return null; }
+                var b = VfsFile.ReadAllBytes(abs);
                 _touched++;
                 LogHit(abs);
                 return b;
@@ -274,9 +281,9 @@ namespace Sdo.UI
         private IEnumerator ProbeScenes()
         {
             var sceneRoot = Path.Combine(SdoExtracted.Root, "SCENE");
-            if (!Directory.Exists(sceneRoot)) yield break;
+            if (!VfsFile.DirectoryExists(sceneRoot)) yield break;
             string[] folders;
-            try { folders = Directory.GetDirectories(sceneRoot); } catch { yield break; }
+            try { folders = VfsFile.GetDirectories(sceneRoot); } catch { yield break; }
 
             foreach (var full in folders)
             {

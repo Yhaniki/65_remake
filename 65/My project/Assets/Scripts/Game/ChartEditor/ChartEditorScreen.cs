@@ -28,7 +28,7 @@ namespace Sdo.Game
     public sealed class ChartEditorScreen : MonoBehaviour
     {
         public const string EnvVar = "SDO_EDITOR";
-        /// <summary>上次開的那首（PlayerPrefs key）。沒有紀錄時才會退回 <see cref="PickDefaultGn"/>（編號最大的那首）。</summary>
+        /// <summary>上次開的那首（LocalPrefs key）。沒有紀錄時才會退回 <see cref="PickDefaultGn"/>（編號最大的那首）。</summary>
         public const string PrefLastGn = "sdo.editor.lastGn";
         private const string PrefLastDiff = "sdo.editor.lastDiff";
         // 波形每格 2ms：一般速度下 1 格 ≈ 1 螢幕像素，波形才不會一格一格像階梯（10ms 一格 ≈ 5px，明顯粗）。
@@ -115,9 +115,9 @@ namespace Sdo.Game
         {
             Application.runInBackground = true;
             string want = ScreenGameplay.DevVar(EnvVar) ?? "";
-            string gn = want.EndsWith(".gn", StringComparison.OrdinalIgnoreCase) ? want : PlayerPrefs.GetString(PrefLastGn, "");
-            _diff = Mathf.Clamp(PlayerPrefs.GetInt(PrefLastDiff, 0), 0, 2);
-            _scope = PlayerPrefs.GetString(PrefScope, EditorSongScope.All);   // 上次鎖的資料夾（校時常常要分好幾天）
+            string gn = want.EndsWith(".gn", StringComparison.OrdinalIgnoreCase) ? want : LocalPrefs.GetString(PrefLastGn, "");
+            _diff = Mathf.Clamp(LocalPrefs.GetInt(PrefLastDiff, 0), 0, 2);
+            _scope = LocalPrefs.GetString(PrefScope, EditorSongScope.All);   // 上次鎖的資料夾（校時常常要分好幾天）
             if (string.IsNullOrEmpty(gn) || !File.Exists(SongPaths.Gn(gn) ?? "")) gn = PickDefaultGn();
             if (string.IsNullOrEmpty(gn)) { _status = "找不到任何可開的 .gn（song_table.csv 或 MUSIC 資料夾是空的）"; _showList = true; return; }
             LoadSong(gn, _diff);
@@ -161,8 +161,8 @@ namespace Sdo.Game
             yield return null;                                      // 等舊的音符板/HUD 真的被銷毀
 
             _entry = e; _gn = gn; _diff = Mathf.Clamp(diff, 0, 2);
-            PlayerPrefs.SetString(PrefLastGn, _gn);
-            PlayerPrefs.SetInt(PrefLastDiff, _diff);
+            LocalPrefs.SetString(PrefLastGn, _gn);
+            LocalPrefs.SetInt(PrefLastDiff, _diff);
 
             // 外部歌(osu/StepMania)沒有官方 .gn：直接餵 chartPath + 掃描解析出的音檔(ogg/mp3/wav)；官方歌走 gnPath/oggPath。
             bool ext = e != null && e.external;
@@ -576,8 +576,8 @@ namespace Sdo.Game
         {
             _scope = scope ?? EditorSongScope.All;
             _filterFor = null;
-            PlayerPrefs.SetString(PrefScope, _scope);
-            PlayerPrefs.Save();
+            LocalPrefs.SetString(PrefScope, _scope);
+            LocalPrefs.Save();
             _status = $"資料夾範圍：{EditorSongScope.Label(_scope)}（Q/E 只在這裡面走）";
         }
 
@@ -994,7 +994,7 @@ namespace Sdo.Game
         }
 
         // 選資料夾那一頁：全部 / 官方內建 / 每一個外部歌資料夾（＝選歌畫面「資料夾」分頁的那一層）。
-        // 選了就記住（PlayerPrefs），Q/E 與這份歌單都只走它。
+        // 選了就記住（LocalPrefs），Q/E 與這份歌單都只走它。
         private void DrawFolderPicker()
         {
             GUILayout.Label("選一個資料夾 —— Q/E 上一首/下一首就只在裡面走（F8 可快速切回全部）");

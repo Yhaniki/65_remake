@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -48,8 +49,8 @@ namespace Sdo.Game
             var bg = new List<string>(); var bd = new List<string>();
             try
             {
-                if (Directory.Exists(Dir))
-                    foreach (var f in Directory.GetFiles(Dir, "*.png"))
+                if (VfsFile.DirectoryExists(Dir))
+                    foreach (var f in VfsFile.GetFiles(Dir, "*.png"))
                     {
                         // "LOADINGS_*" is the badge; "LOADING_*" (but not LOADINGS_) is the full-screen tip. Filter in
                         // C# (not a glob) so LOADING_* can't accidentally swallow LOADINGS_* on case-insensitive FSes.

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -284,7 +285,7 @@ namespace Sdo.Game
             {
                 if (string.IsNullOrEmpty(cand) || !cand.ToLowerInvariant().EndsWith(".tga")) continue;
                 string p = Path.Combine(dir, Path.GetFileName(cand));
-                if (!File.Exists(p)) continue;
+                if (!VfsFile.Exists(p)) continue;
                 var b = AvatarAssetCache.Read(p);
                 if (b != null) return DdsLoader.GetTgaAlphaMode(b);
             }
@@ -311,8 +312,8 @@ namespace Sdo.Game
             string fn = Path.GetFileName(name.Replace('\\', '/'));
             string hit = null;
             string direct = Path.Combine(dir, fn);
-            if (File.Exists(direct)) hit = direct;
-            // 舊碼在此 Directory.GetFiles(dir,"*.*") 逐檔比對 —— AVATAR 資料夾有 67,000 個檔,一次未命中就是整包列舉。
+            if (VfsFile.Exists(direct)) hit = direct;
+            // 舊碼在此 VfsFile.GetFiles(dir,"*.*") 逐檔比對 —— AVATAR 資料夾有 67,000 個檔,一次未命中就是整包列舉。
             // 改走與 DDS 同款的一次性索引 (TgaIndex),之後每次查詢 O(1)。
             else if (TgaIndex(dir).TryGetValue(Path.GetFileNameWithoutExtension(fn).ToLowerInvariant(), out var f2)) hit = f2;
             if (hit == null) return null;
@@ -328,10 +329,10 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(rel)) return rel;
             lock (_resolveLock) if (_resolved.TryGetValue(rel, out var memo)) return memo;
             var p = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(p))
+            if (!VfsFile.Exists(p))
             {
                 var alt = DevDatasPath(rel);
-                if (alt != null && File.Exists(alt)) p = alt;
+                if (alt != null && VfsFile.Exists(alt)) p = alt;
             }
             lock (_resolveLock) _resolved[rel] = p;
             return p;
@@ -890,7 +891,7 @@ namespace Sdo.Game
             string swapped = SwapLeadingId(materialName, ownId);
             if (swapped == null) return materialName;
             bool isAnim = TexAnimEx.TryParse(swapped, out var spec);
-            bool exists = isAnim ? File.Exists(Path.Combine(dir, spec.Name + ".an"))   // 換幀清單存在才換 → 走 own-id 動畫
+            bool exists = isAnim ? VfsFile.Exists(Path.Combine(dir, spec.Name + ".an"))   // 換幀清單存在才換 → 走 own-id 動畫
                                  : FindDdsPath(dir, swapped) != null;                  // own-id 圖集存在才換
             return exists ? swapped : materialName;
         }
@@ -907,7 +908,7 @@ namespace Sdo.Game
             {
                 if (_ddsByNorm.TryGetValue(dir, out var m)) return m;
                 m = new Dictionary<string, string>();
-                try { foreach (var f in Directory.GetFiles(dir, "*.dds")) { var k = NormStem(Path.GetFileNameWithoutExtension(f)); if (!m.ContainsKey(k)) m[k] = f; } }
+                try { foreach (var f in VfsFile.GetFiles(dir, "*.dds")) { var k = NormStem(Path.GetFileNameWithoutExtension(f)); if (!m.ContainsKey(k)) m[k] = f; } }
                 catch { }
                 _ddsByNorm[dir] = m;
                 return m;
@@ -922,7 +923,7 @@ namespace Sdo.Game
             {
                 if (_tgaByStem.TryGetValue(dir, out var m)) return m;
                 m = new Dictionary<string, string>();
-                try { foreach (var f in Directory.GetFiles(dir, "*.tga")) { var k = Path.GetFileNameWithoutExtension(f).ToLowerInvariant(); if (!m.ContainsKey(k)) m[k] = f; } }
+                try { foreach (var f in VfsFile.GetFiles(dir, "*.tga")) { var k = Path.GetFileNameWithoutExtension(f).ToLowerInvariant(); if (!m.ContainsKey(k)) m[k] = f; } }
                 catch { }
                 _tgaByStem[dir] = m;
                 return m;
@@ -946,7 +947,7 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
-            if (File.Exists(direct)) return direct;
+            if (VfsFile.Exists(direct)) return direct;
             return FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));
         }
 

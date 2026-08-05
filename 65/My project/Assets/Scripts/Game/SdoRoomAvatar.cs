@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -232,9 +233,9 @@ namespace Sdo.Game
         }
 
         private static bool WingRigFilesExist(AvatarWingRig.Paths p)
-            => File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.HrcRel))
-            && File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MshRel))
-            && File.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MotRel));
+            => VfsFile.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.HrcRel))
+            && VfsFile.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MshRel))
+            && VfsFile.Exists(SdoAvatarBuilder.ResolveAvatarFile(p.MotRel));
 
         // 翅膀 _G 骨架的 root 骨(Parent<0)在 body model space 的位置(≈背部掛點)。用來挑最近的身體骨當掛點(見 BuildWingRig)。
         private static Vector3 WingRootModelPos(HrcLoader wingHrc)
@@ -424,7 +425,7 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
-            string hit = File.Exists(direct) ? direct : null;
+            string hit = VfsFile.Exists(direct) ? direct : null;
             // Fuzzy fallback (shared with SdoAvatarBuilder): tolerate mesh material-name variants — 'huan_1'→'huan1',
             // 'haun0'→'huan0', 'M_Basic_face01'→'M_Basic_face' — that the strict match misses (→ white faces / fallbacks).
             if (hit == null) hit = SdoAvatarBuilder.FuzzyFindDds(dir, Path.GetFileNameWithoutExtension(name));

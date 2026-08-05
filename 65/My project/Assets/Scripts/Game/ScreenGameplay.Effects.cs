@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using Sdo.Osu;
 using Sdo.Ruleset;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -131,8 +132,8 @@ namespace Sdo.Game
         {
             if (_namedEftCache.TryGetValue(name, out var file)) return file;
             var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
-            if (!File.Exists(path)) { Debug.LogWarning("[hit3d] missing " + path); return null; }
-            file = EftFile.Load(File.ReadAllBytes(path));
+            if (!VfsFile.Exists(path)) { Debug.LogWarning("[hit3d] missing " + path); return null; }
+            file = EftFile.Load(VfsFile.ReadAllBytes(path));
             _namedEftCache[name] = file;
             return file;
         }
@@ -458,8 +459,8 @@ namespace Sdo.Game
             if (!_eftCache.TryGetValue(effId, out var file))
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", ((tier + 1) * 100) + "COMBO.EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[combo] missing " + path); return; }
-                file = EftFile.Load(File.ReadAllBytes(path));
+                if (!VfsFile.Exists(path)) { Debug.LogWarning("[combo] missing " + path); return; }
+                file = EftFile.Load(VfsFile.ReadAllBytes(path));
                 _eftCache[effId] = file;
             }
             var go = new GameObject("ComboBurst" + ((tier + 1) * 100));
@@ -559,8 +560,8 @@ namespace Sdo.Game
             foreach (var fn in set.Frames)
             {
                 var fp = Path.Combine(dir, fn);
-                if (!File.Exists(fp)) { Debug.LogWarning("[flame] missing " + fp); continue; }
-                try { var t = DdsLoader.LoadTga(File.ReadAllBytes(fp)); if (t != null) frames.Add(t); }
+                if (!VfsFile.Exists(fp)) { Debug.LogWarning("[flame] missing " + fp); continue; }
+                try { var t = DdsLoader.LoadTga(VfsFile.ReadAllBytes(fp)); if (t != null) frames.Add(t); }
                 catch (Exception e) { Debug.LogWarning($"[flame] load {fn}: {e.Message}"); }
             }
             if (frames.Count == 0) { Debug.LogWarning("[flame] no frames under " + dir); return; }
@@ -731,8 +732,8 @@ namespace Sdo.Game
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[eft] scene eft missing " + path); return null; }
-                file = EftFile.Load(File.ReadAllBytes(path));
+                if (!VfsFile.Exists(path)) { Debug.LogWarning("[eft] scene eft missing " + path); return null; }
+                file = EftFile.Load(VfsFile.ReadAllBytes(path));
                 _namedEftCache[name] = file;
             }
             var go = new GameObject("SceneEft_" + name);
@@ -755,8 +756,8 @@ namespace Sdo.Game
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[eft] missing " + path); return; }
-                file = EftFile.Load(File.ReadAllBytes(path));
+                if (!VfsFile.Exists(path)) { Debug.LogWarning("[eft] missing " + path); return; }
+                file = EftFile.Load(VfsFile.ReadAllBytes(path));
                 _namedEftCache[name] = file;
             }
             if (anchor == null) anchor = _ringTr;
@@ -782,8 +783,8 @@ namespace Sdo.Game
             {
                 var list = new List<string>();
                 var lp = Path.Combine(SdoExtracted.Root, "3DEFT", "GENERIC", "LIST.TXT");
-                if (File.Exists(lp))
-                    foreach (var raw in File.ReadAllLines(lp))
+                if (VfsFile.Exists(lp))
+                    foreach (var raw in VfsFile.ReadAllLines(lp))
                     {
                         int bar = raw.IndexOf('|'); if (bar < 0) continue;
                         if (!int.TryParse(raw.Substring(0, bar).Trim(), out int li)) continue;
@@ -819,8 +820,8 @@ namespace Sdo.Game
             {
                 var list = new List<string>();
                 var lp = Path.Combine(SdoExtracted.Root, "3DEFT", "XMESH", "LIST.TXT");
-                if (File.Exists(lp))
-                    foreach (var raw in File.ReadAllLines(lp))
+                if (VfsFile.Exists(lp))
+                    foreach (var raw in VfsFile.ReadAllLines(lp))
                     {
                         if (string.IsNullOrWhiteSpace(raw)) continue;   // engine: sscanf==0 on a blank line ⇒ no index bump
                         int bar = raw.IndexOf('|');
@@ -840,10 +841,10 @@ namespace Sdo.Game
                 // the extraction keeps meshes both under their subfolder (adol_x\AEF03_00.MSH) AND flattened in XMESH\;
                 // try the listed subpath first, then the bare basename.
                 var mshPath = Path.Combine(xdir, rel + ".MSH");
-                if (!File.Exists(mshPath)) mshPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".MSH");
-                if (File.Exists(mshPath))
+                if (!VfsFile.Exists(mshPath)) mshPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".MSH");
+                if (VfsFile.Exists(mshPath))
                 {
-                    try { md = LoadEffectMesh(File.ReadAllBytes(mshPath), xdir, idx, rel); }
+                    try { md = LoadEffectMesh(VfsFile.ReadAllBytes(mshPath), xdir, idx, rel); }
                     catch (Exception e) { Debug.LogWarning("[eft-mesh] load error idx " + idx + ": " + e.Message); }
                 }
                 if (md == null) Debug.LogWarning("[eft-mesh] missing/failed mesh idx " + idx + " (" + rel + ")");
@@ -898,14 +899,14 @@ namespace Sdo.Game
                 // on its OWN bone (DELTA_LINE.MOT extends them via scale.Y). Same rigid-no-weights logic as the mapobj
                 // path (~1184-1196); same dual path resolution as the .MSH (listed subpath, then flattened basename).
                 var hrcPath = Path.Combine(xdir, rel + ".HRC");
-                if (!File.Exists(hrcPath)) hrcPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".HRC");
+                if (!VfsFile.Exists(hrcPath)) hrcPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".HRC");
                 var motPath = Path.Combine(xdir, rel + ".MOT");
-                if (!File.Exists(motPath)) motPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".MOT");
-                if (File.Exists(hrcPath) && File.Exists(motPath))
+                if (!VfsFile.Exists(motPath)) motPath = Path.Combine(xdir, Path.GetFileName(rel).ToUpperInvariant() + ".MOT");
+                if (VfsFile.Exists(hrcPath) && VfsFile.Exists(motPath))
                 {
                     HrcLoader hrc = null; MotLoader mot = null;
-                    try { hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath)); } catch (Exception e) { Debug.LogWarning("[eft-mesh] hrc load " + hrcPath + ": " + e.Message); }
-                    try { mot = MotLoader.Load(File.ReadAllBytes(motPath)); } catch (Exception e) { Debug.LogWarning("[eft-mesh] mot load " + motPath + ": " + e.Message); }
+                    try { hrc = HrcLoader.Load(VfsFile.ReadAllBytes(hrcPath)); } catch (Exception e) { Debug.LogWarning("[eft-mesh] hrc load " + hrcPath + ": " + e.Message); }
+                    try { mot = MotLoader.Load(VfsFile.ReadAllBytes(motPath)); } catch (Exception e) { Debug.LogWarning("[eft-mesh] mot load " + motPath + ": " + e.Message); }
                     bool rigidNoWeights = hrc != null && hrc.BindWorld != null;
                     if (rigidNoWeights) foreach (var sub in r.Submeshes) if (sub.BoneHrc != null) { rigidNoWeights = false; break; }
                     if (hrc != null && mot != null && rigidNoWeights)
@@ -995,7 +996,7 @@ namespace Sdo.Game
                 var cand = Path.GetFileName(rawName.Substring(s));
                 if (cand.Length < 5) continue;
                 var fp = Path.Combine(xdir, cand);
-                if (File.Exists(fp)) { try { return DdsLoader.Load(File.ReadAllBytes(fp)); } catch { return null; } }
+                if (VfsFile.Exists(fp)) { try { return DdsLoader.Load(VfsFile.ReadAllBytes(fp)); } catch { return null; } }
             }
             return null;
         }

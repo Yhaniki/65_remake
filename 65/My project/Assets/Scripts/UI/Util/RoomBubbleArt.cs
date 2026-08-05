@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Util
 {
@@ -134,9 +135,9 @@ namespace Sdo.UI.Util
         private static Sprite[] LoadFrames(string name)
         {
             var frameDir = Path.Combine(Dir, name);
-            if (Directory.Exists(frameDir))
+            if (VfsFile.DirectoryExists(frameDir))
             {
-                var files = Directory.GetFiles(frameDir, "*.PNG");
+                var files = VfsFile.GetFiles(frameDir, "*.PNG");
                 System.Array.Sort(files, System.StringComparer.OrdinalIgnoreCase);
                 var sprites = new List<Sprite>(files.Length);
                 foreach (var file in files)

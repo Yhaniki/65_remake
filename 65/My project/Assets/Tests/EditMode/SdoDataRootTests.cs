@@ -178,5 +178,60 @@ namespace Sdo.Tests
             }
             finally { SdoDataRoot.Root = saved; }
         }
+
+        // ---------------- CACHE（可寫、可整個刪、不進 pak） ----------------
+
+        [Test]
+        public void CacheDir_IsCacheUnderRoot()
+        {
+            var saved = SdoDataRoot.Root;
+            try
+            {
+                SdoDataRoot.Root = @"H:\65_remake_clean\DATA";
+                Assert.AreEqual(Path.Combine(@"H:\65_remake_clean\DATA", "CACHE"), SdoDataRoot.CacheDir);
+            }
+            finally { SdoDataRoot.Root = saved; }
+        }
+
+        [Test]
+        public void CachePath_CreatesParentDirectories()
+        {
+            // 這條就是「build 產生的東西不准落在 build 資料夾之外」的落點：掃歌快取與解出來的 keysound
+            // 都改寫這裡，取代 Application.persistentDataPath / temporaryCachePath。
+            var saved = SdoDataRoot.Root;
+            var tmp = Path.Combine(Path.GetTempPath(), "sdo_cache_tests_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                SdoDataRoot.Root = tmp;
+                var p = SdoDataRoot.CachePath(Path.Combine("KEYSOUND", "x", "a.ogg"));
+
+                Assert.IsNotNull(p);
+                Assert.AreEqual(Path.Combine(tmp, "CACHE", "KEYSOUND", "x", "a.ogg"), p);
+                Assert.IsTrue(Directory.Exists(Path.GetDirectoryName(p)), "上層目錄要先建好，呼叫端才能直接寫檔");
+            }
+            finally
+            {
+                SdoDataRoot.Root = saved;
+                try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
+            }
+        }
+
+        [Test]
+        public void CachePath_NullRelativeIsNull()
+        {
+            var saved = SdoDataRoot.Root;
+            var tmp = Path.Combine(Path.GetTempPath(), "sdo_cache_tests_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                SdoDataRoot.Root = tmp;
+                Assert.IsNull(SdoDataRoot.CachePath(null));
+                Assert.IsNull(SdoDataRoot.CachePath(""));
+            }
+            finally
+            {
+                SdoDataRoot.Root = saved;
+                try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
+            }
+        }
     }
 }

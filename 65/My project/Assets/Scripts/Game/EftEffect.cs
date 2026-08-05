@@ -257,7 +257,15 @@ namespace Sdo.Game
         // survives even if the PlayMode test is marked Failed by an unrelated render-error log.
         public static void DumpLog(string s)
         {
-            if (_trajW == null) { _trajW = new System.IO.StreamWriter(System.IO.Path.Combine(UnityEngine.Application.persistentDataPath, "mysim-traj.log"), false) { AutoFlush = true }; }
+            if (_trajW == null)
+            {
+                // DATA/CACHE 底下,不是 Application.persistentDataPath —— build 產生的東西不准落在
+                // build 資料夾之外(docs/architecture/data-packaging.md §1.1)。拿不到 CACHE(唯讀安裝目錄)
+                // 就安靜放棄:這只是診斷用的傾印,不該把測試或遊戲弄爆。
+                var path = Sdo.Settings.SdoDataRoot.CachePath("mysim-traj.log");
+                if (path == null) return;
+                _trajW = new System.IO.StreamWriter(path, false) { AutoFlush = true };
+            }
             _trajW.WriteLine(s);
         }
 

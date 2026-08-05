@@ -43,7 +43,7 @@ namespace Sdo.UI.Screens
     /// 線上/離線的差別全部收在 <see cref="OnShow"/> 之後的資料來源上。
     /// </summary>
     /// <remarks>partial:角色的即時調校面板(F4)另外收在 <c>LobbyScreen.AvatarDebug.cs</c> ——
-    /// 那些 OnGUI 與 PlayerPrefs 的雜事不該混進這份版位表。</remarks>
+    /// 那些 OnGUI 與 LocalPrefs 的雜事不該混進這份版位表。</remarks>
     public sealed partial class LobbyScreen : UIScreenBase
     {
         public override ScreenId Id => ScreenId.Lobby;
@@ -96,7 +96,7 @@ namespace Sdo.UI.Screens
         //
         // 🔴 **不要再走「改常數 → 重編 → 進大廳看」那條路**:大廳裡按 <c>F4</c> 有一塊即時調校面板
         //    (editor 限定,見 <c>LobbyScreen.AvatarDebug.cs</c>)—— 拖滑桿當場看落點與大小,滿意了按
-        //    「複製 const」就把下面這幾行產生好貼回來。這裡的值只是**預設**:面板調過的會存進 PlayerPrefs 蓋掉它。
+        //    「複製 const」就把下面這幾行產生好貼回來。這裡的值只是**預設**:面板調過的會存進 LocalPrefs 蓋掉它。
         //
         // 🔴 **現在這組是使用者用那塊面板調出來的落點,不是上面那些官方量測值**(上面那些留著是為了記住
         //    「怎麼量、踩過哪些坑」,不是現行版位)。相對最早那版(-30,-91,400×600):
@@ -411,7 +411,7 @@ namespace Sdo.UI.Screens
                 if (_preview != null && ev is PointerEventData p) _preview.Orbit(p.delta);
             });
 
-            // 角色的版位改由調校值決定(存在 PlayerPrefs,預設就是上面那組常數)——
+            // 角色的版位改由調校值決定(存在 LocalPrefs,預設就是上面那組常數)——
             // F4 面板調完就是這個畫面看到的樣子,見 LobbyScreen.AvatarDebug.cs。
             ApplyAvatarTuning();
             trig.triggers.Add(entry);
@@ -968,7 +968,7 @@ namespace Sdo.UI.Screens
             HideApplyMenu();
             HideChatMenu();
             HideExpressionMenu();
-            FlushAvatarTuning();   // 調校值真的落到磁碟(改的當下只寫進 PlayerPrefs 的記憶體副本)
+            FlushAvatarTuning();   // 調校值真的落到磁碟(改的當下只寫進 LocalPrefs 的記憶體副本)
         }
 
         /// <summary>

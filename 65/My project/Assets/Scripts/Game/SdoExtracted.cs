@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using Sdo.Settings;
+using Sdo.Settings.Vfs;
 using UnityEngine;
 
 namespace Sdo.Game
@@ -42,7 +43,7 @@ namespace Sdo.Game
         /// <summary>First of <paramref name="candidates"/> that exists on disk, else the first candidate.</summary>
         private static string FirstDir(params string[] candidates)
         {
-            foreach (var c in candidates) { try { if (Directory.Exists(c)) return c; } catch { } }
+            foreach (var c in candidates) { try { if (VfsFile.DirectoryExists(c)) return c; } catch { } }
             return candidates.Length > 0 ? candidates[0] : Root;
         }
 
@@ -84,7 +85,7 @@ namespace Sdo.Game
             {
                 try
                 {
-                    if (Directory.Exists(c) && File.Exists(Path.Combine(c, "Bubble.wav")))
+                    if (VfsFile.DirectoryExists(c) && VfsFile.Exists(Path.Combine(c, "Bubble.wav")))
                         return c;
                 }
                 catch { }
@@ -243,8 +244,8 @@ namespace Sdo.Game
         {
             TraceLoad(path);
             if (_texCache.TryGetValue(path, out var t) && t != null) return t;
-            if (!File.Exists(path)) return null;
-            var bytes = File.ReadAllBytes(path);
+            if (!VfsFile.Exists(path)) return null;
+            var bytes = VfsFile.ReadAllBytes(path);
             // Unity's Texture2D.LoadImage decodes ONLY PNG/JPG. Several EFT hit-burst skins (EFT_2/5/8/9/10/PET) ship
             // their Eft_Hit*.bmp as raw 24-bit BMP, so decode those by hand; everything else goes through LoadImage.
             Texture2D tex;
@@ -329,8 +330,8 @@ namespace Sdo.Game
         public static Sprite[] LoadAn(string folder, string anName, bool bleed = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
-            if (!File.Exists(anPath)) return new Sprite[0];
-            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (!VfsFile.Exists(anPath)) return new Sprite[0];
+            var frames = ParseAnText(VfsFile.ReadAllText(anPath));
             var sprites = new List<Sprite>(frames.Count);
             foreach (var fr in frames)
             {
@@ -352,8 +353,8 @@ namespace Sdo.Game
         public static string[] AnFrameNames(string folder, string anName)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
-            if (!File.Exists(anPath)) return new string[0];
-            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (!VfsFile.Exists(anPath)) return new string[0];
+            var frames = ParseAnText(VfsFile.ReadAllText(anPath));
             var names = new string[frames.Count];
             for (int i = 0; i < frames.Count; i++) names[i] = frames[i].Image ?? "";
             return names;
@@ -429,8 +430,8 @@ namespace Sdo.Game
         private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false, bool smoothDisc = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
-            if (!File.Exists(anPath)) return null;
-            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (!VfsFile.Exists(anPath)) return null;
+            var frames = ParseAnText(VfsFile.ReadAllText(anPath));
             if (frames.Count == 0) return null;
             var fr = frames[0];
             var src = LoadTexture(Path.Combine(folder, fr.Image));
@@ -629,8 +630,8 @@ namespace Sdo.Game
         public static Sprite LoadAnSoloPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
-            if (!File.Exists(anPath)) return null;
-            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (!VfsFile.Exists(anPath)) return null;
+            var frames = ParseAnText(VfsFile.ReadAllText(anPath));
             if (frames.Count == 0) return null;
             return PremultipliedFrame(folder, frames[0], pad, cleanMatte);
         }
@@ -641,8 +642,8 @@ namespace Sdo.Game
         public static Sprite[] LoadAnPremultiplied(string folder, string anName, int pad = 1, bool cleanMatte = false)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
-            if (!File.Exists(anPath)) return new Sprite[0];
-            var frames = ParseAnText(File.ReadAllText(anPath));
+            if (!VfsFile.Exists(anPath)) return new Sprite[0];
+            var frames = ParseAnText(VfsFile.ReadAllText(anPath));
             var sprites = new List<Sprite>(frames.Count);
             foreach (var fr in frames)
             {
@@ -878,9 +879,9 @@ namespace Sdo.Game
         {
             TraceLoad(path);
             if (_texLinearCache.TryGetValue(path, out var t) && t != null) return t;
-            if (!File.Exists(path)) return null;
+            if (!VfsFile.Exists(path)) return null;
             var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);   // linear=true
-            tex.LoadImage(File.ReadAllBytes(path));
+            tex.LoadImage(VfsFile.ReadAllBytes(path));
             tex.filterMode = FilterMode.Bilinear;
             tex.wrapMode = TextureWrapMode.Clamp;
             _texLinearCache[path] = tex;
@@ -935,8 +936,8 @@ namespace Sdo.Game
         {
             TraceLoad(path);
             if (_texEftCache.TryGetValue(path, out var t) && t != null) return t;
-            if (!File.Exists(path)) return null;
-            var bytes = File.ReadAllBytes(path);
+            if (!VfsFile.Exists(path)) return null;
+            var bytes = VfsFile.ReadAllBytes(path);
             bool bmp = path.EndsWith(".bmp", System.StringComparison.OrdinalIgnoreCase);
             bool mip = TryReadImageSize(bytes, bmp, out int iw, out int ih) &&
                        (iw >= EftMipMinSize || ih >= EftMipMinSize);

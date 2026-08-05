@@ -269,8 +269,14 @@ namespace Sdo.Game
                 if (!LegacyOggNormalizer.TryNormalize(File.ReadAllBytes(path), out var normalized)) return path;
                 if (string.IsNullOrEmpty(_temporaryDirectory))
                 {
-                    _temporaryDirectory = Path.Combine(Application.temporaryCachePath,
-                        "sdo-osu-keysounds-" + Guid.NewGuid().ToString("N"));
+                    // DATA/CACHE/KEYSOUND 底下,不是 Application.temporaryCachePath(= %LOCALAPPDATA%\Temp\…)——
+                    // build 產生的東西不准落在 build 資料夾之外(docs/architecture/data-packaging.md §1.1)。
+                    // 每次載入用一個新的 GUID 子資料夾,ReleaseTemporaryFiles 收尾時整個刪掉;真的沒收乾淨
+                    // (當掉、斷電)也只是 CACHE 底下多一個資料夾,玩家看得到也刪得掉。
+                    var dir = Sdo.Settings.SdoDataRoot.CachePath(
+                        Path.Combine("KEYSOUND", "sdo-osu-keysounds-" + Guid.NewGuid().ToString("N")));
+                    if (dir == null) return path;   // 唯讀安裝目錄 → 退回 Unity 原本的解碼路徑
+                    _temporaryDirectory = dir;
                     Directory.CreateDirectory(_temporaryDirectory);
                 }
 

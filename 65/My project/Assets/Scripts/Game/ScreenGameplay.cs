@@ -7,6 +7,7 @@ using UnityEngine.Networking;
 using Sdo.Osu;
 using Sdo.Ruleset;
 using Sdo.Settings;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -1460,7 +1461,7 @@ namespace Sdo.Game
             if (!_seCache.TryGetValue(name, out var clip))
             {
                 var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
-                if (File.Exists(path))
+                if (VfsFile.Exists(path))
                     using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
                     {
                         yield return req.SendWebRequest();
@@ -1514,7 +1515,7 @@ namespace Sdo.Game
             foreach (var ext in new[] { ".ogg", ".wav" })   // theme 檔是 .ogg;若哪天換成 wav 也吃
             {
                 var path = Path.Combine(SdoExtracted.SeDir, TickSeName + ext);
-                if (!File.Exists(path)) continue;
+                if (!VfsFile.Exists(path)) continue;
                 var type = ext == ".ogg" ? AudioType.OGGVORBIS : AudioType.WAV;
                 using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type))
                 {
@@ -1678,7 +1679,11 @@ namespace Sdo.Game
         private IEnumerator LoadAmbientCo(string name)
         {
             var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
-            if (!File.Exists(path)) { Debug.LogWarning("[ambient] missing " + path); yield break; }
+            // 🔴 這裡問的**不是**「檔案存在嗎」而是「有沒有實體可以餵給 file://」—— UnityWebRequestMultimedia
+            //    只吃真實路徑。pak 化之後 VfsFile.Exists 會對 pak 內的檔說 true，然後 file:// 直接 404。
+            //    ResolveRealPath 才是今天明天都對的問法（見 docs/architecture/data-packaging.md §7.1）。
+            path = VfsFile.MaterialiseRealPath(path);
+            if (path == null) { Debug.LogWarning("[ambient] missing " + path); yield break; }
             using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
             {
                 yield return req.SendWebRequest();
@@ -2013,8 +2018,8 @@ namespace Sdo.Game
         // match the row-0-at-top convention); flipV=true for a sprite. Background colour is keyed out (LoadDxt1Alpha).
         private static Texture2D LoadDdsTex(string path, bool flipV, bool desilver = false)
         {
-            if (!File.Exists(path)) return null;
-            try { return DdsLoader.LoadDxt1Alpha(File.ReadAllBytes(path), flipV, desilver); }
+            if (!VfsFile.Exists(path)) return null;
+            try { return DdsLoader.LoadDxt1Alpha(VfsFile.ReadAllBytes(path), flipV, desilver); }
             catch { return null; }
         }
 
@@ -2055,8 +2060,8 @@ namespace Sdo.Game
         {
             try
             {
-                if (!File.Exists(path)) return null;
-                var t = DdsLoader.Load(File.ReadAllBytes(path));
+                if (!VfsFile.Exists(path)) return null;
+                var t = DdsLoader.Load(VfsFile.ReadAllBytes(path));
                 if (t != null) t.wrapMode = TextureWrapMode.Repeat;
                 return t;
             }
@@ -2186,7 +2191,7 @@ namespace Sdo.Game
         {
             if (editorMode) return;   // 編輯器只校時/看譜，不生成也不寫 .dps 進使用者的歌資料夾
             if (chartFormat == 0 || _map == null || string.IsNullOrEmpty(externalFolder)) return;
-            if (!string.IsNullOrEmpty(dpsPath) && File.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
+            if (!string.IsNullOrEmpty(dpsPath) && VfsFile.Exists(Path.Combine(SdoExtracted.Root, dpsPath))) return;
             // songBpm / songChartPaths 是**這首歌**的（不是這張譜的）：一首歌一支舞，換難度不換舞（見 Sdo.Osu.DanceInputs）。
             string generated = ExternalDps.EnsureFor(externalFolder, externalSongKey, externalPackId, _map, songBpm,
                                                      chartFormat, chartSeed, songChartPaths, songChartIndices);
@@ -2203,7 +2208,7 @@ namespace Sdo.Game
             }
             // (1) external user chart (osu / StepMania) from the Songs/ folder — the difficulty was already resolved
             // to a concrete chart file at selection time (see SongSelectScreen.OnConfirm / FrontendApp.StartGameplay).
-            if (chartFormat != 0 && !string.IsNullOrEmpty(chartPath) && File.Exists(chartPath))
+            if (chartFormat != 0 && !string.IsNullOrEmpty(chartPath) && VfsFile.Exists(chartPath))
             {
                 // 四種格式的解析在 ExternalChartIO —— 生成編舞時要用同一套去量這首歌的每個難度。
                 try { _map = ExternalChartIO.Parse(chartFormat, chartPath, chartIndex, chartSeed); }
@@ -2224,14 +2229,14 @@ namespace Sdo.Game
             }
 
             // (2) official .gn chart
-            if (!string.IsNullOrEmpty(gnPath) && File.Exists(gnPath))
+            if (!string.IsNullOrEmpty(gnPath) && VfsFile.Exists(gnPath))
             {
-                _map = GnChart.Load(File.ReadAllBytes(gnPath), difficulty, GnKeyTable.SeedsFor(gnPath));
+                _map = GnChart.Load(VfsFile.ReadAllBytes(gnPath), difficulty, GnKeyTable.SeedsFor(gnPath));
                 if (_map.HitObjects.Count > 0) { Debug.Log($"[Step1] loaded {Path.GetFileName(gnPath)}: {_map.HitObjects.Count} notes, bpm {_map.Bpm}"); return true; }
             }
             var path = Path.Combine(Application.streamingAssetsPath, "Step1", "chart.osu");
-            if (!File.Exists(path)) { Debug.LogError("[Step1] no chart (.gn or .osu)"); return false; }
-            _map = OsuBeatmapParser.Parse(File.ReadAllText(path));
+            if (!VfsFile.Exists(path)) { Debug.LogError("[Step1] no chart (.gn or .osu)"); return false; }
+            _map = OsuBeatmapParser.Parse(VfsFile.ReadAllText(path));
             return true;
         }
 
@@ -2266,8 +2271,10 @@ namespace Sdo.Game
             // 示範曲 Bassdrop.mp3 撈出來播 —— 校時的時候背後放歌是最不該發生的事。
             if (beatTestMode) { _audioReady = true; StartCoroutine(EditorOpeningCo()); yield break; }
             yield return LoadOsuKeysoundsCo();
+            // 音訊一律問 ResolveRealPath 而不是 Exists：這條路最後會走到 file://（UnityWebRequestMultimedia）
+            // 或吃真實路徑的解碼器，pak 內的檔對它們來說等於不存在。見 docs/architecture/data-packaging.md §7.1。
             bool externalTrackMissing = chartFormat != 0 &&
-                (IsVirtualOsuTrack || string.IsNullOrEmpty(oggPath) || !File.Exists(oggPath));
+                (IsVirtualOsuTrack || string.IsNullOrEmpty(oggPath) || VfsFile.MaterialiseRealPath(oggPath) == null);
             if (externalTrackMissing)
             {
                 Debug.Log(IsVirtualOsuTrack ? "[keysound] virtual osu track: using silent transport" : "[Step1] external audio missing: using silent transport");
@@ -2278,12 +2285,12 @@ namespace Sdo.Game
                 StartCoroutine(OpeningSequence());
                 yield break;
             }
-            string path = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
-                ? oggPath : Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
+            string path = (!string.IsNullOrEmpty(oggPath) ? VfsFile.MaterialiseRealPath(oggPath) : null)
+                ?? Path.Combine(Application.streamingAssetsPath, "Step1", "Bassdrop.mp3");
             // 走哪個解碼器看**檔案內容**，不是副檔名 —— 外面撿來的歌曲庫常有名不符實的檔（[NX] 那包就有 4 個
             // Ogg 取名叫 .mp3）。餵錯解碼器不會報錯，只會解出 0 個取樣 → 這首歌整首沒聲音。見 AudioFileType。
             var kind = AudioFileType.Of(path);
-            if (kind == AudioKind.Mp3 && File.Exists(path))
+            if (kind == AudioKind.Mp3 && VfsFile.Exists(path))
             {
                 // Unity can't decode mp3 from a file on desktop → decode with the bundled NLayer on a worker thread.
                 // osu (chartFormat 1) and StepMania (2) decode mp3 to different positions; match the chart's home game
@@ -3116,10 +3123,10 @@ namespace Sdo.Game
             for (int b = 0; b < 3; b++)
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", GaugeStripEft[b] + ".EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[showtime] gauge EFT missing " + path); continue; }
+                if (!VfsFile.Exists(path)) { Debug.LogWarning("[showtime] gauge EFT missing " + path); continue; }
                 if (!_namedEftCache.TryGetValue(GaugeStripEft[b], out var file))
                 {
-                    file = EftFile.Load(File.ReadAllBytes(path));
+                    file = EftFile.Load(VfsFile.ReadAllBytes(path));
                     _namedEftCache[GaugeStripEft[b]] = file;
                 }
                 var anchor = new GameObject("GaugeHead" + b).transform;
@@ -3675,7 +3682,7 @@ namespace Sdo.Game
             {
                 if (c == null) continue;
                 string rel = "CAMERA/" + c + ".CDT";
-                if (File.Exists(Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar))))
+                if (VfsFile.Exists(Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar))))
                     return rel;
             }
             return CdtFallback;
@@ -3776,9 +3783,9 @@ namespace Sdo.Game
             if (instances == null || instances.Length == 0) return;
             var dir = Path.Combine(SdoExtracted.Root, relDir.Replace('/', Path.DirectorySeparatorChar));
             var mshPath = Path.Combine(dir, mshFile);
-            if (!File.Exists(mshPath)) { Debug.LogWarning("[mapobj] missing " + mshPath); return; }
+            if (!VfsFile.Exists(mshPath)) { Debug.LogWarning("[mapobj] missing " + mshPath); return; }
             string baseName = Path.GetFileNameWithoutExtension(mshFile);   // GameObject-name / log label
-            var r = MshLoader.Load(File.ReadAllBytes(mshPath));            // parse ONCE; every instance shares these meshes
+            var r = MshLoader.Load(VfsFile.ReadAllBytes(mshPath));            // parse ONCE; every instance shares these meshes
             if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[mapobj] parse fail " + baseName); return; }
             HrcLoader hrc = LoadAsset(relDir + "/" + hrcFile, b => HrcLoader.Load(b));
             // SCN0003 disco floor: 256 tiles, each its OWN material, animated as a moving formation (NOT the shared-
@@ -3923,9 +3930,9 @@ namespace Sdo.Game
             if (texAnim == null && r.Submeshes.Count > 0 && TexAnimEx.TryParse(r.Submeshes[0].Dds, out var exSpec))
             {
                 var anPath = Path.Combine(dir, exSpec.Name + ".an");
-                if (File.Exists(anPath))
+                if (VfsFile.Exists(anPath))
                 {
-                    var exFrames = TexAnimEx.ParseAn(File.ReadAllText(anPath));
+                    var exFrames = TexAnimEx.ParseAn(VfsFile.ReadAllText(anPath));
                     if (exFrames.Length > 0)
                     {
                         ResolveDds(dir, exFrames[0], out bool exAlpha);   // transparent iff the first frame carries alpha
@@ -4565,9 +4572,9 @@ namespace Sdo.Game
             {
                 var dir = Path.Combine(SdoExtracted.Root, scenePath.Replace('/', Path.DirectorySeparatorChar));
                 var mshPath = Path.Combine(dir, "SCENE.MSH");
-                if (!File.Exists(mshPath)) { Debug.LogWarning("[scene] missing " + mshPath); return; }
+                if (!VfsFile.Exists(mshPath)) { Debug.LogWarning("[scene] missing " + mshPath); return; }
                 SceneLoader.Result res;
-                try { res = SceneLoader.Load(File.ReadAllBytes(mshPath), dir); }
+                try { res = SceneLoader.Load(VfsFile.ReadAllBytes(mshPath), dir); }
                 catch (System.Exception e) { Debug.LogWarning("[scene] load fail: " + e.Message); return; }
                 if (res == null || res.Mesh == null) { Debug.LogWarning("[scene] parse fail"); return; }
                 var go = new GameObject("StageScene") { layer = sceneLayer };
@@ -5090,11 +5097,11 @@ namespace Sdo.Game
                 foreach (var dir in new[] { "AUMOTION", "MOTION" })
                 {
                     var p = Path.Combine(root, dir, name);
-                    if (!File.Exists(p)) continue;
+                    if (!VfsFile.Exists(p)) continue;
                     triedPath = p;
                     try
                     {
-                        var bytes = File.ReadAllBytes(p);
+                        var bytes = VfsFile.ReadAllBytes(p);
                         m = MotLoader.Load(bytes);
                         if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
                     }
@@ -5122,17 +5129,17 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(externalFolder) || string.IsNullOrEmpty(name)) return null;
             string folder = Path.IsPathRooted(externalFolder) ? externalFolder
                             : Path.Combine(SdoExtracted.Root, externalFolder);
-            if (!Directory.Exists(folder)) return null;
+            if (!VfsFile.DirectoryExists(folder)) return null;
 
             string hit = Path.Combine(folder, name);
-            if (!File.Exists(hit))
-                hit = MotionOverlay.MatchFileName(Directory.GetFiles(folder), name);   // 大小寫不同也命中
-            if (string.IsNullOrEmpty(hit) || !File.Exists(hit)) return null;
+            if (!VfsFile.Exists(hit))
+                hit = MotionOverlay.MatchFileName(VfsFile.GetFiles(folder), name);   // 大小寫不同也命中
+            if (string.IsNullOrEmpty(hit) || !VfsFile.Exists(hit)) return null;
 
             triedPath = hit;
             try
             {
-                var bytes = File.ReadAllBytes(hit);
+                var bytes = VfsFile.ReadAllBytes(hit);
                 var m = MotLoader.Load(bytes);
                 if (m == null) why = bytes.Length == 0 ? "empty file (0 bytes)" : "corrupt / not a valid MOT (bad header)";
                 return m;
@@ -5157,7 +5164,7 @@ namespace Sdo.Game
             string maleName = "M" + file.Substring(1);
             foreach (var root in MotRoots())
                 foreach (var dir in new[] { "AUMOTION", "MOTION" })
-                    if (File.Exists(Path.Combine(root, dir, maleName))) return maleName;
+                    if (VfsFile.Exists(Path.Combine(root, dir, maleName))) return maleName;
             return name;
         }
 
@@ -5192,17 +5199,17 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
-            string hit = File.Exists(direct) ? direct : null;
+            string hit = VfsFile.Exists(direct) ? direct : null;
             if (hit == null)
             {
                 string stem = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
-                foreach (var f in Directory.GetFiles(dir, "*.*"))
+                foreach (var f in VfsFile.GetFiles(dir, "*.*"))
                     if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) { hit = f; break; }
             }
             if (hit == null) return null;
             try
             {
-                var bytes = File.ReadAllBytes(hit);
+                var bytes = VfsFile.ReadAllBytes(hit);
                 hasAlpha = DdsLoader.HasAlpha(bytes);
                 additiveGlow = hasAlpha && DdsLoader.LooksLikeAdditiveGlow(bytes);
                 hardCutout = hasAlpha && !additiveGlow && DdsLoader.GetSceneAlphaMode(bytes) == DdsAlphaMode.Cutout;
@@ -5232,8 +5239,8 @@ namespace Sdo.Game
         {
             if (string.IsNullOrEmpty(rel)) return null;
             var path = Path.Combine(SdoExtracted.Root, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(path)) { Debug.LogWarning("[avatar] missing " + rel); return null; }
-            try { return load(File.ReadAllBytes(path)); }
+            if (!VfsFile.Exists(path)) { Debug.LogWarning("[avatar] missing " + rel); return null; }
+            try { return load(VfsFile.ReadAllBytes(path)); }
             catch (System.Exception e) { Debug.LogWarning($"[avatar] load fail {rel}: {e.Message}"); return null; }
         }
 
@@ -5685,7 +5692,7 @@ namespace Sdo.Game
             int t = _hit3dMode ? -1 : (_eftNoteType >= 0 ? _eftNoteType : 0);
             string board = (t >= 0 && t < NoteTypeBoardSuffix.Length) ? NoteTypeBoardSuffix[t] : "6";
             string dir = Path.Combine(SdoExtracted.Root, "EFFECT", "GAMEOVER" + GameOverSuffixForBoard(board));
-            if (!Directory.Exists(dir)) dir = Path.Combine(SdoExtracted.Root, "EFFECT", "GAMEOVER");   // 保險退回基本組
+            if (!VfsFile.DirectoryExists(dir)) dir = Path.Combine(SdoExtracted.Root, "EFFECT", "GAMEOVER");   // 保險退回基本組
             var gof = new List<Sprite>();
             foreach (var gn in new[] { "GAMEOVER00.PNG", "GAMEOVER01.PNG", "GAMEOVER02.PNG" })
             { var gs = SdoExtracted.LoadImage(dir, gn, bleed: true); if (gs != null) gof.Add(gs); }
@@ -6500,8 +6507,8 @@ namespace Sdo.Game
             if (!_namedEftCache.TryGetValue(showtimeAuraEft, out var file))
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", showtimeAuraEft + ".EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[showtime] aura EFT missing " + path); return; }
-                file = EftFile.Load(File.ReadAllBytes(path));
+                if (!VfsFile.Exists(path)) { Debug.LogWarning("[showtime] aura EFT missing " + path); return; }
+                file = EftFile.Load(VfsFile.ReadAllBytes(path));
                 _namedEftCache[showtimeAuraEft] = file;
             }
             var pelvis = _floorRing != null && _floorRing.Follow != null ? _floorRing.Follow.position
@@ -6538,8 +6545,8 @@ namespace Sdo.Game
             if (!_namedEftCache.TryGetValue(name, out var file))
             {
                 var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
-                if (!File.Exists(path)) { Debug.LogWarning("[showtime] board-burst EFT missing " + path); return; }
-                file = EftFile.Load(File.ReadAllBytes(path));
+                if (!VfsFile.Exists(path)) { Debug.LogWarning("[showtime] board-burst EFT missing " + path); return; }
+                file = EftFile.Load(VfsFile.ReadAllBytes(path));
                 _namedEftCache[name] = file;
             }
             var go = new GameObject("ShowtimeBurst_" + name);

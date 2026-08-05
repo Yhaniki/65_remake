@@ -4,6 +4,7 @@ using System.IO;
 using NUnit.Framework;
 using Sdo.Game;
 using Sdo.Osu;
+using Sdo.Settings;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
@@ -44,7 +45,7 @@ namespace Sdo.Tests
             KillByName("FrontendCanvas");
             yield return null;
 
-            PlayerPrefs.DeleteKey(ChartEditorScreen.PrefLastGn);   // 沒有「上次那首」→ 走預設：編號最大的那首
+            LocalPrefs.DeleteKey(ChartEditorScreen.PrefLastGn);   // 沒有「上次那首」→ 走預設：編號最大的那首
             var ed = new GameObject("ChartEditor_test").AddComponent<ChartEditorScreen>();
             Assert.IsNotNull(ed);
 

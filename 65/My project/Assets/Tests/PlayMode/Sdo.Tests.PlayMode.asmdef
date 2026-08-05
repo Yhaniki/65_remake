@@ -6,6 +6,7 @@
         "Sdo.Ruleset",
         "Sdo.Game",
         "Sdo.UI",
+        "Sdo.Settings",
         "Unity.TextMeshPro",
         "UnityEngine.UI",
         "MagicaClothV2",

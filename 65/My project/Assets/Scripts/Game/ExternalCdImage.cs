@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using Sdo.Osu;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -55,7 +56,7 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(absPath)) return null;
             try
             {
-                if (!File.Exists(absPath)) return null;
+                if (!VfsFile.Exists(absPath)) return null;
                 if (absPath.EndsWith(".dds", System.StringComparison.OrdinalIgnoreCase)) return LoadDdsSprite(absPath);
                 return SdoExtracted.LoadImage(Path.GetDirectoryName(absPath), Path.GetFileName(absPath));
             }
@@ -73,7 +74,7 @@ namespace Sdo.Game
         /// </summary>
         private static Sprite LoadDdsSprite(string absPath)
         {
-            var tex = LoadDdsTexture(File.ReadAllBytes(absPath));
+            var tex = LoadDdsTexture(VfsFile.ReadAllBytes(absPath));
             if (tex == null) { SdoLog.MissingAsset("cd-dds", absPath, "unsupported DDS layout"); return null; }
             return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
@@ -153,7 +154,7 @@ namespace Sdo.Game
         {
             owned = false;
             byte[] bytes;
-            try { if (!File.Exists(absPath)) return null; bytes = File.ReadAllBytes(absPath); }
+            try { if (!VfsFile.Exists(absPath)) return null; bytes = VfsFile.ReadAllBytes(absPath); }
             catch { return null; }
 
             if (absPath.EndsWith(".dds", System.StringComparison.OrdinalIgnoreCase))

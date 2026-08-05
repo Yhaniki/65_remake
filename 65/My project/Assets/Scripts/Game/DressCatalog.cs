@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using Sdo.Shop;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -44,7 +45,7 @@ namespace Sdo.Game
                 try
                 {
                     var p = Path.Combine(SdoExtracted.Root, f);
-                    if (File.Exists(p)) DressTable.Parse(File.ReadAllText(p), _dress);
+                    if (VfsFile.Exists(p)) DressTable.Parse(VfsFile.ReadAllText(p), _dress);
                 }
                 catch (Exception e) { Debug.LogWarning("[shop] " + f + " 讀取失敗: " + e.Message); }
             }
@@ -94,7 +95,7 @@ namespace Sdo.Game
                 try
                 {
                     var p = Path.Combine(SdoExtracted.Root, d.Replace('/', Path.DirectorySeparatorChar), resource);
-                    if (File.Exists(p)) return p;   // NTFS 不分大小寫 → 表裡的小寫名直接對得上磁碟的大寫檔名
+                    if (VfsFile.Exists(p)) return p;   // NTFS 不分大小寫 → 表裡的小寫名直接對得上磁碟的大寫檔名
                 }
                 catch { }
             }
@@ -111,7 +112,7 @@ namespace Sdo.Game
             try
             {
                 var d = Path.Combine(SdoExtracted.Root, relDir.Replace('/', Path.DirectorySeparatorChar));
-                f = Directory.Exists(d) ? Directory.GetFiles(d) : Array.Empty<string>();
+                f = VfsFile.DirectoryExists(d) ? VfsFile.GetFiles(d) : Array.Empty<string>();
             }
             catch { f = Array.Empty<string>(); }
             _dirFiles[relDir] = f;

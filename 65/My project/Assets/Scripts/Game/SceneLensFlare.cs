@@ -1,5 +1,6 @@
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -246,8 +247,8 @@ namespace Sdo.Game
         public static Texture2D LoadAtlas(string sceneDir)
         {
             var p = Path.Combine(sceneDir, "LENSFLARE.BMP");
-            if (!File.Exists(p)) { Debug.LogWarning("[flare] 檔案不存在: " + p); return null; }
-            var tex = DecodeBmp24(File.ReadAllBytes(p));
+            if (!VfsFile.Exists(p)) { Debug.LogWarning("[flare] 檔案不存在: " + p); return null; }
+            var tex = DecodeBmp24(VfsFile.ReadAllBytes(p));
             if (tex == null) { Debug.LogWarning("[flare] BMP 解碼失敗(不是 24bpp 未壓縮?): " + p); return null; }
             tex.name = "LENSFLARE";
             tex.wrapMode = TextureWrapMode.Clamp;

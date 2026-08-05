@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Util
 {
@@ -77,7 +78,9 @@ namespace Sdo.UI.Util
             if (!_cache.TryGetValue(name, out var clip))
             {
                 var path = Path.Combine(SdoExtracted.SeDir, name + ".wav");
-                if (File.Exists(path))
+                // 走 file://，所以要的是「保證有實體」的路徑：pak 內的檔會被具現化到 CACHE。見 data-packaging.md §2.1。
+                path = VfsFile.MaterialiseRealPath(path);
+                if (path != null)
                     using (var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, AudioType.WAV))
                     {
                         yield return req.SendWebRequest();

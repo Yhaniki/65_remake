@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -218,9 +219,9 @@ namespace Sdo.Game
                     {
                         Texture2D tex = null; DdsAlphaMode mode = DdsAlphaMode.Opaque;
                         var ddsPath = Path.Combine(sceneDir, name);
-                        if (name.Length > 0 && File.Exists(ddsPath))
+                        if (name.Length > 0 && VfsFile.Exists(ddsPath))
                         {
-                            var bytes = File.ReadAllBytes(ddsPath);
+                            var bytes = VfsFile.ReadAllBytes(ddsPath);
                             // 漸層光暈存成 DXT3 只有 4-bit alpha(16 階),平滑的衰減會被量化成一圈一圈的
                             // 同心台階,邊緣讀起來就是硬的 —— SCN0029 機庫吊燈的光錐正是這樣(解出貼圖可以
                             // 直接看到階梯)。這些貼圖用 AlphaSmooth.Full 去階梯,還原成連續衰減。

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -71,20 +72,20 @@ namespace Sdo.Game
         {
             var dir = Path.Combine(SdoExtracted.Root, RoomObjRel.Replace('/', Path.DirectorySeparatorChar), g.Folder);
             var mshPath = Path.Combine(dir, g.Msh);
-            if (!File.Exists(mshPath)) { Debug.LogWarning("[room-mapobj] missing " + mshPath); return; }
+            if (!VfsFile.Exists(mshPath)) { Debug.LogWarning("[room-mapobj] missing " + mshPath); return; }
             MshLoader.Result r;
-            try { r = MshLoader.Load(File.ReadAllBytes(mshPath)); }
+            try { r = MshLoader.Load(VfsFile.ReadAllBytes(mshPath)); }
             catch (System.Exception e) { Debug.LogWarning("[room-mapobj] msh fail " + g.Folder + ": " + e.Message); return; }
             if (r == null || r.Submeshes.Count == 0) { Debug.LogWarning("[room-mapobj] parse fail " + g.Folder); return; }
 
             HrcLoader hrc = null;
             var hrcPath = Path.Combine(dir, g.Hrc);
-            if (File.Exists(hrcPath)) { try { hrc = HrcLoader.Load(File.ReadAllBytes(hrcPath)); } catch { } }
+            if (VfsFile.Exists(hrcPath)) { try { hrc = HrcLoader.Load(VfsFile.ReadAllBytes(hrcPath)); } catch { } }
             MotLoader mot = null;
             if (!string.IsNullOrEmpty(g.Mot))
             {
                 var motPath = Path.Combine(dir, g.Mot);
-                if (File.Exists(motPath)) { try { mot = MotLoader.Load(File.ReadAllBytes(motPath)); } catch { } }
+                if (VfsFile.Exists(motPath)) { try { mot = MotLoader.Load(VfsFile.ReadAllBytes(motPath)); } catch { } }
             }
 
             // one shared material per submesh (read-only; the renderer shares it)
@@ -190,7 +191,7 @@ namespace Sdo.Game
         {
             var hit = ResolveDdsPath(dir, ddsName);
             if (hit == null) return null;
-            try { return DdsLoader.Load(File.ReadAllBytes(hit)); } catch { return null; }
+            try { return DdsLoader.Load(VfsFile.ReadAllBytes(hit)); } catch { return null; }
         }
 
         private static void AddMeshChild(Transform parent, string name, Mesh mesh, Material mat)
@@ -207,7 +208,7 @@ namespace Sdo.Game
             var hit = ResolveDdsPath(dir, ddsName);
             if (hit != null)
             {
-                try { var bytes = File.ReadAllBytes(hit); tex = DdsLoader.Load(bytes); mode = DdsLoader.GetAlphaMode(bytes); }
+                try { var bytes = VfsFile.ReadAllBytes(hit); tex = DdsLoader.Load(bytes); mode = DdsLoader.GetAlphaMode(bytes); }
                 catch { }
             }
             string shaderName = mode == DdsAlphaMode.Blend ? "Unlit/Transparent"
@@ -225,9 +226,9 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(ddsName)) return null;
             string name = Path.GetFileName(ddsName.Replace('\\', '/'));
             string direct = Path.Combine(dir, name);
-            if (File.Exists(direct)) return direct;
+            if (VfsFile.Exists(direct)) return direct;
             string stem = Path.GetFileNameWithoutExtension(name).ToLowerInvariant();
-            foreach (var f in Directory.GetFiles(dir, "*.*"))
+            foreach (var f in VfsFile.GetFiles(dir, "*.*"))
                 if (Path.GetExtension(f).ToLowerInvariant() == ".dds" && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem)
                     return f;
             return null;
@@ -239,7 +240,7 @@ namespace Sdo.Game
         {
             var hits = new List<(int n, string path)>();
             string pfx = prefix.ToLowerInvariant();
-            foreach (var f in Directory.GetFiles(dir, "*.dds"))
+            foreach (var f in VfsFile.GetFiles(dir, "*.dds"))
             {
                 string stem = Path.GetFileNameWithoutExtension(f);
                 if (!stem.ToLowerInvariant().StartsWith(pfx)) continue;
@@ -252,7 +253,7 @@ namespace Sdo.Game
             foreach (var h in hits)
             {
                 if (frames.Count >= count) break;
-                try { var t = DdsLoader.Load(File.ReadAllBytes(h.path)); if (t != null) frames.Add(t); } catch { }
+                try { var t = DdsLoader.Load(VfsFile.ReadAllBytes(h.path)); if (t != null) frames.Add(t); } catch { }
             }
             return frames;
         }

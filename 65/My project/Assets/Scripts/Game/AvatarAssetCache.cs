@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -59,7 +60,7 @@ namespace Sdo.Game
                 if (_bytes.TryGetValue(path, out var hit)) { Touch(path); _hits++; return hit; }
             }
             byte[] data;
-            try { data = File.ReadAllBytes(path); }
+            try { data = VfsFile.ReadAllBytes(path); }
             catch { return null; }
             lock (_lock) { _misses++; Store(path, data); }
             return data;

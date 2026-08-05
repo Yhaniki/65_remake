@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -880,8 +881,8 @@ namespace Sdo.Game
         {
             if (!useMask) return;
             var path = Path.Combine(SdoExtracted.Root, ScenePath.Replace('/', Path.DirectorySeparatorChar), "MASK.MSK");
-            if (!File.Exists(path)) { Debug.LogWarning("[room-mask] missing " + path); return; }
-            try { _mask = RoomMask.Parse(File.ReadAllBytes(path)); }
+            if (!VfsFile.Exists(path)) { Debug.LogWarning("[room-mask] missing " + path); return; }
+            try { _mask = RoomMask.Parse(VfsFile.ReadAllBytes(path)); }
             catch (System.Exception e) { Debug.LogWarning("[room-mask] parse fail: " + e.Message); }
             if (_mask != null) Debug.Log($"[room-mask] {RoomMask.Width}x{RoomMask.Height}, {_mask.WalkableCount()} walkable cells");
         }
@@ -890,9 +891,9 @@ namespace Sdo.Game
         {
             var dir = Path.Combine(SdoExtracted.Root, ScenePath.Replace('/', Path.DirectorySeparatorChar));
             var mshPath = Path.Combine(dir, "SCENE.MSH");
-            if (!File.Exists(mshPath)) { Debug.LogWarning("[room-scene] missing " + mshPath); return; }
+            if (!VfsFile.Exists(mshPath)) { Debug.LogWarning("[room-scene] missing " + mshPath); return; }
             SceneLoader.Result res;
-            try { res = SceneLoader.Load(File.ReadAllBytes(mshPath), dir); }
+            try { res = SceneLoader.Load(VfsFile.ReadAllBytes(mshPath), dir); }
             catch (System.Exception e) { Debug.LogWarning("[room-scene] load fail: " + e.Message); return; }
             if (res == null || res.Mesh == null) { Debug.LogWarning("[room-scene] parse fail"); return; }
 

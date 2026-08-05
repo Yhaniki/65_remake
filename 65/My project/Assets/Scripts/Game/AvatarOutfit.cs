@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Sdo.Shop;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -161,7 +162,7 @@ namespace Sdo.Game
             return list;
         }
 
-        private static bool DefaultMeshExists(string rel) => File.Exists(SdoAvatarBuilder.ResolveAvatarFile(rel));
+        private static bool DefaultMeshExists(string rel) => VfsFile.Exists(SdoAvatarBuilder.ResolveAvatarFile(rel));
 
         // ---- 試穿疊加 (商城 ComposeParts；由 ShopScreen 搬來成純邏輯) ----
 

@@ -118,8 +118,9 @@ namespace Sdo.UI.Core
             {
                 var hit = ExternalSongLibrary.FindByPack(song.PackId, song.SongKey);
                 // 🔴 目錄說有,還要**檔案真的在**才算有。目錄可能是舊的:
-                //   • 掃描快取(external_song_cache.json)存在 persistentDataPath,同一台機器上
-                //     兩份 client 共用同一份 → 另一份 client 掃到的資料夾會出現在我的目錄裡;
+                //   • 掃描快取(external_song_cache.json)存在 DATA/CACHE,**同一個 data root 的**兩份 client
+                //     共用同一份 → 另一份 client 掃到的資料夾會出現在我的目錄裡(兩開測試時 B 用
+                //     SDO_DATA_ROOT 指到別棵樹,那就各自一份);
                 //   • 玩家把歌資料夾刪掉/搬走,而下一次掃描還沒跑。
                 // 謊報 have 的後果很具體:server 會把我納入這一場(R12 要求 avail==have),
                 // 然後我開場載不到譜 → 那台卡在載入畫面,全房等我逾時(R15)。寧可說沒有。

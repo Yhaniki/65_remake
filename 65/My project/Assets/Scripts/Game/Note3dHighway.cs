@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -80,8 +81,8 @@ namespace Sdo.Game
         }
 
         // keyed glow texture (bg → alpha 0), mesh orientation (flipV=false); additive draw makes the keyed bg add nothing.
-        static Texture2D LoadTex(string path) { try { return File.Exists(path) ? DdsLoader.LoadDxt1Alpha(File.ReadAllBytes(path), flipV: false) : null; } catch { return null; } }
-        static byte[] TryRead(string p) { try { return File.Exists(p) ? File.ReadAllBytes(p) : null; } catch { return null; } }
+        static Texture2D LoadTex(string path) { try { return VfsFile.Exists(path) ? DdsLoader.LoadDxt1Alpha(VfsFile.ReadAllBytes(path), flipV: false) : null; } catch { return null; } }
+        static byte[] TryRead(string p) { try { return VfsFile.Exists(p) ? VfsFile.ReadAllBytes(p) : null; } catch { return null; } }
 
         /// <summary>Draw the frame's note + receptor glyphs at their (already-computed 2D) world positions.</summary>
         public void SetItems(List<Item> items)

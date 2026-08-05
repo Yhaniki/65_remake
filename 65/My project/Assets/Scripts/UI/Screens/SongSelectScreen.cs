@@ -13,6 +13,7 @@ using Sdo.Settings;
 using Sdo.UI.Catalog;
 using Sdo.UI.Core;
 using Sdo.UI.Util;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Screens
 {
@@ -1247,7 +1248,7 @@ namespace Sdo.UI.Screens
                 !string.IsNullOrEmpty(e.audioPath))
                 return "";
             string path = e.ChartPath(_difficulty);
-            return !string.IsNullOrEmpty(path) && File.Exists(path) ? path : "";
+            return !string.IsNullOrEmpty(path) && VfsFile.Exists(path) ? path : "";
         }
 
         private bool IsCurrentPreview(int fileId, string chartPath)
@@ -1310,7 +1311,7 @@ namespace Sdo.UI.Screens
             if (!string.IsNullOrEmpty(virtualChartPath))
             {
                 OsuBeatmap map = null;
-                try { map = OsuBeatmapParser.Parse(File.ReadAllText(virtualChartPath)); }
+                try { map = OsuBeatmapParser.Parse(VfsFile.ReadAllText(virtualChartPath)); }
                 catch (System.Exception ex)
                 {
                     Debug.LogWarning("[SongSelect] virtual osu preview parse fail: " + ex.Message);
@@ -1363,8 +1364,8 @@ namespace Sdo.UI.Screens
             {
                 // A .gn 歌曲包 ships the官方 exper 試聽短檔 alongside its charts — play that whole clip on loop, exactly
                 // like a built-in song. Everything else has no preview clip → loop a window of its full audio.
-                path = !string.IsNullOrEmpty(e.previewPath) && File.Exists(e.previewPath) ? e.previewPath : e.audioPath;
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) { _previewCo = null; yield break; }
+                path = !string.IsNullOrEmpty(e.previewPath) && VfsFile.Exists(e.previewPath) ? e.previewPath : e.audioPath;
+                if (string.IsNullOrEmpty(path) || !VfsFile.Exists(path)) { _previewCo = null; yield break; }
                 isPreviewClip = path == e.previewPath;
                 audioType = PreviewAudioType(path);
             }
@@ -1373,13 +1374,13 @@ namespace Sdo.UI.Screens
                 // Prefer the dedicated exper/<fileId>.ogg preview clip; if none exists, fall back to the FULL song
                 // and loop a 20s window from its middle (see Update()).
                 path = Path.Combine(SdoExtracted.MusicDir, "exper", fileId + ".ogg");
-                isPreviewClip = File.Exists(path);
+                isPreviewClip = VfsFile.Exists(path);
                 if (!isPreviewClip)
                 {
                     var ogg = MainOggName(e.gn);
                     if (ogg == null) { _previewCo = null; yield break; }
                     path = Path.Combine(SdoExtracted.MusicDir, ogg);
-                    if (!File.Exists(path)) { _previewCo = null; yield break; }
+                    if (!VfsFile.Exists(path)) { _previewCo = null; yield break; }
                 }
                 audioType = AudioType.OGGVORBIS;
             }
@@ -1429,7 +1430,11 @@ namespace Sdo.UI.Screens
             }
             else
             {
-                var req = UnityWebRequestMultimedia.GetAudioClip(Sdo.Game.SdoExtracted.FileUri(path), audioType);
+                // 試聽最後走 file://（UnityWebRequestMultimedia）—— pak 內的檔沒有實體，
+                // 要先具現化到 CACHE。散裝時這是零成本的直通。見 data-packaging.md §2.1。
+                var real = VfsFile.MaterialiseRealPath(path);
+                if (real == null) { _previewCo = null; yield break; }
+                var req = UnityWebRequestMultimedia.GetAudioClip(Sdo.Game.SdoExtracted.FileUri(real), audioType);
                 yield return req.SendWebRequest();
                 if (!IsCurrentPreview(fileId, virtualChartPath)) { req.Dispose(); yield break; }   // superseded mid-load
                 if (req.result == UnityWebRequest.Result.Success)

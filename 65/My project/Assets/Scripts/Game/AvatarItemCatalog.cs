@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using Sdo.Shop;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -147,14 +148,14 @@ namespace Sdo.Game
             string fam = Path.GetFileNameWithoutExtension(rel);              // e.g. "000004_MAN_COAT"
             if (TexFamilies().Contains(fam.ToUpperInvariant())) return true;   // own texture family present → renders
             string path = SdoAvatarBuilder.ResolveAvatarFile(rel);
-            if (!File.Exists(path)) return false;
+            if (!VfsFile.Exists(path)) return false;
             string dir = Path.GetDirectoryName(path);
             List<string> names;
-            try { names = MshLoader.ReadMaterialNames(File.ReadAllBytes(path)); }
+            try { names = MshLoader.ReadMaterialNames(VfsFile.ReadAllBytes(path)); }
             catch { return false; }
             return ClothTextureResolvable(names,
                 nm => SdoAvatarBuilder.FindDdsPath(dir, nm) != null,
-                anName => !string.IsNullOrEmpty(anName) && File.Exists(Path.Combine(dir, anName + ".an")));
+                anName => !string.IsNullOrEmpty(anName) && VfsFile.Exists(Path.Combine(dir, anName + ".an")));
         }
 
         /// <summary>Pure: does a garment mesh have a resolvable CLOTH texture? True if ANY of its submesh material names
@@ -192,9 +193,9 @@ namespace Sdo.Game
             {
                 try
                 {
-                    if (!Directory.Exists(dir)) continue;
+                    if (!VfsFile.DirectoryExists(dir)) continue;
                     foreach (var pat in new[] { "*.dds", "*.an" })
-                        foreach (var f in Directory.GetFiles(dir, pat))
+                        foreach (var f in VfsFile.GetFiles(dir, pat))
                         {
                             var m = _famRx.Match(Path.GetFileNameWithoutExtension(f));
                             if (m.Success) set.Add((m.Groups[1].Value + "_" + m.Groups[2].Value + "_" + m.Groups[3].Value).ToUpperInvariant());
@@ -437,10 +438,10 @@ namespace Sdo.Game
             foreach (var dir in AvatarDirs())
             {
                 string mshPath = Path.Combine(dir, mshName);
-                if (!File.Exists(mshPath)) continue;
+                if (!VfsFile.Exists(mshPath)) continue;
                 // ① 必須有自己的最白膚色臉貼圖 (ForceLightExpressionFace 要用的那張)，否則整臉空白
-                if (!File.Exists(Path.Combine(dir, id6 + "_" + g + "_FACE_HUAN0.DDS")) &&
-                    !File.Exists(Path.Combine(dir, id6 + "_" + g + "_FACE_HUAN.DDS"))) return false;
+                if (!VfsFile.Exists(Path.Combine(dir, id6 + "_" + g + "_FACE_HUAN0.DDS")) &&
+                    !VfsFile.Exists(Path.Combine(dir, id6 + "_" + g + "_FACE_HUAN.DDS"))) return false;
                 // ② mesh 內嵌的貼圖名不能引到別的 id / _Basic_ 衣服貼圖
                 return !ExpressionMeshRefsForeign(mshPath, id6);
             }
@@ -452,7 +453,7 @@ namespace Sdo.Game
         {
             try
             {
-                var s = System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(mshPath)).ToLowerInvariant();
+                var s = System.Text.Encoding.ASCII.GetString(VfsFile.ReadAllBytes(mshPath)).ToLowerInvariant();
                 if (s.Contains("_basic_")) return true;
                 foreach (System.Text.RegularExpressions.Match m in
                          System.Text.RegularExpressions.Regex.Matches(s, @"(\d{6})_(?:man|woman)_face_huan"))
@@ -510,7 +511,7 @@ namespace Sdo.Game
             try
             {
                 var path = ResolveIteminfoPath();
-                if (path != null) items = IteminfoReader.Parse(File.ReadAllBytes(path), TryGetGbk());
+                if (path != null) items = IteminfoReader.Parse(VfsFile.ReadAllBytes(path), TryGetGbk());
                 else Debug.LogWarning("[shop] iteminfo.dat not found — catalog is empty");
             }
             catch (Exception e) { Debug.LogWarning("[shop] iteminfo load failed: " + e.Message); }
@@ -531,7 +532,7 @@ namespace Sdo.Game
             try
             {
                 var sp = ResolveSetinfoPath();
-                if (sp != null) sets = SetinfoReader.Parse(File.ReadAllBytes(sp), TryGetGbk());
+                if (sp != null) sets = SetinfoReader.Parse(VfsFile.ReadAllBytes(sp), TryGetGbk());
             }
             catch (Exception e) { Debug.LogWarning("[shop] setinfo load failed: " + e.Message); }
 
@@ -776,7 +777,7 @@ namespace Sdo.Game
             var path = ResolveDataFile(ShopSetTwSidecar.FileName);
             if (path == null) return 0;
             List<TwSetDef> defs;
-            try { defs = ShopSetTwSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            try { defs = ShopSetTwSidecar.Parse(VfsFile.ReadAllText(path, Encoding.UTF8)); }
             catch (Exception e) { Debug.LogWarning("[shop] " + ShopSetTwSidecar.FileName + " read failed: " + e.Message); return 0; }
             if (defs.Count == 0) return 0;
 
@@ -843,15 +844,15 @@ namespace Sdo.Game
                 Path.Combine(SdoExtracted.Root, "setinfo.dat"),
                 Path.Combine(SdoExtracted.Root, "AVATAR", "setinfo.dat"),
             };
-            foreach (var c in cands) if (File.Exists(c)) return c;
+            foreach (var c in cands) if (VfsFile.Exists(c)) return c;
             try
             {
                 var assets = Directory.GetParent(SdoExtracted.Root)?.Parent?.FullName;
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var sub in Directory.GetDirectories(assets))
+                if (assets != null && VfsFile.DirectoryExists(assets))
+                    foreach (var sub in VfsFile.GetDirectories(assets))
                     {
                         var f = Path.Combine(sub, "setinfo.dat");
-                        if (File.Exists(f)) return f;
+                        if (VfsFile.Exists(f)) return f;
                     }
             }
             catch { }
@@ -863,7 +864,7 @@ namespace Sdo.Game
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var dir in AvatarDirs())
             {
-                try { if (Directory.Exists(dir)) foreach (var f in Directory.GetFiles(dir, "*.MSH")) set.Add(Path.GetFileName(f)); }
+                try { if (VfsFile.DirectoryExists(dir)) foreach (var f in VfsFile.GetFiles(dir, "*.MSH")) set.Add(Path.GetFileName(f)); }
                 catch { }
             }
             return set;
@@ -886,15 +887,15 @@ namespace Sdo.Game
                 Path.Combine(SdoExtracted.Root, "iteminfo.dat"),
                 Path.Combine(SdoExtracted.Root, "AVATAR", "iteminfo.dat"),
             };
-            foreach (var c in cands) if (File.Exists(c)) return c;
+            foreach (var c in cands) if (VfsFile.Exists(c)) return c;
             try
             {
                 var assets = Directory.GetParent(SdoExtracted.Root)?.Parent?.FullName;   // .../assets
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var sub in Directory.GetDirectories(assets))
+                if (assets != null && VfsFile.DirectoryExists(assets))
+                    foreach (var sub in VfsFile.GetDirectories(assets))
                     {
                         var f = Path.Combine(sub, "iteminfo.dat");
-                        if (File.Exists(f)) return f;
+                        if (VfsFile.Exists(f)) return f;
                     }
             }
             catch { }
@@ -909,7 +910,7 @@ namespace Sdo.Game
             var path = ResolveDataFile(ShopNameSidecar.FileName);
             if (path == null) return;
             Dictionary<int, string> map;
-            try { map = ShopNameSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            try { map = ShopNameSidecar.Parse(VfsFile.ReadAllText(path, Encoding.UTF8)); }
             catch (Exception e) { Debug.LogWarning("[shop] " + ShopNameSidecar.FileName + " read failed: " + e.Message); return; }
             if (map.Count == 0) return;
             int n = 0;
@@ -933,7 +934,7 @@ namespace Sdo.Game
             _twNames = null;
             var path = ResolveDataFile(ShopNameTwSidecar.FileName);
             if (path == null) return;
-            try { _twNames = ShopNameTwSidecar.Parse(File.ReadAllText(path, Encoding.UTF8)); }
+            try { _twNames = ShopNameTwSidecar.Parse(VfsFile.ReadAllText(path, Encoding.UTF8)); }
             catch (Exception e) { Debug.LogWarning("[shop] " + ShopNameTwSidecar.FileName + " read failed: " + e.Message); }
         }
 
@@ -967,15 +968,15 @@ namespace Sdo.Game
                 Path.Combine(SdoExtracted.Root, fileName),
                 Path.Combine(SdoExtracted.Root, "AVATAR", fileName),
             };
-            foreach (var c in cands) if (File.Exists(c)) return c;
+            foreach (var c in cands) if (VfsFile.Exists(c)) return c;
             try
             {
                 var assets = Directory.GetParent(SdoExtracted.Root)?.Parent?.FullName;
-                if (assets != null && Directory.Exists(assets))
-                    foreach (var sub in Directory.GetDirectories(assets))
+                if (assets != null && VfsFile.DirectoryExists(assets))
+                    foreach (var sub in VfsFile.GetDirectories(assets))
                     {
                         var f = Path.Combine(sub, fileName);
-                        if (File.Exists(f)) return f;
+                        if (VfsFile.Exists(f)) return f;
                     }
             }
             catch { }

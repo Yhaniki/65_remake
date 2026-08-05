@@ -8,7 +8,7 @@ namespace Sdo.UI.Screens
     /// 大廳左側那尊 3D 角色的**即時調校**:面板本體是共用的 <see cref="AvatarTuner"/>(大廳按 <c>F4</c> 開,
     /// editor 限定),這裡只負責「把調出來的值套到大廳的畫面上」。個人資料視窗那尊走同一套(<c>F5</c>)。
     ///
-    /// 🔴 調過的值存在 PlayerPrefs、**build 版也照吃** —— 面板是 editor 限定,但載入不是,不然調完關掉又變回去。
+    /// 🔴 調過的值存在 LocalPrefs、**build 版也照吃** —— 面板是 editor 限定,但載入不是,不然調完關掉又變回去。
     ///    要回到 <c>LobbyScreen.cs</c> 那組常數,按面板上的「重設」。
     /// </summary>
     public sealed partial class LobbyScreen
@@ -22,7 +22,7 @@ namespace Sdo.UI.Screens
 
         private AvatarTuner _avTuner;
 
-        /// <summary>大廳角色的調校面板(F4)。第一次用到才建 —— 建構子會讀 PlayerPrefs。</summary>
+        /// <summary>大廳角色的調校面板(F4)。第一次用到才建 —— 建構子會讀 LocalPrefs。</summary>
         private AvatarTuner AvTuner
         {
             get

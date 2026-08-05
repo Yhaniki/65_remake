@@ -4,6 +4,7 @@ using System.IO;
 using UnityEngine;
 using UnityEngine.Networking;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Util
 {
@@ -145,11 +146,15 @@ namespace Sdo.UI.Util
             try
             {
                 var dir = SdoExtracted.UiBgmDir;
-                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                    foreach (var f in Directory.GetFiles(dir))
+                if (!string.IsNullOrEmpty(dir) && VfsFile.DirectoryExists(dir))
+                    foreach (var f in VfsFile.GetFiles(dir))
                     {
                         var ext = Path.GetExtension(f).ToLowerInvariant();
-                        if (ext == ".ogg" || ext == ".mp3") list.Add(f);
+                        if (ext != ".ogg" && ext != ".mp3") continue;
+                        // LoadClip 走 file:// —— 需要「保證有實體」的路徑。BGM 目前刻意維持散裝
+                        // （見 data-packaging.md §2.1），這裡等於零成本直通；哪天真的打包了也不會默默消失。
+                        var real = VfsFile.MaterialiseRealPath(f);
+                        if (real != null) list.Add(real);
                     }
             }
             catch { }

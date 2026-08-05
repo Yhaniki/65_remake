@@ -22,7 +22,15 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$BuildDir
+    [string]$BuildDir,
+
+    # 組完 DATA 之後把它打包成 SDOPAK 分卷（tools\build_pak.py），並刪掉散裝樹。
+    # 預設關 —— 開發時散裝樹好查、改一個檔就生效，不必重打包。
+    [switch]$Pack,
+
+    # 打包時加密（出貨用）。⚠️ 混淆不是保護：金鑰必然在執行檔裡。
+    # 見 docs\architecture\data-packaging.md §5。
+    [switch]$Encrypt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -245,6 +253,50 @@ foreach ($sub in 'SONG','NOTESKIN','THEME','MODEL') {
 # 5) Strip Burst debug-info folders so the top level stays clean
 Get-ChildItem -LiteralPath $BuildDir -Directory -Filter '*_BurstDebugInformation_DoNotShip' -ErrorAction SilentlyContinue |
     ForEach-Object { Write-Host "[package] remove $($_.Name)"; Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+
+# 6) 打包成 SDOPAK 分卷（-Pack）。
+#
+#    順序是刻意的：先把散裝 DATA 完整組好（上面所有的 overlay / 覆蓋 / 產生的美術都套完），
+#    再一次打包 —— 打包器看到的就是最終狀態，不必知道任何組裝規則。
+#
+#    reserved 目錄（PROFILE / ADDON / CACHE / REPLAY）留在原地不動：那是玩家可寫的明碼區，
+#    打包器自己也會擋。刪散裝樹時同樣跳過它們。
+if ($Pack) {
+    $pyPack = Join-Path $PSScriptRoot 'build_pak.py'
+    if (-not (Test-Path $pyPack)) { throw "找不到 $pyPack" }
+
+    # manifest 寫到 build 目錄旁邊，**不進 DATA** —— 它是每一條路徑的明文（base_avatar 那份 5.4 MB），
+    # 跟著出貨等於索引加密白做。留在 build 目錄是因為下次產 patch 卷要拿它比對。
+    $ManifestDir = Join-Path $BuildDir 'pak_manifests'
+
+    Write-Host "[package] pack: $Data -> SDOPAK$(if ($Encrypt) { '（加密）' } else { '（明碼）' })"
+    $packArgs = @($pyPack, '--source', $Data, '--out', $Data, '--manifest-dir', $ManifestDir)
+    if ($Encrypt) { $packArgs += '--encrypt' }
+    & python @packArgs
+    if ($LASTEXITCODE -ne 0) { throw "build_pak.py 失敗 exit=$LASTEXITCODE" }
+
+    # 打包成功才刪散裝樹 —— 失敗時留著，至少 build 還是能跑的。
+    #
+    # 🔴 **只刪 packed_dirs.json 說有打包的那些**。不能反過來寫成「除了 PROFILE/ADDON/… 以外全刪」——
+    #    音訊（BGM / SE / MUSIC）目前刻意維持散裝（見 build_pak.py 的 VOLUMES: loose=True），
+    #    那種寫法會把它們一起刪掉，症狀是「遊戲完全沒有聲音而且不報錯」。
+    #    清單由打包器產出，兩邊才不會各自維護一份而漂移。
+    $packedJson = Join-Path $ManifestDir 'packed_dirs.json'
+    if (-not (Test-Path $packedJson)) { throw "build_pak.py 沒有產生 packed_dirs.json —— 不敢刪散裝樹" }
+    $packed = (Get-Content $packedJson -Raw -Encoding UTF8 | ConvertFrom-Json).packed
+
+    Get-ChildItem -LiteralPath $Data -Directory | Where-Object { $packed -contains $_.Name } | ForEach-Object {
+        Write-Host "[package] pack: 移除散裝 $($_.Name)"
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    }
+    # 頂層的零星檔案（iteminfo.dat / shop_names.tsv…）已經進了 base_core.pak。出貨的 DATA 只留 *.pak。
+    Get-ChildItem -LiteralPath $Data -File | Where-Object { $_.Extension -ne '.pak' } | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force
+    }
+
+    Write-Host "[package] pack: DATA 現在是"
+    Get-ChildItem -LiteralPath $Data | Select-Object Name, @{n='MB';e={ if ($_.PSIsContainer) { '' } else { '{0:N1}' -f ($_.Length/1MB) } }} | Format-Table -AutoSize
+}
 
 Write-Host "[package] done. Top level of $BuildDir :"
 Get-ChildItem -LiteralPath $BuildDir | Select-Object Name | Format-Table -HideTableHeaders

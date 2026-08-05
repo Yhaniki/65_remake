@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using Sdo.Game;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Util
 {
@@ -127,12 +128,12 @@ namespace Sdo.UI.Util
             {
                 string file = Path.Combine(Dir, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase)
                                                 ? anName : anName + ".an");
-                if (!File.Exists(file))
+                if (!VfsFile.Exists(file))
                 {
                     file = Path.Combine(Dir, anName.ToUpperInvariant() + ".AN");
-                    if (!File.Exists(file)) return false;
+                    if (!VfsFile.Exists(file)) return false;
                 }
-                string text = File.ReadAllText(file);
+                string text = VfsFile.ReadAllText(file);
                 var m = System.Text.RegularExpressions.Regex.Match(
                     text, @"([^\s(]+)\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)");
                 if (!m.Success) return false;

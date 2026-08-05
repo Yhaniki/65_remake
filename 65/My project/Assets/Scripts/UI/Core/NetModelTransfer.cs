@@ -7,6 +7,7 @@ using Sdo.Net;
 using Sdo.Osu;
 using Sdo.Settings;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Core
 {
@@ -129,7 +130,7 @@ namespace Sdo.UI.Core
             if (_givenUp.Contains(mine)) return false;
 
             string dir = MmdAvatarSwap.ModelDir;
-            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) { _givenUp.Add(mine); return false; }
+            if (string.IsNullOrEmpty(dir) || !VfsFile.DirectoryExists(dir)) { _givenUp.Add(mine); return false; }
 
             // 自己先驗一次。server 也會驗(那是它的職責),但在這裡擋掉可以省下整趟上傳,
             // 而且錯誤訊息指得到真正的原因(「你的模型資料夾裡有 .exe」而不是「badPath」)。
@@ -208,7 +209,7 @@ namespace Sdo.UI.Core
             if (!string.Equals(got, pack, StringComparison.Ordinal))
             {
                 Debug.LogWarning("[mmd-net] 下載回來的內容與宣稱的 packId 不符,丟掉:" + pack);
-                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+                try { if (VfsFile.DirectoryExists(dir)) Directory.Delete(dir, true); } catch { }
                 _givenUp.Add(pack);
                 fx.MarkImported(false, "packId 不符");
                 Clear();

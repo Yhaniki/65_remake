@@ -1,6 +1,7 @@
 using System.Globalization;
 using UnityEngine;
 using Sdo.Game;
+using Sdo.Settings;
 using Sdo.UI.Core;
 
 namespace Sdo.UI.Util
@@ -13,10 +14,10 @@ namespace Sdo.UI.Util
     /// 當場改,調到滿意再按「複製 const」把該貼回程式碼的那幾行產生出來。
     ///
     /// 誰在用:大廳左側那尊(<c>LobbyScreen.AvatarDebug.cs</c>)、個人資料視窗那尊
-    /// (<c>PlayerInfoModal.AvatarDebug.cs</c>)。**兩邊各自一份**(不同的 PlayerPrefs key、不同熱鍵、
+    /// (<c>PlayerInfoModal.AvatarDebug.cs</c>)。**兩邊各自一份**(不同的 LocalPrefs key、不同熱鍵、
     /// 不同視窗),互不影響。
     ///
-    /// 🔴 **調過的值會存進 PlayerPrefs,而且 build 版也照吃**(<see cref="Load"/> 不受
+    /// 🔴 **調過的值會存進 LocalPrefs,而且 build 版也照吃**(<see cref="Load"/> 不受
     ///    <see cref="SdoDebugFeatures"/> 管,只有面板本身是 editor 限定)—— 「自己設好的位置」本來就該一直是
     ///    那個位置,否則調完關掉又變回去。要回到程式碼裡那組原始值,按面板上的「重設」(它會把 key 刪掉)。
     ///
@@ -47,7 +48,7 @@ namespace Sdo.UI.Util
 
         // 🔴 縮放的基準**永遠是 GenderPreview3D 的槽位 400×600**,不是呼叫端現在用的 W/H:
         //    呼叫端把調好的值貼回程式碼之後,它的 W/H 就已經含著上一輪的縮放(例如大廳現在是 419.21×628.81
-        //    = 1.048 倍),若拿那個當基準,存在 PlayerPrefs 裡的 1.048 會被再乘一次 → 一貼回去人就自己變大。
+        //    = 1.048 倍),若拿那個當基準,存在 LocalPrefs 裡的 1.048 會被再乘一次 → 一貼回去人就自己變大。
         //    以槽位為基準時 scale 的意義是絕對的(1.048 永遠是「比原槽位大 4.8%」),貼回去幾次都一樣。
         private const float BaseW = GenderPreview3D.SlotW, BaseH = GenderPreview3D.SlotH;
 
@@ -76,7 +77,7 @@ namespace Sdo.UI.Util
         public float H { get { Load(); return BaseH * _scale; } }
         public bool WindowOpen => _open;
 
-        /// <param name="prefKey">PlayerPrefs 的前綴(例:<c>lobby.avatar</c>)—— 每個畫面一組,不要共用。</param>
+        /// <param name="prefKey">LocalPrefs 的前綴(例:<c>lobby.avatar</c>)—— 每個畫面一組,不要共用。</param>
         /// <param name="codePrefix">「複製 const」產出的常數名前綴(例:<c>Avatar</c> → <c>AvatarX/Y/W/H</c>)。</param>
         /// <param name="defW">程式碼裡現在那個 W(含上一輪調過的縮放)—— 會換算成相對 400×600 槽位的倍率。
         ///   <paramref name="defH"/> 只用來檢查比例,實際高度一律由槽位比例算(2:3 不准破,破了角色會被拉扁)。</param>
@@ -96,15 +97,15 @@ namespace Sdo.UI.Util
 
         // ================================================================ 存 / 讀
 
-        /// <summary>第一次要用到調校值時從 PlayerPrefs 讀進來;沒有紀錄就用建構子給的預設(= 完全照程式碼)。</summary>
+        /// <summary>第一次要用到調校值時從 LocalPrefs 讀進來;沒有紀錄就用建構子給的預設(= 完全照程式碼)。</summary>
         public void Load()
         {
             if (_loaded) return;
             _loaded = true;
-            _x = Mathf.Clamp(PlayerPrefs.GetFloat(_prefKey + ".x", _defX), MinX, MaxX);
-            _y = Mathf.Clamp(PlayerPrefs.GetFloat(_prefKey + ".y", _defY), MinY, MaxY);
-            _scale = Mathf.Clamp(PlayerPrefs.GetFloat(_prefKey + ".scale", _defScale), MinScale, MaxScale);
-            _fill = Mathf.Clamp(PlayerPrefs.GetFloat(_prefKey + ".fill", _defFill), MinFill, MaxFill);
+            _x = Mathf.Clamp(LocalPrefs.GetFloat(_prefKey + ".x", _defX), MinX, MaxX);
+            _y = Mathf.Clamp(LocalPrefs.GetFloat(_prefKey + ".y", _defY), MinY, MaxY);
+            _scale = Mathf.Clamp(LocalPrefs.GetFloat(_prefKey + ".scale", _defScale), MinScale, MaxScale);
+            _fill = Mathf.Clamp(LocalPrefs.GetFloat(_prefKey + ".fill", _defFill), MinFill, MaxFill);
             SyncTexts();
         }
 
@@ -126,10 +127,10 @@ namespace Sdo.UI.Util
             }
 
             _x = x; _y = y; _scale = scale; _fill = fill;
-            PlayerPrefs.SetFloat(_prefKey + ".x", _x);
-            PlayerPrefs.SetFloat(_prefKey + ".y", _y);
-            PlayerPrefs.SetFloat(_prefKey + ".scale", _scale);
-            PlayerPrefs.SetFloat(_prefKey + ".fill", _fill);
+            LocalPrefs.SetFloat(_prefKey + ".x", _x);
+            LocalPrefs.SetFloat(_prefKey + ".y", _y);
+            LocalPrefs.SetFloat(_prefKey + ".scale", _scale);
+            LocalPrefs.SetFloat(_prefKey + ".fill", _fill);
             _dirty = true;
             SyncTexts();
             Applied?.Invoke();
@@ -138,10 +139,10 @@ namespace Sdo.UI.Util
         /// <summary>回到程式碼裡那組值,並且**把紀錄刪掉** —— 之後常數改了就跟著改,不會被舊紀錄壓著。</summary>
         public void Reset()
         {
-            PlayerPrefs.DeleteKey(_prefKey + ".x");
-            PlayerPrefs.DeleteKey(_prefKey + ".y");
-            PlayerPrefs.DeleteKey(_prefKey + ".scale");
-            PlayerPrefs.DeleteKey(_prefKey + ".fill");
+            LocalPrefs.DeleteKey(_prefKey + ".x");
+            LocalPrefs.DeleteKey(_prefKey + ".y");
+            LocalPrefs.DeleteKey(_prefKey + ".scale");
+            LocalPrefs.DeleteKey(_prefKey + ".fill");
             _dirty = true;
             _loaded = true;
             _x = _defX; _y = _defY; _scale = _defScale; _fill = _defFill;
@@ -149,12 +150,12 @@ namespace Sdo.UI.Util
             Applied?.Invoke();
         }
 
-        /// <summary>把 PlayerPrefs 真的寫進磁碟(平常只改記憶體裡那份,拖滑桿不該每幀存檔)。</summary>
+        /// <summary>把 LocalPrefs 真的寫進磁碟(平常只改記憶體裡那份,拖滑桿不該每幀存檔)。</summary>
         public void Flush()
         {
             if (!_dirty) return;
             _dirty = false;
-            PlayerPrefs.Save();
+            LocalPrefs.Save();
         }
 
         private void SyncTexts()

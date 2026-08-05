@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.UI.Util
 {
@@ -30,9 +31,9 @@ namespace Sdo.UI.Util
             try
             {
                 var path = Path.Combine(Application.streamingAssetsPath, "trad2simp.txt");
-                if (File.Exists(path))
+                if (VfsFile.Exists(path))
                 {
-                    foreach (var raw in File.ReadAllLines(path))
+                    foreach (var raw in VfsFile.ReadAllLines(path))
                     {
                         // "繁\t简" — both single BMP chars (astral/multi-char entries were filtered out at bake time).
                         if (raw.Length >= 3 && raw[1] == '\t') _map[raw[0]] = raw[2];

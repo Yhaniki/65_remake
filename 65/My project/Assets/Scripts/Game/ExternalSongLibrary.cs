@@ -39,11 +39,17 @@ namespace Sdo.Game
             return roots;
         }
 
-        // Per-user writable location for the scan cache. Application.persistentDataPath is main-thread only, so this is
-        // resolved on the coroutine (main thread) and the resulting path handed to the worker — never touched off-thread.
+        // 掃歌快取的位置:DATA/CACHE/external_song_cache.json。
+        //
+        // 以前寫 Application.persistentDataPath(= %USERPROFILE%\AppData\LocalLow\…),那在遊戲資料夾外面 ——
+        // 整包搬機器快取會掉、玩家想清也找不到。build 產生的東西一律不准落在 build 資料夾之外
+        // (docs/architecture/data-packaging.md §1.1)。CACHE 整個刪掉是安全的:下次開機重掃就長回來。
+        //
+        // SdoDataRoot.Root 第一次解析會碰 Application.dataPath(主執行緒限定),所以這裡跟以前一樣
+        // 在 coroutine(主執行緒)上解析好,再把路徑交給 worker —— 絕不在背景執行緒上取。
         private static string CacheFilePath()
         {
-            try { return Path.Combine(Application.persistentDataPath, "external_song_cache.json"); }
+            try { return SdoDataRoot.CachePath("external_song_cache.json") ?? ""; }
             catch { return ""; }
         }
 
@@ -93,7 +99,7 @@ namespace Sdo.Game
                 yield break;
             }
 
-            // Cache I/O (JsonUtility + persistentDataPath) stays on the main thread; the worker does only pure
+            // Cache I/O (JsonUtility + the DATA/CACHE path) stays on the main thread; the worker does only pure
             // System.IO + arithmetic. Load the previous scan, hand it to the worker, save the fresh one when it returns.
             string cacheFile = CacheFilePath();
             // 分槽（哪三張譜留下、誰是困難）用目前那套難度算法；快取也記著它是用哪套算的 → 換一套就重掃一次。

@@ -42,7 +42,7 @@ namespace Sdo.Tests
         // (它由 Every_Stage_Name_Key_Is_Defined 直接問 StageCatalog 要真正的 key)。
         private static readonly Regex KeyLike = new Regex("\"([a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+)\"");
 
-        // 🔴 **PlayerPrefs 的前綴長得跟 loc key 一模一樣**(小寫 + 點),但它永遠不會進語言表 ——
+        // 🔴 **LocalPrefs 的前綴長得跟 loc key 一模一樣**(小寫 + 點),但它永遠不會進語言表 ——
         //    <c>new AvatarTuner("lobby.avatar", …)</c> 的第一個引數就是這種東西(見 AvatarTuner.prefKey),
         //    而 <c>lobby.</c> 剛好是表裡有的前綴 → 上面那條規則會把它當成「漏翻的 key」報紅。
         //    掃描前先把這個引數從該行抹掉(只抹引數,不整行跳過:同一行後面可能真的有 key)。
@@ -73,7 +73,7 @@ namespace Sdo.Tests
                     if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith("*", StringComparison.Ordinal))
                         continue;
 
-                    line = PrefKeyArg.Replace(line, "$1(");   // PlayerPrefs 前綴不是 key(見 PrefKeyArg)
+                    line = PrefKeyArg.Replace(line, "$1(");   // LocalPrefs 前綴不是 key(見 PrefKeyArg)
 
                     foreach (Match m in KeyLike.Matches(line))
                     {
