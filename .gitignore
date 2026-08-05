@@ -215,3 +215,10 @@ tools/mmd_cloth_validate/pmx_dump.txt
 /mmd_a.log*
 /mmd_b.log*
 /server/bin-test/
+
+# native wrapper build artifacts（原始碼與產出的 .dll 進版控，中間檔不進）
+tools/sd*/*.obj
+tools/sd*/*.exp
+tools/sd*/*.lib
+tools/sd*/*.exe
+tools/sd*/*.pdb

@@ -69,8 +69,11 @@ $ErrorActionPreference = 'Stop'
 
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $ProjectPath) { $ProjectPath = Join-Path $Repo '65\My project' }
-if (-not $Results)     { $Results     = Join-Path $Repo "test_results-$($Platform.ToLower()).xml" }
-if (-not $LogFile)     { $LogFile     = Join-Path $Repo "test-$($Platform.ToLower()).log" }
+# 輸出一律進 <repo>	est-output\ —— 以前散在 repo 根，一輪測試就多兩個檔，久了根目錄全是垃圾。
+$OutDir = Join-Path $Repo 'test-output'
+if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
+if (-not $Results)     { $Results     = Join-Path $OutDir "results-$($Platform.ToLower()).xml" }
+if (-not $LogFile)     { $LogFile     = Join-Path $OutDir "$($Platform.ToLower()).log" }
 
 # 找 Unity.exe:有給 -Unity 就用，否則挑 Hub 底下最新的一版(同 build_windows.ps1)。
 if (-not $Unity) {

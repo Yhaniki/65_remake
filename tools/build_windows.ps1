@@ -77,7 +77,12 @@ $ErrorActionPreference = 'Stop'
 
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not $ProjectPath) { $ProjectPath = Join-Path $Repo '65\My project' }
-if (-not $LogFile)     { $LogFile     = Join-Path $Repo 'build.log' }
+# build log 也進 test-output\ —— 跟測試產物同一個地方，repo 根保持乾淨。
+if (-not $LogFile) {
+    $outDir = Join-Path $Repo 'test-output'
+    if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
+    $LogFile = Join-Path $outDir 'build.log'
+}
 if (-not $BuildOut)    { $BuildOut    = Join-Path $Repo 'Build\Windows' }
 
 # Locate Unity.exe: use -Unity if given, else pick the newest editor under the Hub.
