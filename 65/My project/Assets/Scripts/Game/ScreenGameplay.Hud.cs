@@ -361,11 +361,15 @@ namespace Sdo.Game
             if (mmd != null && mmd.TryHeadBoundsRest(out var mb))
             {
                 // MmdAvatar's constants, not the SDO ones: its box is the bare head, the SDO box is head+hair (see there).
-                headPortraitDist = Mathf.Max(mb.size.y, 1f) * MmdAvatar.PortraitFrameDist * Mathf.Max(0.05f, headZoom);
-                Vector3 aim = mb.center + new Vector3(headAimOffset.x, -MmdAvatar.PortraitAimUp * mb.size.y, 0f);
+                // 🔴 算出來的距離只准存在**區域變數**裡,絕不可寫回 headPortraitDist —— 那個欄位是「模型單位、相對
+                //    頭骨」的共用取景值,SyncResultHeadPortraitTuning 每幀把它推給結算列**其他人**那幾格的
+                //    boneDistModel(那裡還會再 ×avatarScale)。這裡的值是**世界單位**(框已含 scale),兩種量混用 =
+                //    只要自己換上 MMD,旁邊那格 SDO 的頭就大一圈(2026-08-05 使用者回報:結算畫面男生的頭特別大;
+                //    實測 MMD 的 20.8 被當成模型單位推過去 → 21.8 世界距離,正確值是 25.17 → 近 15%)。
+                MmdAvatar.FramePortrait(mb, headZoom, headAimOffset.x, out Vector3 aim, out float mmdDist);
                 Vector3 fwd = Quaternion.Euler(headPitchDeg, 0f, 0f) * Vector3.forward;
                 _headCam.fieldOfView = headPortraitFov;
-                _headCam.transform.position = aim - fwd * headPortraitDist;
+                _headCam.transform.position = aim - fwd * mmdDist;
                 _headCam.transform.rotation = Quaternion.LookRotation(fwd, Vector3.up);
                 return;
             }

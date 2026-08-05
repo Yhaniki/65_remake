@@ -1022,6 +1022,20 @@ namespace Sdo.Game
         public const float PortraitFrameDist = 2.2f;
         public const float PortraitAimUp = 0.25f;
 
+        /// <summary>頭貼相機該怎麼框這一顆 MMD 頭(<paramref name="headBoxWorld"/> = <see cref="TryHeadBounds"/>/
+        /// <see cref="TryHeadBoundsRest"/> 給的框)。<paramref name="aimX"/> 把臉往側邊擺正(結算那格用
+        /// <c>headAimOffset.x</c>,房間那格是 0)。
+        ///
+        /// 🔴 回傳的 <paramref name="dist"/> 是**世界單位**(框本身已經含了 avatar 的 scale),跟 SDO 那條
+        /// <see cref="HeadBoneFraming"/> 的「模型單位、相對頭骨」**不是同一種量**。兩邊的值互相指派 = 結算列
+        /// 其他人的頭會大小跑掉(見 ScreenGameplay.Hud 的 UpdateHeadPortraitCam)。</summary>
+        public static void FramePortrait(Bounds headBoxWorld, float zoom, float aimX, out Vector3 aim, out float dist)
+        {
+            float h = Mathf.Max(headBoxWorld.size.y, 1e-4f);
+            aim = headBoxWorld.center + new Vector3(aimX, -PortraitAimUp * h, 0f);
+            dist = h * PortraitFrameDist * Mathf.Max(0.05f, zoom);
+        }
+
         /// <summary>Where a head-portrait camera should aim, in world space: an upright box the size of this model's head,
         /// anchored on the LIVE head bone — the room 頭貼 re-aims at this every frame, keeping the head locked in the
         /// middle of the slot as the dancer walks and sways. Frame it with <see cref="PortraitFrameDist"/> /

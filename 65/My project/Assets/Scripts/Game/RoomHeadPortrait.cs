@@ -310,11 +310,8 @@ namespace Sdo.Game
             // MmdHeadBounds),SDO 那個是頭+髮 → 高約 40%,所以常數也要用 MmdAvatar 自帶的。
             var mmdRig = MmdAvatarSwap.ActiveFor(_avatar);
             if (mmdRig != null && mmdRig.TryHeadBounds(out var mb))
-            {
-                target = mb.center;
-                target.y -= MmdAvatar.PortraitAimUp * mb.size.y;
-                dist = Mathf.Max(mb.size.y, 1e-4f) * MmdAvatar.PortraitFrameDist * Mathf.Max(0.05f, zoom);
-            }
+                // 世界單位的距離,跟 boneDistModel(模型單位)不同量 —— 這裡只寫進區域變數,不回寫任何共用欄位。
+                MmdAvatar.FramePortrait(mb, zoom, 0f, out target, out dist);
             else if (boneFraming)   // 只對頭骨:固定取景,不量 mesh、不跟頭(與本機結算頭貼同一條路)
                 HeadBoneFraming.Compute(t.TransformPoint(_headModelPos), avatarScale, zoom,
                                         boneAimOffset, boneDistModel, out target, out dist);
