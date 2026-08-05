@@ -354,8 +354,8 @@ namespace Sdo.Game
             if (_headCam == null || _headAvatar == null) return;
 
             // MMD display mode: the SDO parts this normally measures are hidden, and the MMD model is one skinned mesh —
-            // frame the head the MMD rig measured for itself (what is skinned to 頭, hair materials excluded — see
-            // MmdHeadBounds: 頭髮的份量每包模型差很多,算進去這一格的頭就比旁邊 SDO 那幾格小一圈).
+            // frame the head the MMD rig sized for itself off the 頭 bone's tail (表示先) — see MmdHeadBounds:
+            // 綁在頭骨上的不只有頭(髮皮/角/帽子/髮飾),量幾何的話這一格的頭就比旁邊 SDO 那幾格小一圈。
             // Rest bounds, not live: the cam stays FIXED and the idle head-bob plays in-frame, exactly as the SDO path.
             var mmd = MmdAvatarSwap.ActiveFor(_headAvatar);
             if (mmd != null && mmd.TryHeadBoundsRest(out var mb))

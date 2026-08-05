@@ -101,6 +101,12 @@ namespace Sdo.Game
             public int AppendParent = -1;
             public float AppendWeight;
             public bool AppendRotation, AppendTranslation;
+            // 表示先 ("tail"): where PMXEditor draws this bone's tip. Either a bone index (flag 0x0001) or, far more
+            // commonly, a model-space OFFSET from this bone. On 頭 it points at the crown of the skull — the only
+            // author-declared measure of head SIZE a PMX carries, and the one <see cref="MmdHeadBounds"/> frames the
+            // head portraits with (geometry can't: horns/hats/ahoge are skinned to 頭 just like the skull is).
+            public int TailBone = -1;           // -1 = the tail is an offset, see TailOffset
+            public Vector3 TailOffset;          // model-space offset from Position (zero when TailBone >= 0)
         }
         public List<Bone> Bones = new List<Bone>();
 
@@ -312,7 +318,7 @@ namespace Sdo.Game
                 b.Flags = (ushort)U16();
                 // --- variable tail block, depends on the flags ---
                 bool indexedTail = (b.Flags & 0x0001) != 0;
-                if (indexedTail) BoneRef(); else V3();                        // tail: bone index OR vec3 offset
+                if (indexedTail) b.TailBone = BoneRef(); else b.TailOffset = V3();   // tail: bone index OR vec3 offset
                 if ((b.Flags & 0x0100) != 0 || (b.Flags & 0x0200) != 0)       // inherit ("付与") rot/trans: parent + weight
                 {
                     b.AppendParent = BoneRef(); b.AppendWeight = F();

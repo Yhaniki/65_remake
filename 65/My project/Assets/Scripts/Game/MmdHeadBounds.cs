@@ -5,9 +5,14 @@ using UnityEngine;
 namespace Sdo.Game
 {
     /// <summary>
-    /// Where the HEAD is on an MMD model — the geometry a head-portrait camera has to frame (the room 頭貼 and the
-    /// 結算 left headshot). Pure maths over the parsed <see cref="PmxLoader"/> arrays; no Unity object is touched, so
-    /// this is unit-tested.
+    /// Where the HEAD is on an MMD model — what a head-portrait camera has to frame (the room 頭貼 and the 結算 left
+    /// headshot). Pure maths over the parsed <see cref="PmxLoader"/> arrays; no Unity object is touched, so this is
+    /// unit-tested.
+    ///
+    /// 🔴 **頭的大小是「頭」骨的 tail(表示先)說了算,不是量幾何**(2026-08-05 定案,見 <see cref="HeadTopPerTail"/>
+    /// 那一段的實測)。量幾何一路踩雷:先是頭髮(下面那節),接著是**角**——La+ Darknesss 的角綁在頭骨上、伸到
+    /// 臉頂的 1.9 倍高,結算那格的頭當場小得可笑。帽子/髮飾/呆毛/頭上的耳朵光環全是同一類,靠名字認是認不完的。
+    /// 下面「剔頭髮」那一整套仍在,但只是 tail 不可信時的**後備**。
     ///
     /// The SDO avatar finds its head by renderer NAME (the "*_FACE_*" / "*_HAIR_*" parts). An MMD model is ONE skinned
     /// mesh with no such split, so the head must be found by SKINNING instead — and the right set is the vertices skinned
@@ -57,6 +62,32 @@ namespace Sdo.Game
         /// 防的是把臉本身誤判成頭髮的模型(例如臉的材質叫「髪と顔」)—— 真的只是拿掉頭髮的話,實測兩具模型分別
         /// 剩 0.83 / 0.90,離 0.35 很遠。</summary>
         public const float MinSkullFrac = 0.35f;
+
+        // ---- 頭的大小:用「頭」骨的 tail(表示先),不量幾何 ----------------------------------------------------
+        // 剔掉頭髮還是不夠 —— La+ Darknesss 的**角**(Laplus_Horn_mtl)也是直接綁在 頭 骨上,伸到頭骨上方 4.44
+        // (臉才 2.28)→ 框高變成 1.9 倍 → 相機退遠 1.9 倍 → 結算那格的頭小得可笑(使用者截圖)。角、帽子、髮飾、
+        // 呆毛、頭上的耳朵/光環…… 全是同一類:**綁在頭骨上、卻不是頭**。靠材質名字一個一個認是認不完的
+        // (而且 "hat" 這種字還會誤殺 Hatsune)。
+        //
+        // PMX 裡有一個作者親手標、跟幾何無關的頭部尺標:**頭 骨的 tail(表示先)**,PMXEditor 用它畫骨頭的尖端,
+        // 標準骨架的慣例就是指向**顱頂**。實測三具風格差很多的模型,顱頂 / tail 幾乎是同一個數:
+        //
+        //   Ika 初音 2025 : tail 1.622,顱頂 2.432 → 1.499
+        //   YYB 初音 10th : tail 1.500,顱頂 2.157 → 1.438
+        //   La+ Darknesss : tail 1.559,顱頂 2.283 → 1.464   (幾何量到的是 4.44 = 角)
+        //
+        // 差 ±2%。所以頭的框直接由 tail 長度算出來,一個頂點都不用看 —— 這跟 SDO 那邊「只對頭骨、不量 mesh」
+        // (HeadBoneFraming)是同一個道理:量幾何一定會踩到離群配件。
+        /// <summary>頭的框頂 = 頭骨 + 這個倍數 × tail 長度(＝顱頂;實測 1.44/1.46/1.50 取平均)。</summary>
+        public const float HeadTopPerTail = 1.465f;
+        /// <summary>頭的框底 = 頭骨 + 這個倍數 × tail 長度(下巴略低於頭骨)。</summary>
+        public const float HeadBottomPerTail = -0.176f;
+        /// <summary>tail 長度要落在模型總高的這個區間才採信(實測三具都是 7.5%~8.2%)。落在外面 = 這個模型的
+        /// 表示先沒照慣例填 → 退回量幾何。</summary>
+        public const float MinTailPerHeight = 0.03f, MaxTailPerHeight = 0.20f;
+        /// <summary>tail 推出來的顱頂比「實際量到的頭部幾何頂」還高過這個倍數 = tail 在說謊(幾何裡根本沒有那麼
+        /// 高的頭)→ 退回量幾何。反過來低很多是**正常**的,那正是角/帽子被排除掉的樣子(La+ 是 0.51)。</summary>
+        public const float MaxTailOverGeometry = 1.35f;
 
         /// <summary>Fallback only: how far BELOW the head bone the subtree slab reaches, as a fraction of the hair height
         /// above it. The chin sits a little under the bone; the long hair hanging past that is not part of the portrait.</summary>
@@ -218,6 +249,49 @@ namespace Sdo.Game
             headBone = FindBone(pmx.Bones, HeadBoneJp);
             if (headBone < 0) return false;
 
+            if (!TryMeasureGeometry(pmx, headBone, out headLocal)) return false;
+            if (TryTailBox(pmx, headBone, headLocal, out var tailBox)) headLocal = tailBox;   // 首選:骨頭說了算
+            return true;
+        }
+
+        /// <summary>「頭」骨的 tail(表示先)有多長(Y 方向,模型單位)。0 = 沒有可用的 tail。</summary>
+        public static float HeadTailLength(IList<PmxLoader.Bone> bones, int headBone)
+        {
+            if (bones == null || headBone < 0 || headBone >= bones.Count || bones[headBone] == null) return 0f;
+            var b = bones[headBone];
+            if (b.TailBone >= 0)
+                return b.TailBone < bones.Count && bones[b.TailBone] != null
+                       ? bones[b.TailBone].Position.y - b.Position.y : 0f;
+            return b.TailOffset.y;
+        }
+
+        /// <summary>頭的框由 tail 長度算出來(見上面那段註解)。<paramref name="geometry"/> ＝ 量幾何得到的框,
+        /// 只拿來做「tail 有沒有在說謊」的上限檢查。tail 不可信就回 false,呼叫端留著幾何那個框。</summary>
+        public static bool TryTailBox(PmxLoader pmx, int headBone, Bounds geometry, out Bounds tailBox)
+        {
+            tailBox = default;
+            float tail = HeadTailLength(pmx?.Bones, headBone);
+            if (!(tail > 1e-4f) || pmx.Positions == null || pmx.Positions.Length == 0) return false;
+
+            float lo = float.PositiveInfinity, hi = float.NegativeInfinity;
+            foreach (var p in pmx.Positions) { if (p.y < lo) lo = p.y; if (p.y > hi) hi = p.y; }
+            float modelH = hi - lo;
+            if (!(modelH > 1e-4f)) return false;
+            float frac = tail / modelH;
+            if (frac < MinTailPerHeight || frac > MaxTailPerHeight) return false;   // 表示先沒照慣例填
+
+            float top = HeadTopPerTail * tail, bottom = HeadBottomPerTail * tail;
+            if (top > MaxTailOverGeometry * geometry.max.y) return false;           // 幾何裡沒有那麼高的頭
+
+            float h = top - bottom;
+            // X/Z 只有 size 會被讀到(StableHeadBox 把框釘在頭骨的 x/z 上),給一個等邊的方框即可。
+            tailBox = new Bounds(new Vector3(0f, (top + bottom) * 0.5f, 0f), new Vector3(h, h, h));
+            return true;
+        }
+
+        /// <summary>量幾何:綁在頭骨(或其子骨)上、**扣掉頭髮材質**的那一塊。tail 不可信時的後備。</summary>
+        private static bool TryMeasureGeometry(PmxLoader pmx, int headBone, out Bounds headLocal)
+        {
             var keep = VisibleNonHairVertices(pmx);
             if (keep == null) return TryMeasure(pmx, headBone, null, out headLocal);   // 認不出頭髮 → 照舊全收
 

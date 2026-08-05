@@ -221,6 +221,84 @@ namespace Sdo.Tests
             Assert.IsNull(MmdHeadBounds.VisibleNonHairVertices(pmx), "全被剔光 → 當成認不出來,不過濾");
         }
 
+        // ---- 頭的大小由「頭」骨的 tail(表示先)決定,不量幾何 -------------------------------------------------
+        // 剔頭髮還不夠:角/帽子/髮飾/呆毛一樣綁在頭骨上。tail 是作者親手標的顱頂,跟幾何無關。
+        // 實測顱頂/tail:Ika 1.499、YYB 1.438、La+ 1.464 —— 差 ±2%,所以拿它當尺標。
+
+        /// <summary>頭骨上長了「角」的模型:角伸到 +4(臉才 +2),tail = 1.5。腳在 y=0、頭頂 y=15 → tail 佔身高 10%。</summary>
+        private static PmxLoader BuildHornedHead(float tail = 1.5f)
+        {
+            var pmx = BuildModel(
+                (new Vector3(-1f, 12f, 0f), Head),       // 臉頂
+                (new Vector3(1f, 9.5f, 0f), Head),       // 下巴
+                (new Vector3(0f, 14f, 0f), Head),        // 角 —— 也綁在頭骨上,而且比臉高一大截
+                (new Vector3(0f, 15f, 0f), Head),        // 角尖
+                (new Vector3(0f, 0f, 0f), Center));      // 腳
+            Paint(pmx, ("顔", 2, 1f), ("Horn_mtl", 2, 1f), ("body", 1, 1f));
+            pmx.Bones[Head].TailOffset = new Vector3(0f, tail, 0f);
+            return pmx;
+        }
+
+        [Test]
+        public void HeadTailLength_ReadsBothTheOffsetAndTheBoneIndexForm()
+        {
+            var pmx = BuildHornedHead();
+            Assert.AreEqual(1.5f, MmdHeadBounds.HeadTailLength(pmx.Bones, Head), 1e-4f, "表示先 = 位移");
+
+            pmx.Bones[Head].TailOffset = Vector3.zero;
+            pmx.Bones[Head].TailBone = Tail;             // 髪1 在 y=11、頭骨 y=10
+            Assert.AreEqual(1f, MmdHeadBounds.HeadTailLength(pmx.Bones, Head), 1e-4f, "表示先 = 骨頭索引");
+
+            pmx.Bones[Head].TailBone = 999;              // 壞索引
+            Assert.AreEqual(0f, MmdHeadBounds.HeadTailLength(pmx.Bones, Head), 1e-4f);
+            Assert.AreEqual(0f, MmdHeadBounds.HeadTailLength(null, Head), 1e-4f);
+        }
+
+        [Test]
+        public void TryCompute_SizesTheHeadFromTheTail_SoHornsDoNotBlowItUp()
+        {
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHornedHead(), out _, out Bounds b));
+            Assert.AreEqual(MmdHeadBounds.HeadTopPerTail * 1.5f, b.max.y, 1e-3f, "顱頂 = 1.465×tail,不是 +5 的角尖");
+            Assert.AreEqual(MmdHeadBounds.HeadBottomPerTail * 1.5f, b.min.y, 1e-3f);
+            Assert.Less(b.size.y, 2.7f, "角(幾何高 5.5)完全不參與");
+        }
+
+        [Test]
+        public void TryCompute_IgnoresTheTail_WhenItIsNotAPlausibleFractionOfTheModelHeight()
+        {
+            // 身高 15 → tail 要落在 0.45~3.0。0.2 太短(表示先沒照慣例填)→ 退回量幾何(含角,但總比亂縮好)。
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHornedHead(0.2f), out _, out Bounds tiny));
+            Assert.AreEqual(5f, tiny.max.y, 1e-3f, "退回幾何 → 量到角尖");
+
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHornedHead(5f), out _, out Bounds huge));
+            Assert.AreEqual(5f, huge.max.y, 1e-3f, "tail 太長也退回幾何");
+        }
+
+        [Test]
+        public void TryCompute_IgnoresTheTail_WhenItClaimsAHeadTallerThanAnyGeometry()
+        {
+            // 沒有角的模型,臉頂只到 +2,但 tail 說顱頂在 +2.93(1.465×2)—— 幾何裡根本沒那麼高的頭 → 不採信。
+            var pmx = BuildModel(
+                (new Vector3(-1f, 12f, 0f), Head),
+                (new Vector3(1f, 9.5f, 0f), Head),
+                (new Vector3(0f, 0f, 0f), Center));
+            Paint(pmx, ("顔", 2, 1f), ("body", 1, 1f));
+            pmx.Bones[Head].TailOffset = new Vector3(0f, 2f, 0f);   // 身高 12 → frac 0.167,通過長度檢查
+
+            Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out _, out Bounds b));
+            Assert.AreEqual(2f, b.max.y, 1e-3f, "2.93 > 1.35×2 → 退回幾何的 +2");
+        }
+
+        [Test]
+        public void TryCompute_TailWins_EvenWhenTheHairMaterialsAreUnrecognisable()
+        {
+            // 認不出頭髮(材質名字看不懂)照樣框得對 —— tail 根本不看幾何。
+            var pmx = BuildHornedHead();
+            pmx.Materials.Clear(); pmx.Indices = null;
+            Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out _, out Bounds b));
+            Assert.AreEqual(MmdHeadBounds.HeadTopPerTail * 1.5f, b.max.y, 1e-3f);
+        }
+
         [Test]
         public void TryCompute_FailsCleanly_WhenThereIsNoHeadBoneOrNoHeadGeometry()
         {

@@ -1014,10 +1014,11 @@ namespace Sdo.Game
         // at 75% down the frame vs the official 62%). These put the MMD head at 55% of the frame height, centred at 36%
         // down — i.e. spanning 0.09…0.64, which is where the SDO head sits (0.05…0.62).
         //
-        // 🔴 這組常數是照「**沒有頭髮**的頭」訂的 —— 餵進來的框一定要是 MmdHeadBounds 剔掉髮材質之後的那個。
-        //    2026-08-05 之前餵的是含髮的框(髮皮/前髪就長在頭骨上,skinning 分不出來),多出來的髮量每個模型都不同
-        //    (Ika +21%、YYB +11%)→ 相機退太遠,臉只佔畫面高 45.3% / 49.5%,而不是這裡設計的 54.9%:
-        //    結算那一排裡 MMD 那格的頭就比旁邊 SDO 的小一圈、位置也低一截(使用者回報)。修的是量法,不是常數。
+        // 🔴 這組常數是照「**只有頭、什麼都沒戴**的框」訂的 —— 餵進來的框一定要是 MmdHeadBounds 用「頭」骨 tail
+        //    算出來的那個。2026-08-05 之前餵的是量幾何的框,而綁在頭骨上的**不只有頭**:髮皮/前髪(Ika +21%、
+        //    YYB +11%)、角(La+ Darknesss 高到臉頂的 1.9 倍)、帽子、髮飾、呆毛…… 每包模型多的東西都不一樣
+        //    → 相機退太遠,臉只佔畫面高 45%~29%,而不是這裡設計的 54.9%:結算那一排裡 MMD 那格的頭就比旁邊
+        //    SDO 的小一圈、位置也低一截(使用者回報兩次)。修的是量法,不是常數。
         public const float PortraitFrameDist = 2.2f;
         public const float PortraitAimUp = 0.25f;
 

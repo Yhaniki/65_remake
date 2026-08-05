@@ -306,8 +306,8 @@ namespace Sdo.Game
 
             Vector3 target; float dist;
             // MMD 顯示模式:SDO 的臉/髮 part 被藏起來了,模型是一块 skinned mesh(沒有 FACE/HAIR 之分) → 改用 MMD rig
-            // 自己量的頭框。它的框是「純頭」(下巴→顱頂,髮材質已剔掉 —— MmdHeadBounds),SDO 那個是頭+髮 → 高約
-            // 40%,所以常數也要用 MmdAvatar 自帶的。
+            // 自己量的頭框。它的框是「純頭」(下巴→顱頂,由「頭」骨的 tail 算出來,髮/角/帽子都不參與 ——
+            // MmdHeadBounds),SDO 那個是頭+髮 → 高約 40%,所以常數也要用 MmdAvatar 自帶的。
             var mmdRig = MmdAvatarSwap.ActiveFor(_avatar);
             if (mmdRig != null && mmdRig.TryHeadBounds(out var mb))
             {
