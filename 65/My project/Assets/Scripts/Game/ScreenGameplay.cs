@@ -692,6 +692,8 @@ namespace Sdo.Game
         private PlayingEmoji _emoji;
         private Sprite[] _emHH, _emSHSH, _emJRKL, _emKJ, _emHE, _emH, _emY, _emJS, _emGTH;
         private readonly EmojiTriggers _emojiState = new EmojiTriggers();   // pure trigger logic (combo / miss-run / low-HP)
+        private readonly BurstFx[] _holdBurst = new BurstFx[Keys];   // 該軌「按住期間」正在循環的那一發 burst(一次只跑一輪,見 UpdateFx)
+        private readonly BurstFx[] _lastBurst = new BurstFx[Keys];   // 該軌最近生的一發 hit burst —— 長條頭用它接手成 _holdBurst(AdoptHoldBurst)
         private readonly Stack<Material> _matPool = new Stack<Material>();  // reuse burst material instances (no per-hit GC)
         private SpriteRenderer _board;          // framed note-board (NOTES_BOARD1, chamfered), drawn 1:1 native
         private Texture2D _boardSrc;            // cached ORIGINAL board texture (kept so alpha can be re-scaled live)
@@ -5511,11 +5513,13 @@ namespace Sdo.Game
             TickRemotePresence(now);   // 死了 / 中途離場的遠端玩家當場停舞(分數流推不出這兩件事)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             RecordLocalScoreSample(NetClockMs);   // 右側名單要把自己的分數倒帶到遠端那一刻(見 RosterLocalScore)
-            // 🔴 長條「按住期間」不再另外放 burst。以前這裡會在**判定長條頭的同一個 Update** 裡再生一發循環用的
-            // burst，於是頭部等於連放兩發（一發是 ApplyEvent 的 tap burst），比一般 tap 多閃一下；長條若短於一輪
-            // 動畫（≈12 幀 × BurstSecPerFrame ≈ 0.36s）就剛好只多閃那一次，使用者回報的就是它。
-            // 現在:頭部＝一般 tap 的發光，結尾放開＝tap burst + 官方 LnEnd 爆發 (EndHold)。按住期間的持續回饋
-            // 由官方本來就有的軌道閃光條負責 (TriggerClickFlash/UpdateClickFlash，decompiled 00498bd0)。
+            // 長條按住期間 = 一直看得到爆發的圖(一輪播完再播一輪,見 UpdateFx)。那一發**就是長條頭判定時放的
+            // 那一發**,由 BeginHold → AdoptHoldBurst 接手 —— 千萬不要在這裡對剛判定的長條頭再生一發:判定在
+            // HandleInput、這個迴圈就在它下面幾行(同一幀),頭部會變成連放兩發,比一般 tap 多亮一下。
+            // 這裡只補「按住中卻沒有 burst 在跑」的殘局(按住途中 F4 換皮 / 換譜 / 頭部那發被 ClearGameplayFx 收掉)。
+            for (int lane = 0; lane < Keys; lane++)
+                if (_holding[lane] != null && !_hit3dMode && _burstFrames != null && _holdBurst[lane] == null)
+                    _holdBurst[lane] = SpawnBurst(lane, isHold: true);   // 3D skin 走自己的 HIT_LONG
             UpdateClickFlash();
             UpdateFx(); UpdateHud();
             // ShowTime mode has NO HP failure — only the 集氣 (energy) gauge matters. The song must never GAME OVER on
@@ -6323,7 +6327,7 @@ namespace Sdo.Game
                     _recDownStart[n.Note.Lane] = Time.time;   // auto-press: fire the keydown burst (head only, never the hold tail)
                     PlayOsuHitSample(n.Note, grade);
                     if (grade == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // flows past the receptor (bar dimmed), then ScrollNotes removes it
-                    else if (n.Note.IsHold) { _holding[n.Note.Lane] = n; SpawnHit3dLong(n.Note.Lane); }   // 3D: continuous HIT_LONG for the hold
+                    else if (n.Note.IsHold) BeginHold(n.Note.Lane, n);
                     else n.Done = true;
                 }
                 if (n.HeadJudged && !n.Done && grade != Judgment.Miss && n.Note.IsHold && _holding[n.Note.Lane] == n
@@ -6611,7 +6615,7 @@ namespace Sdo.Game
             PlayOsuHitSample(n.Note, j.Value);
             if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
             if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
-            if (held) { _holding[lane] = n; return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
+            if (held) { BeginHold(lane, n); return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
             if (n.Note.IsFakeTail) { EndHold(lane, n, Judgment.Perfect); return; }   // cap 被 warp 掃掉 → 結尾不判定(見 ReleaseLane)
             // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
             double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
@@ -6629,8 +6633,19 @@ namespace Sdo.Game
             n.HeadJudged = true; ApplyEvent(jv, lane);
             PlayOsuHitSample(n.Note, jv);
             if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
-            else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else { _holding[lane] = n; SpawnHit3dLong(lane); } }   // Bad head = never held → dimmed bar; 3D: continuous HIT_LONG for the hold
+            else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else BeginHold(lane, n); }   // Bad head = never held → dimmed bar
             else n.Done = true;
+        }
+
+        /// <summary>長條頭判定成立 → 進入「按住中」。三個入口(手動 PressLane / 自動 AutoPlay / ShowTime 接手
+        /// ReplayShowtimeSeamPress)共用這一段,免得哪一條漏掉按住期間的特效。
+        /// 按住期間要一直有爆發的圖:2D 皮讓長條頭那一發 burst 接手循環(AdoptHoldBurst —— 不另外生一發,
+        /// 否則頭部會連放兩發比 tap 亮),3D 皮則換成官方連續的 HIT_LONG(SpawnHit3dLong)。</summary>
+        private void BeginHold(int lane, RuntimeNote n)
+        {
+            _holding[lane] = n;
+            SpawnHit3dLong(lane);   // 3D skin only (2D 時是 no-op)
+            AdoptHoldBurst(lane);   // 2D skin only
         }
 
         private void ReleaseLane(int lane, double now)
@@ -6912,24 +6927,28 @@ namespace Sdo.Game
         private const float BurstWidth = 235f;            // hit-burst draw size for the REFERENCE skin (EFT_13, 300px native)
         private const float BurstNativeRef = 300f;        // EFT_13 native px — bursts render native-proportional to this so
                                                           // a smaller skin (EFT_2=150, EFT_14=128) draws smaller, not stretched up to BurstWidth
-        // Every burst is a ONE-SHOT that may overlap others on the same lane (no gating) — a long note's head is just a
-        // normal hit, so it gets exactly this and nothing else. Each burst gets its OWN material clone so overlapping
-        // bursts never bleed.
-        private void SpawnBurst(int lane)
+        // a TAP burst fires on every hit and may overlap others on the same lane (no gating). A HOLD burst loops,
+        // one full round at a time (gated) —— 長條頭放的那一發就是靠 isHold 被 AdoptHoldBurst 接手來循環的,
+        // 不會另外生第二發。Each burst gets its OWN material clone so overlapping bursts never bleed.
+        private BurstFx SpawnBurst(int lane, bool isHold = false)
         {
             // directional skins (PET/8/9/10) ship separate frames for left-right vs up-down lanes; lanes 1(down)/2(up) use
             // the _ud set, lanes 0(left)/3(right) use _rl (_burstFrames). Non-directional skins leave _burstFramesUD null.
             var frames = (_burstFramesUD != null && (lane == 1 || lane == 2)) ? _burstFramesUD : _burstFrames;
-            SpawnBurstFrames(lane, frames);
+            var fx = SpawnBurstFrames(lane, frames);
+            if (fx == null) return null;
+            fx.IsHold = isHold;
+            if (lane >= 0 && lane < Keys) _lastBurst[lane] = fx;   // 長條頭要接手的就是這一發(LnEnd 走 SpawnBurstFrames,不會蓋掉它)
+            return fx;
         }
 
         // Spawn an arbitrary flipbook at the lane's receptor (hit burst, or the long-note LnEnd burst). sizeMul/speedMul/
         // brightMul scale THIS burst only; doubleLayer=false draws a SINGLE additive layer (the LnEnd burst — the hit
         // burst's 2-layer stack is a deliberate over-bright punch that makes the LnEnd art bloom all over the lane).
-        private void SpawnBurstFrames(int lane, Sprite[] frames,
-                                      float sizeMul = 1f, float speedMul = 1f, float brightMul = 1f, bool doubleLayer = true)
+        private BurstFx SpawnBurstFrames(int lane, Sprite[] frames,
+                                         float sizeMul = 1f, float speedMul = 1f, float brightMul = 1f, bool doubleLayer = true)
         {
-            if (frames == null || frames.Length == 0) return;
+            if (frames == null || frames.Length == 0) return null;
             var mat = _matPool.Count > 0 ? _matPool.Pop() : (_addMat != null ? new Material(_addMat) : null);  // own instance, pooled
             // brightness: the additive shader is Blend SrcAlpha One, and its _TintColor defaults to (.5,.5,.5,.5) ->
             // the .5 alpha halves the burst (too dark). Drive _TintColor by burstBright (1.0 = stock, higher = brighter).
@@ -6951,8 +6970,10 @@ namespace Sdo.Game
                 if (mat != null) sr2.sharedMaterial = mat;
                 sr2.transform.SetParent(sr.transform, false);
             }
-            _fx.Add(new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Start = Time.time, Frames = frames,
-                                  SecPerFrame = BurstSecPerFrame / Mathf.Max(0.01f, speedMul) });
+            var fx = new BurstFx { Sr = sr, Sr2 = sr2, Mat = mat, Lane = lane, SpawnFrame = Time.frameCount, Start = Time.time, Frames = frames,
+                                   SecPerFrame = BurstSecPerFrame / Mathf.Max(0.01f, speedMul) };
+            _fx.Add(fx);
+            return fx;
         }
 
         private sealed class RuntimeNote

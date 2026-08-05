@@ -252,17 +252,47 @@ namespace Sdo.Game
                 var frames = fx.Frames;   // each burst animates ITS OWN (directional) frame set, captured at spawn
                 if (frames == null || frames.Length == 0) { DestroyBurst(fx); _fx.RemoveAt(i); continue; }
                 int step = (int)((Time.time - fx.Start) / Mathf.Max(1e-4f, fx.SecPerFrame));
-                if (step >= frames.Length) { DestroyBurst(fx); _fx.RemoveAt(i); continue; }   // 每一發都是 one-shot(長條按住期間不再循環,見 Tick 裡的註解)
+                if (step >= frames.Length)
+                {
+                    // 長條「按住期間」:一輪播完、只要那一軌還按著就再播一輪(整輪跑完才續 —— 不會兩發疊在一起
+                    // 變兩倍亮)。這一發就是長條頭判定時放的那一發,由 BeginHold/AdoptHoldBurst 接手,不另外生。
+                    // tap、以及已經放開的長條 = one-shot,到這裡結束。
+                    if (fx.IsHold && _holding[fx.Lane] != null) { fx.Start = Time.time; step = 0; }
+                    else { DestroyBurst(fx); _fx.RemoveAt(i); continue; }
+                }
                 var spr = frames[step];
                 fx.Sr.sprite = spr; if (fx.Sr2) fx.Sr2.sprite = spr;
             }
         }
 
-        private void DestroyBurst(BurstFx fx) { if (fx.Sr) Destroy(fx.Sr.gameObject); if (fx.Mat) _matPool.Push(fx.Mat); }
+        // 收掉一發 burst。順手把指著它的兩個 per-lane 插槽清掉,不然 _holdBurst 會卡著一個已經被 Destroy 的
+        // 物件(那一軌之後就再也生不出按住期間的 burst),_lastBurst 也會被下一次 AdoptHoldBurst 撿到當殭屍。
+        private void DestroyBurst(BurstFx fx)
+        {
+            if (fx.Lane >= 0 && fx.Lane < Keys)
+            {
+                if (_holdBurst[fx.Lane] == fx) _holdBurst[fx.Lane] = null;
+                if (_lastBurst[fx.Lane] == fx) _lastBurst[fx.Lane] = null;
+            }
+            if (fx.Sr) Destroy(fx.Sr.gameObject); if (fx.Mat) _matPool.Push(fx.Mat);
+        }
+
+        // 長條頭判定成立 → 讓**頭部那一發** burst 直接接手當「按住期間」的循環,不再另外生第二發。
+        // (另外生一發的話,判定長條頭的那一幀等於連放兩發 —— 使用者回報的「long 開頭比 tap 多亮一下」。)
+        private void AdoptHoldBurst(int lane)
+        {
+            if (_hit3dMode || lane < 0 || lane >= Keys) return;   // 3D 皮走自己的 HIT_LONG,不用 sprite burst
+            var fx = _lastBurst[lane];
+            // 只接手**這一幀**剛生的那一發(＝長條頭自己的)。同軌前一發 tap 的 burst 可能還在播,撿到它就會把
+            // 一發已經播到一半的動畫改成循環;而長條頭沒生 burst 時(例如 F4 強制判 Bad)就交給 Tick 的補位迴圈。
+            if (fx == null || fx.SpawnFrame != Time.frameCount) return;
+            fx.IsHold = true;
+            _holdBurst[lane] = fx;
+        }
 
         // Tear down every in-flight gameplay burst / hold / click-flash. Needed when the result is entered MID-song
-        // (F5, or HP-out while holding): the click-flash strip is redrawn for as long as its lane stays "held", so
-        // without this it freezes on screen behind the result panel.
+        // (F5, or HP-out while holding): a hold burst loops forever while its lane stays "held", so without this it
+        // freezes on screen behind the result panel.
         private void ClearGameplayFx()
         {
             for (int i = _fx.Count - 1; i >= 0; i--) DestroyBurst(_fx[i]);
@@ -280,7 +310,7 @@ namespace Sdo.Game
             if (_missOverlay) _missOverlay.enabled = false;
         }
 
-        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public float Start; public Sprite[] Frames;
+        private sealed class BurstFx { public SpriteRenderer Sr, Sr2; public Material Mat; public int Lane, SpawnFrame; public float Start; public bool IsHold; public Sprite[] Frames;
                                        public float SecPerFrame = BurstSecPerFrame; }   // per-burst frame duration (the LnEnd burst runs at half speed)
 
         // ---------- lane click flash (decompiled NoteBoard_DrawClickFlash_00498bd0) ----------
