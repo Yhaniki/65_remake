@@ -48,13 +48,8 @@ namespace Sdo.UI.Screens
         /// 寫成算式而不是硬編，改 <see cref="ExpandedH"/> / <see cref="HelpH"/> 時不用再自己算一次。
         /// （StartupConfigPanelLayoutTests 會盯著它 —— 版面常數再被調動時，這邊剩幾 px 要看得見。）</summary>
         public const float ListH = ExpandedH - 2f * Pad - (FooterH + Pad) - HelpH - Gap - TopH - Gap - Safety;
-        /// <summary>◀ 值 ▶ 那一格的**固定**寬度。
-        ///
-        /// 🔴 一定要是固定寬,不能只靠 <c>clipping = Clip</c> + <c>ExpandWidth</c>:GUILayout 排版時看的是
-        /// 樣式算出來的內容寬度,<c>Clip</c> 只影響「畫」不影響「排」。選項字串是執行期才知道的(MMD 模型名
-        /// ＝ .pmx 檔名,可以長到 40 幾個字),於是那一列會把整張表撐得比面板還寬 → 冒出橫向捲軸、每一列的
-        /// 標籤欄跟著被推出畫面外。釘死寬度之後,過長的名字就只是被裁掉。</summary>
-        private const float ChoiceW = PanelW - LabelW - 2f * Pad - 16f - 46f;
+        /// <summary>◀ / ▶ 那兩顆小鈕的寬度（<see cref="DrawChoice"/> 自己排矩形時用）。</summary>
+        private const float ArrowW = 20f;
 
         /// <summary>體型（胖瘦）index 0..4 的名稱。對應 <c>SdoBodyShape.WeightFromIndex</c>：1＝標準(×1.0)。</summary>
         private static readonly string[] BodyShapeNames = { "瘦", "標準", "微胖", "胖", "很胖" };
@@ -212,7 +207,7 @@ namespace Sdo.UI.Screens
         {
             _byTab ??= BuildTabs();
             // 只有直的捲軸。橫的一旦出現就代表某一列把版面撐寬了(MMD 模型名可以很長),那時整張表會被推著
-            // 左右跑、每一列的標籤都對不上 —— 寧可讓那一列自己被裁掉,見 ChoiceW。
+            // 左右跑、每一列的標籤都對不上 —— 寧可讓那一列自己被裁掉,見 DrawChoice。
             _scroll = GUILayout.BeginScrollView(_scroll, false, true,
                                                 GUIStyle.none, GUI.skin.verticalScrollbar, GUI.skin.scrollView,
                                                 GUILayout.Height(ListH));
@@ -304,13 +299,26 @@ namespace Sdo.UI.Screens
             GUILayout.Label(f.Unit ?? "", _unit, GUILayout.Width(UnitW));
         }
 
-        // ◀ 值 ▶。值那格是**固定寬 + Clip**（理由見 ChoiceW）：選項字串是執行期才知道的，讓 Label 用自己的
-        // 偏好寬度的話，長名字會把整張表撐寬、▶ 被擠出面板外面按不到。
+        // ◀ 值 ▶。整格**先跟 layout 要一塊會自己撐開的空矩形，再自己把三樣東西排進去**：
+        //
+        // 🔴 不能三個都用 GUILayout 排。選項字串是執行期才知道的（MMD 模型名＝.pmx 檔名，可以長到 40 幾個字），
+        //    Label 會照內容算寬度 → 那一列把整張表撐得比面板還寬（clipping = Clip 只影響「畫」不影響「排」），
+        //    每一列的標籤欄跟著被推出畫面外。
+        // 🔴 改成「固定寬」也不對：右邊那條垂直捲軸吃掉多少寬是 skin 決定的（fixedWidth + margin），固定寬等於
+        //    在猜那個數字 —— 猜多了留白、猜少了 ▶ 就被捲軸壓在底下按不到（使用者回報的就是這個）。
+        //
+        // 空矩形（GUIContent.none + GUIStyle.none）的偏好寬度是 0、又是這一列唯一 ExpandWidth 的元素，於是它
+        // **剛好等於這一列扣掉標籤欄之後真正剩下的寬**（捲軸已經在 ScrollView 那層扣掉了）。▶ 貼著它的右緣 →
+        // 捲軸再寬也壓不到；長名字則被中間那格裁掉，撐不寬版面。
         private void DrawChoice(ConfigField f)
         {
-            if (GUILayout.Button("◀", GUILayout.Width(20f), GUILayout.Height(RowH))) f.StepChoice(-1);
-            GUILayout.Label(f.ChoiceText(), _choice, GUILayout.Width(ChoiceW), GUILayout.Height(RowH));
-            if (GUILayout.Button("▶", GUILayout.Width(20f), GUILayout.Height(RowH))) f.StepChoice(1);
+            var r = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                                             GUILayout.ExpandWidth(true), GUILayout.Height(RowH));
+            if (GUI.Button(new Rect(r.x, r.y, ArrowW, r.height), "◀")) f.StepChoice(-1);
+            float textX = r.x + ArrowW + 2f;
+            GUI.Label(new Rect(textX, r.y, Mathf.Max(0f, r.xMax - ArrowW - 2f - textX), r.height),
+                      f.ChoiceText(), _choice);
+            if (GUI.Button(new Rect(r.xMax - ArrowW, r.y, ArrowW, r.height), "▶")) f.StepChoice(1);
         }
 
         private void DrawText(ConfigField f)
