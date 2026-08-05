@@ -20,6 +20,27 @@ namespace Sdo.Tests
         private const int Center = 0, Neck = 1, Head = 2, Tail = 3, TailTip = 4;
         private static readonly Vector3 HeadPos = new Vector3(0f, 10f, 0f);
 
+        /// <summary>把每個頂點各自包成一個單頂點「三角形」的材質,好讓 <see cref="MmdHeadBounds.VisibleNonHairVertices"/>
+        /// 有東西可以對照:<paramref name="mats"/> 逐項 = (材質名, 這個材質吃掉幾個頂點, diffuse alpha),照順序切
+        /// <see cref="PmxLoader.Indices"/>。</summary>
+        private static void Paint(PmxLoader p, params (string name, int count, float alpha)[] mats)
+        {
+            p.Indices = new int[p.Positions.Length];
+            for (int v = 0; v < p.Positions.Length; v++) p.Indices[v] = v;
+            int at = 0;
+            foreach (var m in mats)
+            {
+                p.Materials.Add(new PmxLoader.Material
+                {
+                    NameJp = m.name,
+                    Diffuse = new Color(1f, 1f, 1f, m.alpha),
+                    IndexStart = at,
+                    IndexCount = m.count,
+                });
+                at += m.count;
+            }
+        }
+
         private static PmxLoader BuildModel(params (Vector3 pos, int bone)[] verts)
         {
             var p = new PmxLoader();
@@ -113,6 +134,91 @@ namespace Sdo.Tests
             Assert.AreEqual(Head, head);
             Assert.AreEqual(4f, b.max.y, 1e-4f);
             Assert.AreEqual(-0.5f, b.min.y, 1e-4f, "clipped at 0.45×4 below the bone — the waist-level vertex is gone");
+        }
+
+        // ---- 頭髮不算在頭的大小裡 ---------------------------------------------------------------------------------
+        // 髮皮/前髪就長在頭骨上,skinning 分不出來,所以要靠材質名字剔掉。份量每包模型差很多(Ika +21%、YYB +11%),
+        // 算進去的話同一個角色在不同模型底下頭一大一小,結算那排也跟旁邊 SDO 的頭貼對不上。
+
+        /// <summary>頭骨上的四個頂點:臉(−1..+2)、貼在顱骨上的髮皮(+4)、被變形藏起來的重複髮片(+5)、身體。</summary>
+        private static PmxLoader BuildHairyHead(string hairMatName = "前髪")
+        {
+            var pmx = BuildModel(
+                (new Vector3(-2f, 12f, 1f), Head),       // 臉/顱骨 頂
+                (new Vector3(2f, 9.5f, -1f), Head),      // 下巴,略低於頭骨
+                (new Vector3(0f, 14f, 0f), Head),        // 髮皮 —— 也綁在頭骨上
+                (new Vector3(0f, 15f, 0f), Head),        // alpha=0 的重複髮片(根本沒畫出來)
+                (new Vector3(0f, 5f, 0f), Center));      // 身體
+            Paint(pmx, ("顔", 2, 1f), (hairMatName, 1, 1f), (hairMatName + "+", 1, 0f), ("body", 1, 1f));
+            return pmx;
+        }
+
+        [Test]
+        public void IsHairMaterial_RecognisesJapaneseChineseAndEnglishNames()
+        {
+            foreach (var n in new[] { "前髪", "後髪==========", "鬓髪", "髪辫", "ヘアアクセサリー", "头发", "Hair01", "HAIRSHADOW", "帽子" })
+                Assert.IsTrue(MmdHeadBounds.IsHairMaterial(n, null), n + " 應該算頭髮");
+            foreach (var n in new[] { "顔", "脸颊==========", "face01", "まつげ", "眉毛", "Hatsune body", "口腔" })
+                Assert.IsFalse(MmdHeadBounds.IsHairMaterial(n, null), n + " 不是頭髮");
+            Assert.IsTrue(MmdHeadBounds.IsHairMaterial("マテリアル1", "Hair02"), "英文名認出來也算");
+        }
+
+        [Test]
+        public void TryCompute_ExcludesHairAndHiddenMaterialsFromTheHeadBox()
+        {
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHairyHead(), out _, out Bounds b));
+            Assert.AreEqual(2f, b.max.y, 1e-4f, "顱頂 —— 髮皮(+4)與藏起來的髮片(+5)都不算");
+            Assert.AreEqual(-0.5f, b.min.y, 1e-4f, "下巴");
+        }
+
+        [Test]
+        public void TryCompute_KeepsTheHair_WhenTheModelHasNoMaterialTableToTellItApart()
+        {
+            var pmx = BuildHairyHead();
+            pmx.Materials.Clear(); pmx.Indices = null;   // 合成/解析不全的模型
+            Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out _, out Bounds b));
+            Assert.AreEqual(5f, b.max.y, 1e-4f, "認不出頭髮 → 量法跟以前一樣,不會更糟");
+        }
+
+        [Test]
+        public void TryCompute_FallsBackToTheHairyBox_WhenStrippingHairWouldEatTheFace()
+        {
+            // 臉的材質名字裡帶「髪」(例:整顆頭跟頭髮共用一個材質)→ 剔完只剩零星頂點,框塌掉 → 整塊退回去。
+            var pmx = BuildModel(
+                (new Vector3(-2f, 12f, 1f), Head),
+                (new Vector3(2f, 9.5f, -1f), Head),
+                (new Vector3(0f, 14f, 0f), Head),
+                (new Vector3(0f, 10.1f, 0f), Head),      // 唯一的非頭髮頂點 → 剔完框幾乎是零
+                (new Vector3(0f, 5f, 0f), Center));
+            Paint(pmx, ("髪と顔", 3, 1f), ("鼻", 1, 1f), ("body", 1, 1f));
+
+            Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out _, out Bounds b));
+            Assert.AreEqual(4f, b.max.y, 1e-4f, "剔到只剩 MinSkullFrac 以下 → 退回含髮的量法");
+            Assert.AreEqual(-0.5f, b.min.y, 1e-4f);
+        }
+
+        [Test]
+        public void TryCompute_HairExclusionAlsoAppliesToTheSubtreeFallback()
+        {
+            // 頭幾何全掛在子骨上(頭骨本身沒東西)→ 走 subtree 那條;那裡同樣要剔掉頭髮。
+            var pmx = BuildModel(
+                (new Vector3(-2f, 12f, 1f), Tail),       // 臉
+                (new Vector3(2f, 9.5f, -1f), Tail),
+                (new Vector3(0f, 14f, 0f), Tail),        // 頭髮
+                (new Vector3(0f, 5f, 0f), Center));
+            Paint(pmx, ("顔", 2, 1f), ("後髪", 1, 1f), ("body", 1, 1f));
+
+            Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out _, out Bounds b));
+            Assert.AreEqual(2f, b.max.y, 1e-4f, "subtree fallback 也不含頭髮");
+        }
+
+        [Test]
+        public void VisibleNonHairVertices_IsNull_WhenEveryMaterialLooksLikeHair()
+        {
+            var pmx = BuildHairyHead();
+            pmx.Materials.Clear();
+            Paint(pmx, ("髪", 5, 1f));
+            Assert.IsNull(MmdHeadBounds.VisibleNonHairVertices(pmx), "全被剔光 → 當成認不出來,不過濾");
         }
 
         [Test]
