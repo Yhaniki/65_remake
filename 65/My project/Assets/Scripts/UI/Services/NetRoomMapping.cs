@@ -68,6 +68,11 @@ namespace Sdo.UI.Services
                         DisplayName = sp.Name ?? "",
                         Level = sp.Level,
                         Avail = sp.Avail,
+                        // 🔴 家族與性別要一起帶過來:右鍵旁觀席上的人也開得了玩家資訊視窗
+                        //    (見 RoomPickTarget),而那個視窗要家族名 + 性別(畫他的 3D 角色)。
+                        //    漏掉的話症狀是「同一個人坐著看得到家族、站到旁觀席就沒了」與「男的畫成女的」。
+                        Guild = sp.Guild ?? "",
+                        Gender = sp.Look != null ? sp.Look.Gender : 0,
                     });
                 }
 

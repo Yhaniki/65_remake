@@ -4266,8 +4266,10 @@ namespace Sdo.UI.Screens
         /// 頭貼接得到右鍵。這裡刻意**重用 <see cref="ShowSlotPopup"/>** —— 兩個入口點同一個人就該給同一份選單
         /// (含房主的踢人/轉房主),分兩套遲早會長歪。
         ///
-        /// 挑人只挑得到**坐在座位上的人**:選單的每一項都以座位為單位(踢人要座位號、玩家信息要座位資料),
-        /// 旁觀者沒有座位 → 點他不彈選單(而不是彈一個半殘的)。
+        /// 挑到的人**不一定坐在座位上** —— 旁觀席上的十個人(以及站上旁觀席的自己)也挑得到,
+        /// 那時走 <see cref="ShowSpectatorPopup"/> 給社交選單(玩家信息 / 私聊 / 加為好友)。
+        /// 需要座位的只有房主那組管理項(踢人要座位號、開關位置要座位號),社交項只需要「一個人」;
+        /// 以前整條路徑先換算座位、查不到就 return,於是右鍵旁觀者完全沒有反應(使用者回報)。
         /// </summary>
         private void OnRoomPickClick(PointerEventData ev)
         {
@@ -4294,21 +4296,61 @@ namespace Sdo.UI.Screens
             if (!_scene.TryPickAvatar(vp, out int userId)) return;   // 點到地板/家具 → 什麼都不做
 
             var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
-            int localSeat = LocalSeatIndex(room);
-            int seat = userId == 0 ? localSeat : SeatOfUser(room, userId);
-            if (seat < 0 || seat >= RoomLayout.SeatCount) return;    // 旁觀者/找不到 → 不彈
-
-            ShowSlotPopup(seat, ev.position, room, CanManageSeats(room), seat == localSeat);
+            var target = RoomPickTarget.Resolve(room, userId, LocalUserId, LocalSeatIndex(room), LocalSpectating);
+            switch (target.Kind)
+            {
+                case RoomPickKind.Seat:
+                    if (target.Index >= RoomLayout.SeatCount) return;
+                    ShowSlotPopup(target.Index, ev.position, room, CanManageSeats(room), target.IsSelf);
+                    break;
+                case RoomPickKind.Spectator:
+                    ShowSpectatorPopup(target.Index, userId, ev.position, room, target.IsSelf);
+                    break;
+            }
         }
 
-        /// <summary>那個 userId 坐在第幾格?(-1 = 不在座位上 —— 旁觀者、剛離開,或離線模式的 0)</summary>
-        private static int SeatOfUser(RoomInfo room, int userId)
+        /// <summary>
+        /// **旁觀席上那個人**的右鍵選單 —— 只有社交項(玩家信息 / 私聊 / 加為好友)。
+        ///
+        /// 刻意重用 <see cref="RoomSlotMenu.For"/> 而不是大廳那份 <see cref="PlayerContextMenu"/>:
+        /// 這是房間裡的同一顆選單,只是這個人沒有座位 → 房主組的守門直接餵 <c>isHost: false</c>
+        /// (旁觀者不佔座位,踢人/轉房主/開關位置一項都不適用),社交組的規則則一字不改。
+        /// 兩份規則各寫一次的下場見 <see cref="RoomSlotMenu"/> 的類別註解。
+        ///
+        /// <paramref name="index"/> 是旁觀名單的索引;-1 = 本機自己但快照還沒把他放進名單
+        /// (按下「旁觀」到 server 回快照之間)—— 那時只有「玩家信息」,而它開的是本機那份,不需要名單。
+        /// </summary>
+        private void ShowSpectatorPopup(int index, int userId, Vector2 screenPos, RoomInfo room, bool isSelf)
         {
-            if (room == null || userId == 0) return -1;
-            for (int i = 0; i < room.Seats.Count; i++)
-                if (room.Seats[i] != null && !room.Seats[i].IsEmpty && room.Seats[i].UserId == userId) return i;
-            return -1;
+            CloseSlotPopup();
+            var sp = room != null && room.Spectators != null && index >= 0 && index < room.Spectators.Count
+                ? room.Spectators[index] : null;
+            string who = sp != null ? (sp.DisplayName ?? "").Trim() : "";
+            // 名字是社交項的鍵(好友清單以名字為鍵、私聊也要名字)—— 查不到名字的人只剩「玩家信息」。
+            bool taken = isSelf || who.Length > 0;
+            bool friend = who.Length > 0 && FriendList.IsFriend(ProfileManager.Active, who);
+            var actions = RoomSlotMenu.For(false, Online, isSelf, taken, false, friend);
+            if (actions.Length == 0) return;
+
+            _slotPopup = BuildSlotMenu("SpectatorPopup", screenPos, actions.Length,
+                idx => SlotActionLabel(actions[idx]),
+                idx =>
+                {
+                    switch (actions[idx])
+                    {
+                        case RoomSlotAction.PlayerInfo: OpenSpectatorPlayerInfo(userId, isSelf); break;
+                        case RoomSlotAction.Whisper: BeginWhisperTo(who); break;
+                        // 好友清單的鍵是**名字**,備查編號線上一律用 server 的 userId
+                        // (與 NetRoomMapping.ToSeatInfo 給座位的 PlayerProfile.Id 同一個約定)。
+                        case RoomSlotAction.AddFriend: ToggleFriend(who, UserIdText(userId), true); break;
+                        case RoomSlotAction.RemoveFriend: ToggleFriend(who, UserIdText(userId), false); break;
+                    }
+                    CloseSlotPopup();
+                });
         }
+
+        private static string UserIdText(int userId)
+            => userId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         /// <summary>座位右鍵選單。項目由 <see cref="RoomSlotMenu"/> 決定(空 → 不彈)。</summary>
         private void ShowSlotPopup(int seat, Vector2 screenPos, RoomInfo room, bool host, bool isSelf)
@@ -4376,18 +4418,56 @@ namespace Sdo.UI.Screens
             var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
             var s = SeatAt(room, seat);
             if (s == null || s.IsEmpty) return;
-            Nav.OpenPlayerInfo?.Invoke(s.Player, SeatGender(s.UserId), s.UserId);
+            Nav.OpenPlayerInfo?.Invoke(s.Player, GenderOfUser(s.UserId), s.UserId);
         }
 
-        /// <summary>那個座位上的人的性別(0=女 1=男)。<see cref="SeatInfo"/> 沒帶性別,所以從連線快照的
+        /// <summary>
+        /// 「玩家信息」—— **旁觀席**上那個人的版本。
+        ///
+        /// 旁觀者沒有 <see cref="SeatInfo"/>,所以現組一份 <see cref="PlayerProfile"/> 餵給視窗
+        /// (名字/等級/家族都在旁觀名單裡,見 <see cref="NetRoomMapping"/>);命中率那些數字與真正的穿搭
+        /// 一樣是視窗自己拿 userId 去跟 server 要名片 —— 那條查詢認的是**連線**不是座位,旁觀者照樣查得到。
+        ///
+        /// 名單在按下的當下**重查一次**(同 <see cref="OpenSeatPlayerInfo"/>):快照每幀重來,
+        /// 彈選單到按下之間那個人可能已經走了,用彈出時抓的那筆會開出一個已經不在房裡的人。
+        /// </summary>
+        private void OpenSpectatorPlayerInfo(int userId, bool isSelf)
+        {
+            if (isSelf) { Nav.OpenSelfInfo?.Invoke(); return; }
+            var room = Ctx != null && Ctx.Rooms != null ? Ctx.Rooms.CurrentRoom : null;
+            int i = RoomPickTarget.SpectatorIndexOf(room, userId);
+            if (i < 0) return;
+            var sp = room.Spectators[i];
+            var who = new PlayerProfile(UserIdText(sp.UserId), sp.DisplayName ?? "", sp.Level, sp.Guild ?? "");
+            Nav.OpenPlayerInfo?.Invoke(who, GenderOfUser(userId), userId);
+        }
+
+        /// <summary>那個人的性別(0=女 1=男)。<see cref="SeatInfo"/> 沒帶性別,所以從連線快照的
         /// <c>NetAvatarLook</c> 查 —— 那正是房間 3D 拿來建他角色的同一份資料,不會出現「視窗畫男的、房裡站女的」。
-        /// 查不到(離線 / 剛離開 / 旁觀者)就退回本機性別,至少不是一個非法值。</summary>
-        private int SeatGender(int userId)
+        /// 座位上查不到就再查**旁觀名單**(旁觀者的 Look 一樣在快照裡);兩邊都查不到
+        /// (離線 / 剛離開)才退回本機性別,至少不是一個非法值。</summary>
+        private int GenderOfUser(int userId)
         {
             var snap = Ctx != null && Ctx.Net != null ? Ctx.Net.Room : null;
-            var ns = snap != null && userId != 0 ? snap.SeatOf(userId) : null;
-            if (ns != null && ns.Look != null) return ns.Look.Gender;
+            if (snap != null && userId != 0)
+            {
+                var ns = snap.SeatOf(userId);
+                if (ns != null && ns.Look != null) return ns.Look.Gender;
+                int si = snap.SpectatorIndexOf(userId);
+                if (si >= 0 && snap.Spectators != null && si < snap.Spectators.Length)
+                {
+                    var spec = snap.Spectators[si];
+                    if (spec != null && spec.Look != null) return spec.Look.Gender;
+                }
+            }
             return Ctx != null && Ctx.Session != null ? Ctx.Session.Gender : 0;
+        }
+
+        /// <summary>座位版的加 / 刪好友(名字與存檔編號都在 <see cref="SeatInfo.Player"/> 裡)。</summary>
+        private void ToggleSeatFriend(SeatInfo s, bool add)
+        {
+            if (s == null || s.Player == null) return;
+            ToggleFriend(s.Player.DisplayName, s.Player.Id, add);
         }
 
         /// <summary>
@@ -4398,12 +4478,12 @@ namespace Sdo.UI.Screens
         /// 結果一定要 Toast 講出來:好友清單不在這個畫面上,沒有回饋玩家會以為按了沒反應
         /// (尤其「已經是好友」「清單滿了」這兩種失敗,畫面上完全看不出差別)。
         /// </summary>
-        private void ToggleSeatFriend(SeatInfo s, bool add)
+        private void ToggleFriend(string displayName, string playerId, bool add)
         {
-            string name = s != null && s.Player != null ? (s.Player.DisplayName ?? "").Trim() : "";
+            string name = (displayName ?? "").Trim();
             if (name.Length == 0) return;
             var me = ProfileManager.Active;
-            bool ok = add ? FriendList.Add(me, name, s.Player.Id, System.DateTime.UtcNow.ToString("o"))
+            bool ok = add ? FriendList.Add(me, name, playerId ?? "", System.DateTime.UtcNow.ToString("o"))
                           : FriendList.Remove(me, name);
             if (ok) ProfileManager.Save();
             string key = add ? (ok ? "room.friend_added" : "room.friend_add_failed")

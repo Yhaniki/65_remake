@@ -79,6 +79,14 @@ namespace Sdo.UI.Services
         public string DisplayName;
         public int Level;
         public Sdo.Net.Availability Avail = Sdo.Net.Availability.Unknown;
+
+        /// <summary>家族名稱。旁觀者一樣有(<c>NetSpectator.Guild</c>)—— 右鍵他開的玩家資訊視窗要顯示,
+        /// 同一個人從座位換到旁觀席不該讓家族列憑空消失。</summary>
+        public string Guild = "";
+
+        /// <summary>0=女 1=男。右鍵旁觀者開玩家資訊視窗時要拿它畫對方的 3D 角色 ——
+        /// 座位那邊是從快照的 <c>NetSeat.Look</c> 查的,旁觀者沒有座位可查,所以在對映時就收進來。</summary>
+        public int Gender;
     }
 
     public sealed class RoomInfo

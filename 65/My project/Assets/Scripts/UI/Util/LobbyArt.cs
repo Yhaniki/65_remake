@@ -121,10 +121,121 @@ namespace Sdo.UI.Util
                 if (d > HoverDiffThreshold && b.a >= a.a) np[i] = b;
             }
 
-            var tex = new Texture2D(nt.width, nt.height, TextureFormat.RGBA32, false)
+            return MakeSprite(np, nt.width, nt.height);
+        }
+
+        /// <summary>
+        /// 下拉選單條的統一底色 —— 官方那五條的底是**一整片垂直漸層**(alpha 140→40、粉紅→紫),
+        /// 五張圖只是把那片漸層切成五塊。條與條之間沒有背板,所以疊在大廳畫面上時最下面那條(「设置」)
+        /// 幾乎透光、透出背後的深色 → 看起來就像「滑過的那條底被染深了」(使用者回報:五條的底要一模一樣)。
+        ///
+        /// 「不要變暗」＝一律用最上面那條(FamilyPopMenu1)中段的底,見 <see cref="FlattenBg"/>。
+        /// </summary>
+        public static readonly Color32 PopMenuBg = new Color32(249, 51, 168, 134);
+
+        /// <summary>底色統一過的選單條(normal 態)。載不到/像素對不起來就退回 <see cref="AnSolo"/>。</summary>
+        public static Sprite AnSoloFlatBg(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "flat:" + anName;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            s = FlattenBg(AnSolo(anName), PopMenuBg);
+            _soloCache[key] = s;
+            return s;
+        }
+
+        /// <summary>底色統一過的選單條(滑過態)= <see cref="AnSoloHover"/> 的黃字/黃圖示/黃三角 + 同一片底。</summary>
+        public static Sprite AnSoloHoverFlatBg(string normalAn, string hoverAn)
+        {
+            if (string.IsNullOrEmpty(hoverAn)) return AnSoloFlatBg(normalAn);
+            string key = "hovflat:" + normalAn + "|" + hoverAn;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            s = FlattenBg(AnSoloHover(normalAn, hoverAn), PopMenuBg);
+            _soloCache[key] = s;
+            return s;
+        }
+
+        /// <summary>取樣底色的水平範圍:左邊界內側。五條的圖示最早都從 x=6 才開始有柔邊,x≤5 一定是純底。</summary>
+        private const int BgProbeX0 = 0, BgProbeX1 = 5;
+
+        /// <summary>
+        /// 把一條選單圖的底換成 <paramref name="target"/> —— 逐列先量出這一列**自己的**底色
+        /// (左邊界內側幾個像素的中位數),再把整列重新混一次。
+        ///
+        /// 逐列量而不是整張取一個值:官方那片漸層在**一條之內**也還在變(alpha 140→125),
+        /// 整張取一個值的話換不乾淨、條的上下緣會留下一圈舊色。
+        ///
+        /// 換底的算式:這些圖是美術**在底上**畫字/圖示畫出來的,所以每個像素都是「前景 × 舊底」的混色,
+        /// 混多少可以從 alpha 反推 —— k = (a − 底a) ⁄ (255 − 底a) 就是前景的覆蓋率。於是
+        ///   rgb' = rgb + (1 − k)(新底rgb − 舊底rgb)、a' = k·255 + (1 − k)·新底a
+        /// 純底(k=0)正好變成 target,字/圖示的實心部分(k=1)原封不動,抗鋸齒柔邊照覆蓋率跟著搬家。
+        /// 🔴 不要退回「只把接近底色的像素換成 target」那種寫法:柔邊會留著舊底色,深紫那幾條的字
+        ///    就整圈鑲一層紫暈(改這裡之前的樣子)。
+        ///
+        /// alpha **比底還低**的像素不動 —— 那是右緣那條半透明暗分隔線(把底挖暗,不是畫在底上),
+        /// 而且五條的分隔線本來就同色,不必也不能拿覆蓋率去推它。
+        ///
+        /// 像素對不起來(sprite 只是共用圖集的一小塊)或貼圖不可讀就原樣回傳 —— 最壞情況是底照舊漸層,不會畫錯。
+        /// </summary>
+        private static Sprite FlattenBg(Sprite src, Color32 target)
+        {
+            if (src == null) return null;
+            var t = src.texture;
+            if (t == null) return src;
+            if (src.rect.width != t.width || src.rect.height != t.height) return src;
+
+            Color32[] px;
+            try { px = t.GetPixels32(); } catch { return src; }
+
+            int w = t.width, h = t.height;
+            for (int y = 0; y < h; y++)
+            {
+                Color32 bg = RowMedian(px, w, y, BgProbeX0, BgProbeX1);
+                float span = Mathf.Max(255f - bg.a, 1f);
+                int row = y * w;
+                for (int x = 0; x < w; x++)
+                {
+                    Color32 c = px[row + x];
+                    if (c.a < bg.a) continue;   // 分隔線那種「把底挖暗」的像素,不是畫在底上的東西
+                    float k = Mathf.Clamp01((c.a - bg.a) / span);
+                    float inv = 1f - k;
+                    px[row + x] = new Color32(
+                        Mix(c.r, inv * (target.r - bg.r)),
+                        Mix(c.g, inv * (target.g - bg.g)),
+                        Mix(c.b, inv * (target.b - bg.b)),
+                        (byte)Mathf.Clamp(Mathf.RoundToInt(k * 255f + inv * target.a), 0, 255));
+                }
+            }
+            return MakeSprite(px, w, h);
+        }
+
+        private static byte Mix(byte channel, float delta)
+            => (byte)Mathf.Clamp(Mathf.RoundToInt(channel + delta), 0, 255);
+
+        /// <summary>某一列 x∈[x0,x1] 的**逐通道**中位數。中位數而不是平均:碰到一兩顆雜訊像素也不會把底色帶偏。</summary>
+        private static Color32 RowMedian(Color32[] px, int w, int y, int x0, int x1)
+        {
+            x0 = Mathf.Clamp(x0, 0, w - 1);
+            x1 = Mathf.Clamp(x1, x0, w - 1);
+            int n = x1 - x0 + 1;
+            var r = new byte[n]; var g = new byte[n]; var b = new byte[n]; var a = new byte[n];
+            for (int i = 0; i < n; i++)
+            {
+                Color32 c = px[y * w + x0 + i];
+                r[i] = c.r; g[i] = c.g; b[i] = c.b; a[i] = c.a;
+            }
+            System.Array.Sort(r); System.Array.Sort(g); System.Array.Sort(b); System.Array.Sort(a);
+            int m = n / 2;
+            return new Color32(r[m], g[m], b[m], a[m]);
+        }
+
+        /// <summary>把一整張 RGBA32 像素做成 1:1 的 sprite(pad 0、FullRect、可讀)—— 合成出來的圖共用這條路。</summary>
+        private static Sprite MakeSprite(Color32[] px, int w, int h)
+        {
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
             { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
-            tex.SetPixels32(np); tex.Apply(false);
-            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+            tex.SetPixels32(px); tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, w, h),
                                  new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
         }
 

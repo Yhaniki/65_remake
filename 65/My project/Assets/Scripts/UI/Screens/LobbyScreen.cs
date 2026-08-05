@@ -466,6 +466,8 @@ namespace Sdo.UI.Screens
         /// <summary>放大鏡那顆的五個項目({normal, hover})。
         /// 滑過那張**不直接用**,是與 normal 合成的(見 <see cref="LobbyArt.AnSoloHover"/>):只取黃字/黃圖示/三角,
         /// 底不動 —— 使用者要求「底圖不要變色,但三角形和字變黃還是要有」。
+        /// 兩態的底再一起壓成同一片粉紫(<see cref="LobbyArt.AnSoloFlatBg"/>):官方五張切的是**一整片垂直漸層**,
+        /// 照原樣疊起來最後一條會透到發黑,看起來就像那條被選中染深了(見 <see cref="LobbyArt.PopMenuBg"/>)。
         /// 只有「设置」接得上東西(與房間同一個 OptionDlg);其餘四項是官方有、這裡還沒做的功能 → 按了只收選單。</summary>
         private static readonly string[,] HallMenuItems =
         {
@@ -549,6 +551,10 @@ namespace Sdo.UI.Screens
         ///
         /// 滑過態不是官方那張 hover 圖,而是 <see cref="LobbyArt.AnSoloHover"/> 合出來的
         /// 「normal 的底 + hover 的黃字/黃圖示/三角」。pushed 也用它:滑鼠一定在項目上,按下去再閃回白字很跳。
+        ///
+        /// 兩態最後都再過一次 <see cref="LobbyArt.AnSoloFlatBg"/>:官方五張切自一整片垂直漸層(alpha 140→40、
+        /// 粉紅→紫),沒有背板擋著就會透出背後的大廳畫面 —— 最下面那條深到像是「被選中變色」。壓成同一片底之後
+        /// 五條長得一模一樣,滑過只剩字/圖示/三角變黃。
         /// </summary>
         private RectTransform BuildPopMenu(string name, string[,] items, System.Action<int> onPick)
         {
@@ -559,8 +565,8 @@ namespace Sdo.UI.Screens
 
             for (int i = 0; i < rows; i++)
             {
-                var art = LobbyArt.AnSolo(items[i, 0]);
-                var hov = LobbyArt.AnSoloHover(items[i, 0], items[i, 1]);
+                var art = LobbyArt.AnSoloFlatBg(items[i, 0]);
+                var hov = LobbyArt.AnSoloHoverFlatBg(items[i, 0], items[i, 1]);
                 var b = UIKit.AddSpriteButton(menu, name + i, art, hov, hov,
                                               HallMenuItemX, HallMenuRow0Y + i * HallMenuRowStep);
                 UiHoverSfx.Attach(b, UiSfx.Menufloat);
