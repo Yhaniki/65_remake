@@ -157,6 +157,20 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void ACoatHemIsASkirtNotHair()
+        {
+            // 🔴 回歸點:大衣下擺跟裙子是同一件事 —— 從腰垂下、繞著腿、被腿掃到,要的是裙子的手感跟
+            //    physics.ini 的 [skirt]。La+Darknesss 的 14 條下擺剛體叫 Coat_*,以前整段掉進 Hair。
+            var m = Body();
+            m.Chain("Coat_Front", 0, 3, 0.09f, 0f);
+            m.Chain("コート_L", 0, 3, 0.7f, 0f);      // 不同 firmness,免得跟上面合併成同一朵而驗不到第二個名字
+            var groups = m.Build();
+            foreach (var g in groups) Assert.AreEqual(MmdClothPartId.Skirt, g.Part, g.Label);
+            Assert.IsNotNull(groups.Find(g => g.Label.StartsWith("Coat")), "英文 Coat");
+            Assert.IsNotNull(groups.Find(g => g.Label.StartsWith("コート")), "日文 コート");
+        }
+
+        [Test]
         public void ChainsWithDifferentFirmnessDoNotShareACloth()
         {
             var m = Body();

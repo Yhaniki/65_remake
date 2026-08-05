@@ -96,11 +96,15 @@ namespace Sdo.Game
         // named, but the rigid body is labelled Bang / Twintail / Dress / Tie / …). Falls back to the bone name.
         // A model whose bodies are named differently just lands everything in Hair — it still simulates; the per-part
         // feel is then whatever [hair] says (that is what physics.ini is for).
+        // A COAT counts as a skirt: it is the same thing physically — panels hung off the waist that wrap the legs and
+        // get swept by them — so it wants the skirt's feel and the skirt's [skirt] section, not the hair's.
+        // (La+Darknesss labels its 14 coat-tail chains Coat_*, which used to land the whole hem in Hair.)
         public static MmdClothPartId GroupOf(string label)
         {
             string nm = label ?? "";
             if (nm.Contains("Bang") || nm.Contains("前髪")) return MmdClothPartId.Bang;
-            if (nm.Contains("Dress") || nm.Contains("Skirt") || nm.Contains("スカート") || nm.Contains("裙")) return MmdClothPartId.Skirt;
+            if (nm.Contains("Dress") || nm.Contains("Skirt") || nm.Contains("スカート") || nm.Contains("裙") ||
+                nm.Contains("Coat") || nm.Contains("コート") || nm.Contains("外套") || nm.Contains("大衣")) return MmdClothPartId.Skirt;
             if (nm.Contains("Tie") || nm.Contains("ネクタイ") || nm.Contains("領帯") || nm.Contains("领带")) return MmdClothPartId.Tie;
             return MmdClothPartId.Hair;   // twintails / hairlines / breast / misc
         }
