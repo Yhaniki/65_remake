@@ -51,8 +51,33 @@ namespace Sdo.UI.Core
         private static float _lastQueryAt = -99f;
         private static string _downloadingPack;
 
+        /// <summary>已經寫過「有人穿著這個、本機還沒有」那一行的 packId —— 每 3 秒問一次 server,
+        /// 不去重的話它會把 log 洗掉。</summary>
+        private static readonly HashSet<string> _notedMissing = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 這條路上的里程碑。<b>一定要走 <see cref="SdoLog.Note"/>,不能用 <c>Debug.Log</c></b> ——
+        /// SdoLog 預設把 <c>LogType.Log</c> 整個丟掉(見那裡的 <c>Verbose</c>),於是在打包版裡
+        /// 「有沒有推上去」「有沒有去要」「要到了沒」三件事**一行都不會留下**,
+        /// 而那正是「我有分享,他看不到」唯一能分辨卡在哪一環的東西(實測踩過:兩台的 log.txt
+        /// 都只看得到自己身上那具模型建好了,傳輸整段靜音)。
+        /// </summary>
+        private static void Log(string msg) => SdoLog.Note("mmd-net", "[mmd-net] " + msg);
+
         /// <summary>問過「server 有沒有」之後多久可以再問。與缺歌那條同一個理由:不節流會撞 server 的限流。</summary>
         private const float QueryRetrySec = 3f;
+
+        /// <summary>每個 packId 下載失敗幾次之後就真的放棄。</summary>
+        private const int MaxDownloadRetries = 3;
+
+        /// <summary>線路失敗之後隔多久才再試一次。沒有這個退避的話,一斷線就會變成全速重連迴圈。</summary>
+        private const float RetryBackoffSec = 8f;
+
+        /// <summary>每個 packId 失敗過幾次(只算下載方向)。</summary>
+        private static readonly Dictionary<string, int> _failCount = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>下一次可以再開下載的時刻(線路失敗後的退避)。</summary>
+        private static float _nextFetchAt;
 
         /// <summary>送出 blobQuery 之後等回覆的上限。超過就當成那一問掉了。</summary>
         private const float QueryTimeoutSec = 8f;
@@ -76,12 +101,21 @@ namespace Sdo.UI.Core
             {
                 _fx.Tick();
                 if (_fx.State == NetTransferState.Importing) { FinishDownload(); return; }
-                if (_fx.State == NetTransferState.Done) { Debug.Log("[mmd-net] 傳輸完成:" + _fx.PackId); Clear(); return; }
+                if (_fx.State == NetTransferState.Done)
+                {
+                    Log((_fx.IsUploading ? "上傳完成:" : "傳輸完成:") + _fx.PackId);
+                    Clear();
+                    return;
+                }
                 if (_fx.State == NetTransferState.Failed)
                 {
-                    // 模型拉不到就是看到對方的 SDO 穿搭 —— 不是災難,不值得無限重試。記下來別再試。
+                    Log("✗ 傳輸失敗 " + _fx.PackId + ":" + _fx.Error);
                     Debug.LogWarning("[mmd-net] 傳輸失敗 " + _fx.PackId + ":" + _fx.Error);
-                    if (!_fx.IsUploading && !string.IsNullOrEmpty(_fx.PackId)) _givenUp.Add(_fx.PackId);
+                    if (!_fx.IsUploading && !string.IsNullOrEmpty(_fx.PackId))
+                    {
+                        TryDeleteDir(_fx.DestFolder);   // 半份的暫存目錄不留(見 MmdModelStore.NetTempDirFor)
+                        NoteDownloadFailure(_fx.PackId, _fx.Retryable);
+                    }
                     Clear();
                     return;
                 }
@@ -116,6 +150,11 @@ namespace Sdo.UI.Core
             string mine = MmdAvatarSwap.LocalPackId;
             if (string.Equals(_announcedPack, mine, StringComparison.Ordinal)) return;
             _announcedPack = mine;
+            // 這一行是「別人到底知不知道我穿了模型」的分水嶺:空字串代表我對外宣告的是 SDO 穿搭,
+            // 同房的人根本不會來要 —— 而畫面上我自己還是 MMD,從那邊完全看不出差別。
+            Log(string.IsNullOrEmpty(mine)
+                ? "向 server 宣告:我身上沒有可分享的模型(別人看到的是我的 SDO 穿搭)"
+                : "向 server 宣告我身上的模型 " + MmdAvatarSwap.ModelName + "(" + mine + ")");
             ctx.Net.PublishLook();
         }
 
@@ -130,13 +169,19 @@ namespace Sdo.UI.Core
             if (_givenUp.Contains(mine)) return false;
 
             string dir = MmdAvatarSwap.ModelDir;
-            if (string.IsNullOrEmpty(dir) || !VfsFile.DirectoryExists(dir)) { _givenUp.Add(mine); return false; }
+            if (string.IsNullOrEmpty(dir) || !VfsFile.DirectoryExists(dir))
+            {
+                Log("✗ 找不到模型資料夾,不能分享:" + (dir ?? "(null)"));
+                _givenUp.Add(mine);
+                return false;
+            }
 
             // 自己先驗一次。server 也會驗(那是它的職責),但在這裡擋掉可以省下整趟上傳,
             // 而且錯誤訊息指得到真正的原因(「你的模型資料夾裡有 .exe」而不是「badPath」)。
             List<PackFileEntry> files; PackScanStats stats;
             if (!ModelPackId.ScanFolder(dir, out files, out stats))
             {
+                Log("✗ 掃不到可以分享的檔案,不上傳:" + dir);
                 Debug.LogWarning("[mmd-net] 掃不到可以分享的檔案,不上傳:" + dir);
                 _givenUp.Add(mine);
                 return false;
@@ -144,6 +189,7 @@ namespace Sdo.UI.Core
             string why;
             if (!ModelPackId.IsValidPack(files, out why))
             {
+                Log("✗ 這份模型不能分享(" + why + ")—— 別人會看到你的 SDO 穿搭:" + dir);
                 Debug.LogWarning("[mmd-net] 這份模型不能分享(" + why + ")—— 別人會看到你的 SDO 穿搭:" + dir);
                 _givenUp.Add(mine);
                 return false;
@@ -154,7 +200,7 @@ namespace Sdo.UI.Core
             fx.BeginUpload(RoomConfig.serverAddress, RoomConfig.serverPort, ctx.Net.SessionKey,
                            mine, dir, NetProto.BlobKindModel);
             _fx = fx;
-            Debug.Log($"[mmd-net] 開始分享自己的模型 {MmdAvatarSwap.ModelName}({files.Count} 檔、{stats.IncludedBytes / 1024} KB)");
+            Log($"開始分享自己的模型 {MmdAvatarSwap.ModelName}({files.Count} 檔、{stats.IncludedBytes / 1024} KB、{mine})");
             return true;
         }
 
@@ -162,6 +208,7 @@ namespace Sdo.UI.Core
 
         private static void TryFetchMissing(AppContext ctx)
         {
+            if (Time.realtimeSinceStartup < _nextFetchAt) return;   // 上一趟線路失敗的退避
             MmdAvatarSwap.CollectMissingPacks(_missing);
             if (_missing.Count == 0) return;
 
@@ -169,6 +216,10 @@ namespace Sdo.UI.Core
             for (int i = 0; i < _missing.Count; i++)
                 if (!_givenUp.Contains(_missing[i])) { want = _missing[i]; break; }
             if (want == null) return;
+
+            // 「同房有人穿著一個我沒有的模型」—— 這一行在就代表 packId 有傳到我這邊,
+            // 沒有就代表對方根本沒宣告(他那邊沒分享 / 沒穿),兩者的畫面一模一樣。
+            if (_notedMissing.Add(want)) Log("同房有人穿著本機沒有的模型,準備去要:" + want);
 
             if (!_serverHas.Contains(want))
             {
@@ -182,14 +233,25 @@ namespace Sdo.UI.Core
             }
 
             string dest = MmdModelStore.NetDirFor(want);
-            if (string.IsNullOrEmpty(dest)) { _givenUp.Add(want); return; }
+            string tmp = MmdModelStore.NetTempDirFor(want);
+            if (string.IsNullOrEmpty(dest) || string.IsNullOrEmpty(tmp))
+            {
+                Log("✗ 算不出下載位置(拿不到資料根):" + want);
+                _givenUp.Add(want);
+                return;
+            }
+
+            // 上一趟半路死掉留下的殘骸 —— 留著的話這一趟會把新舊檔案混在同一個資料夾裡,
+            // 而收尾的 packId 重算會因此對不上,錯誤訊息指向「內容不符」而不是真正的原因。
+            TryDeleteDir(tmp);
 
             _downloadingPack = want;
             var fx = new NetSongFetcher();
+            // 寫暫存,驗過再改名就位(見 MmdModelStore.NetTempDirFor)。
             fx.BeginDownload(RoomConfig.serverAddress, RoomConfig.serverPort, ctx.Net.SessionKey,
-                             want, dest, NetProto.BlobKindModel);
+                             want, tmp, NetProto.BlobKindModel);
             _fx = fx;
-            Debug.Log("[mmd-net] 開始下載別人的模型 " + want + " → " + dest);
+            Log("開始下載別人的模型 " + want + " → " + dest);
         }
 
         /// <summary>
@@ -203,24 +265,85 @@ namespace Sdo.UI.Core
         {
             var fx = _fx;
             string pack = fx.PackId;
-            string dir = fx.DestFolder;
+            string tmp = fx.DestFolder;                     // 位元組落在暫存目錄
+            string dir = MmdModelStore.NetDirFor(pack);     // 驗過才搬到這裡
 
-            string got = ModelPackId.ForFolder(dir);
+            string got = ModelPackId.ForFolder(tmp);
             if (!string.Equals(got, pack, StringComparison.Ordinal))
             {
+                Log("✗ 下載回來的內容與宣稱的 packId 不符,丟掉:" + pack);
                 Debug.LogWarning("[mmd-net] 下載回來的內容與宣稱的 packId 不符,丟掉:" + pack);
-                try { if (VfsFile.DirectoryExists(dir)) Directory.Delete(dir, true); } catch { }
+                TryDeleteDir(tmp);
                 _givenUp.Add(pack);
                 fx.MarkImported(false, "packId 不符");
                 Clear();
                 return;
             }
 
+            // 🔴 就位是**最後一步**,而且要一次到位:改名是原子的,所以在此之前
+            // 「.net/<hex> 存在」永遠不成立 —— 補建迴圈就不會去碰一份還沒寫完的模型。
+            if (string.IsNullOrEmpty(dir) || !TryPlace(tmp, dir))
+            {
+                Log("✗ 下載完成但搬不進定位:" + (dir ?? "(算不出位置)"));
+                fx.MarkImported(false, "搬不進模型資料夾");
+                Clear();
+                return;
+            }
+
             fx.MarkImported(true);
-            Debug.Log("[mmd-net] 模型裝好了:" + pack + " → " + dir);
+            Log("模型裝好了:" + pack + " → " + dir);
+            _notedMissing.Remove(pack);
             MmdAvatarSwap.OnPackInstalled(pack);   // 當場換上,不重建角色
             _downloadingPack = null;
             Clear();
+        }
+
+        /// <summary>
+        /// 一趟下載失敗了 —— 這個 packId 還要不要再試?
+        ///
+        /// 🔴 <b>線路問題不能當成永久失敗。</b>舊版一律記進 <see cref="_givenUp"/>,於是一次
+        /// 「連線中斷(Eof)」就讓那份模型在**整個遊戲執行期間**再也拉不到 —— 對方明明還穿在身上、
+        /// server 明明也有,而畫面上完全看不出發生過什麼(實測踩過)。
+        /// <see cref="NetSongFetcher.Retryable"/> 已經分好了:線路問題可以重試,內容問題(sha 不符、
+        /// 路徑不安全、寫不進磁碟)重試一百次也是同樣結果。可重試的給幾次機會加退避,其餘直接放棄。
+        /// </summary>
+        private static void NoteDownloadFailure(string pack, bool retryable)
+        {
+            int n;
+            _failCount.TryGetValue(pack, out n);
+            n++;
+            _failCount[pack] = n;
+
+            if (!retryable || n >= MaxDownloadRetries)
+            {
+                _givenUp.Add(pack);
+                Log($"放棄這個模型(第 {n} 次失敗{(retryable ? "" : ",而且重試不會有不同結果")})—— 他在你畫面上維持 SDO 穿搭:{pack}");
+                return;
+            }
+            _serverHas.Remove(pack);   // 重新問一次 server(它可能剛被 janitor 清掉)
+            _nextFetchAt = Time.realtimeSinceStartup + RetryBackoffSec;
+            Log($"第 {n} 次失敗,{RetryBackoffSec:F0} 秒後再試:{pack}");
+        }
+
+        /// <summary>把下載好的暫存目錄改名就位。同一個 packId 的舊殘骸先清掉(內容尋址,舊的一定等價)。</summary>
+        private static bool TryPlace(string tmp, string dir)
+        {
+            try
+            {
+                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                Directory.Move(tmp, dir);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[mmd-net] 搬不動 " + tmp + " → " + dir + ":" + e.Message);
+                return false;
+            }
+        }
+
+        private static void TryDeleteDir(string dir)
+        {
+            try { if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
         }
 
         // ================= 事件 / 生命週期 =================
@@ -238,12 +361,12 @@ namespace Sdo.UI.Core
             if (string.IsNullOrEmpty(packId)) return;
             if (!string.Equals(_queriedPack, packId, StringComparison.Ordinal)) return;   // 不是我問的(缺歌那條也在問)
             _queriedPack = null;
-            if (have) _serverHas.Add(packId);
+            if (have) { _serverHas.Add(packId); Log("server 有這個模型,可以下載:" + packId); }
             else
             {
                 // server 沒有 = 穿它的人還沒推上來(或他把分享關掉了)。不記進 _givenUp ——
                 // 他可能下一秒就推完了,而我們會在 QueryRetrySec 之後再問一次。
-                Debug.Log("[mmd-net] server 還沒有這個模型,稍後再問:" + packId);
+                Log("server 還沒有這個模型,稍後再問:" + packId);
             }
         }
 
@@ -256,6 +379,8 @@ namespace Sdo.UI.Core
             _queriedPack = null;
             _lastQueryAt = -99f;
             _downloadingPack = null;
+            _notedMissing.Clear();   // 下一間房要重印一次「有人穿著我沒有的模型」(那是診斷的起點)
+            _nextFetchAt = 0f;       // 退避不跨房間:換一間房就是新的一次機會
         }
 
         /// <summary>模型換了(設定面板選了別的)→ 下次進房要重推新的那一個。</summary>

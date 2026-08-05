@@ -74,6 +74,25 @@ namespace Sdo.Game
             return null;
         }
 
+        /// <summary>下載中的暫存資料夾尾綴。</summary>
+        public const string PartSuffix = ".part";
+
+        /// <summary>
+        /// **下載中**的位元組先落在這裡,驗過 packId 才改名成 <see cref="NetDirFor"/>。
+        ///
+        /// 🔴 下載**絕對不能直接寫進最終位置**。<see cref="DirForPack"/> 判斷「這份模型在不在」只看
+        /// 「資料夾存在 + 裡面有 .pmx」,而下載到一半的資料夾**這兩個條件都成立** ——
+        /// 於是 <c>MmdAvatarSwap</c> 的補建迴圈(0.25 秒一輪)會在下載開始後的下一輪就跑去解析那個
+        /// 還被寫入端鎖著的 .pmx,撞出 <c>Sharing violation</c>,然後把那隻角色標成 <c>Failed</c>
+        /// 停在 SDO 身體上(實測踩過:下載開始 0.25 秒後就 read/parse fail)。
+        /// 改名是原子的,所以「<c>.net/&lt;hex&gt;</c> 存在」永遠等於「這份模型是完整的」。
+        /// </summary>
+        public static string NetTempDirFor(string packId)
+        {
+            string dir = NetDirFor(packId);
+            return dir == null ? null : dir + PartSuffix;
+        }
+
         /// <summary>下載回來的這個 packId 該放哪(不保證存在)。算不出位置回 null。</summary>
         public static string NetDirFor(string packId)
         {

@@ -26,9 +26,65 @@ namespace Sdo.Tests
             Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("sph/eye.bmp", 1 << 18));
             Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("sph/hair.spa", 1 << 18));
             Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("toon/toon_skin.sph", 1 << 14));
-            Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("physics.ini", 4096));
+            // 作者附的 .ini 照收 —— 被擋掉的只有遊戲自己寫的那一個(見下面那條)。
+            Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("readme.ini", 4096));
             // 使用規約幾乎都在 readme.txt —— 把模型傳給別人卻把規約留下來是不對的。
             Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("readme.txt", 8192));
+        }
+
+        /// <summary>
+        /// physics.ini 是**遊戲自己寫進模型資料夾的**布料調校 —— 它不屬於模型的身分。
+        ///
+        /// 沒有這條規則的話:存過布料的人與沒存過的人手上明明是同一份模型,算出的 packId 卻不同 →
+        /// 「我明明有這個模型」還是被判定成沒有,白白再下載一份幾十 MB 的重複副本
+        /// (實測踩過,兩邊的差別就只有這一個 6 KB 的檔)。
+        /// </summary>
+        [Test]
+        public void ModelFilter_Excludes_TheGamesOwnPhysicsIni_SoTuningItDoesNotChangeThePackId()
+        {
+            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("physics.ini", 4096));
+            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("PHYSICS.INI", 4096));
+            Assert.IsFalse(ModelPackFilter.IsTransferable("physics.ini", 4096));
+
+            // 帶著它的清單要被判成不合法 —— server 收檔時跑的是同一份規則,
+            // 兩邊必須同時排除,否則 client 算的 id 與 server 重算的對不上,上傳一律被拒。
+            var bare = new List<PackFileEntry> { F("miku.pmx", 100, Sha('a')), F("textures/body.png", 50, Sha('b')) };
+            Assert.IsTrue(ModelPackId.IsValidPack(bare, out _));
+
+            var withIni = new List<PackFileEntry>(bare) { F("physics.ini", 4096, Sha('c')) };
+            string why;
+            Assert.IsFalse(ModelPackId.IsValidPack(withIni, out why));
+            StringAssert.Contains("physics.ini", why);
+        }
+
+        /// <summary>
+        /// 上一條的**端對端**版本:真的建一個模型資料夾,存一次布料調校,packId 不可以變。
+        /// 這是使用者實際踩到的那一步(掃資料夾 → 算 id),純函式那層測不到 —— 過濾發生在掃描裡。
+        /// </summary>
+        [Test]
+        public void ModelPackId_ForFolder_IsUnchanged_BySavingAPhysicsProfile()
+        {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sdo_modelpack_" + System.Guid.NewGuid().ToString("N"));
+            try
+            {
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(dir, "textures"));
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, "miku.pmx"), new byte[] { 1, 2, 3, 4 });
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, "textures", "body.png"), new byte[] { 5, 6, 7 });
+
+                string before = ModelPackId.ForFolder(dir);
+                Assert.IsNotEmpty(before, "算不出乾淨資料夾的 packId");
+
+                // 玩家在設定面板按了「儲存物理」→ 遊戲把 physics.ini 寫進模型自己的資料夾。
+                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, ModelPackFilter.GeneratedFileName), "[cloth]\ngravity=1.5\n");
+
+                Assert.AreEqual(before, ModelPackId.ForFolder(dir),
+                    "調過布料就換一個 packId → 同房的人明明有這份模型卻還是會去下載一份重複的");
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
         }
 
         [Test]

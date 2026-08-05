@@ -170,6 +170,7 @@ namespace Sdo.Osu
                     if (len > 0) s.SkippedVideoBytes += len;
                     break;
                 case PackFileVerdict.Executable: s.SkippedExecutables++; break;
+                case PackFileVerdict.Generated: s.SkippedGenerated++; break;
                 case PackFileVerdict.Archive: s.SkippedArchives++; break;
                 case PackFileVerdict.UnknownType: s.SkippedUnknown++; break;
                 case PackFileVerdict.TooBig: s.SkippedTooBig++; break;

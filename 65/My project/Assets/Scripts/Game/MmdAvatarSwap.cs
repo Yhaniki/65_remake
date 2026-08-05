@@ -54,6 +54,7 @@ namespace Sdo.Game
             public string BuiltFrom;     // 現在畫出來的這具身體是從哪個 .pmx 建的(換模型時比對用)
                                          // 🔴 是 .pmx 路徑不是資料夾:一個資料夾可以裝好幾個模型(見 MmdModelCatalog)
             public bool Shown;           // 上一次套用的結果是「畫 MMD」嗎(只有變了才寫 log)
+            public bool NotedReopen;     // 「MMD 在畫、SDO 那具卻又亮起來」已經寫過一行了(只寫一次,見 HideSdoBody)
         }
         private readonly List<Reg> _regs = new List<Reg>();
 
@@ -247,12 +248,14 @@ namespace Sdo.Game
         /// <summary>丟掉這一隻現在畫出來的 MMD 身體(SDO 驅動器不動)。換模型 / 重建時用。</summary>
         private void DropBody(Reg r)
         {
+            // SDO 那具要在 MMD 還「在」的時候恢復:Destroy 要到幀尾才生效,先丟再掃的話
+            // 這一趟會把正在被銷毀的 MMD 渲染器一起打開(見 SetSdoBodyVisible 的排除條件)。
+            if (r.Avatar != null) SetSdoBodyVisible(r, true);
             if (r.Mmd != null) Destroy(r.Mmd.gameObject);
             r.Mmd = null;
             r.BuiltFrom = null;
             r.Shown = false;   // 重建之後那一行「MMD shown」還是要出現(log 只在狀態變了才寫)
-            if (r.Avatar != null)
-                foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true)) mr.enabled = true;
+            r.NotedReopen = false;
         }
 
         /// <summary>
@@ -409,11 +412,58 @@ namespace Sdo.Game
             }
         }
 
-        /// <summary>MMD 身體正在畫的時候,把 SDO 那具(後來才長出來的部件也算)關掉。</summary>
+        /// <summary>
+        /// MMD 身體正在畫的時候,把 SDO 那具(後來才長出來的部件也算)關掉。
+        ///
+        /// 亮著的數量會被記一行 log(每隻只記一次):部件是分批長出來的(翅膀/道具在角色建好之後才掛上),
+        /// 所以**第一次**幾乎一定會抓到幾個,那是正常的。但「兩具身體疊在一起」這個回報要能分辨
+        /// 「壓不住」與「根本不是這條路的問題」—— 沒有這一行的話,兩者在 log 上長得一模一樣(都是安靜的)。
+        /// </summary>
         private static void HideSdoBody(Reg r)
         {
-            foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true))
-                if (mr.enabled) mr.enabled = false;
+            if (r.Avatar == null) return;
+            var mmdRoot = r.Mmd != null ? r.Mmd.transform : null;
+            int live = 0; string first = null;
+            foreach (var rend in r.Avatar.GetComponentsInChildren<Renderer>(true))
+            {
+                if (mmdRoot != null && rend.transform.IsChildOf(mmdRoot)) continue;
+                if (!rend.enabled) continue;
+                if (first == null) first = rend.name + "(" + rend.GetType().Name + ")";
+                live++;
+                rend.enabled = false;
+            }
+            if (live > 0 && !r.NotedReopen)
+            {
+                r.NotedReopen = true;
+                Log($"[mmd]   '{r.Avatar.name}': SDO 那具又亮了 {live} 個渲染器(第一個 {first})→ 已壓回");
+            }
+        }
+
+        /// <summary>
+        /// 開/關這一隻的 <b>SDO</b> 那具身體,回傳動到幾個渲染器。
+        ///
+        /// 🔴 <b>要抓 <see cref="Renderer"/>,不能只抓 <see cref="MeshRenderer"/>。</b>
+        /// 舊版只關 MeshRenderer,靠的是「SDO 的部件一定是 MeshRenderer」這個**沒有人保證**的隱含假設
+        /// (<see cref="SdoAvatar.AddGpuSmr"/> 就會生 SkinnedMeshRenderer,之後新增的部件也可能是別的型別)。
+        /// 那個假設一旦破掉,症狀是**兩具身體完全重合疊在一起**,而 log 還老實寫著「N 個 MeshRenderer hidden」——
+        /// 數字對、東西還在,根因完全指不到。抓 Renderer 基底就沒有這條路。
+        ///
+        /// MMD 那具自己的渲染器**必須跳過**:它是 driver 的子物件(<see cref="MmdAvatar.Build"/> 把
+        /// rootGo 掛在 driver 底下),所以同一趟 <c>GetComponentsInChildren</c> 一定會掃到它,
+        /// 不排除的話這個函式會把剛建好的 MMD 身體自己關掉。
+        /// </summary>
+        private static int SetSdoBodyVisible(Reg r, bool visible)
+        {
+            if (r.Avatar == null) return 0;
+            var mmdRoot = r.Mmd != null ? r.Mmd.transform : null;
+            int n = 0;
+            foreach (var rend in r.Avatar.GetComponentsInChildren<Renderer>(true))
+            {
+                if (mmdRoot != null && rend.transform.IsChildOf(mmdRoot)) continue;
+                rend.enabled = visible;
+                n++;
+            }
+            return n;
         }
 
         // 「外觀/物理旋鈕」有沒有變(不含模型與「看別人的」—— 那兩個要走重建那條路)。
@@ -589,14 +639,11 @@ namespace Sdo.Game
             // The portrait / preview cameras cull by LAYER, and a dancer's layer is assigned after its parts are built —
             // so keep the rig on whatever layer its driver ended up on (else the 頭貼 cam renders an empty RT).
             if (on) r.Mmd.SetLayer(r.Avatar.gameObject.layer);
-            // SDO body parts are MeshRenderers; the MMD body is a SkinnedMeshRenderer — so toggling MeshRenderers
-            // never touches the MMD mesh (and vice-versa). The SdoAvatar component keeps running as the motion driver.
-            int n = 0;
-            foreach (var mr in r.Avatar.GetComponentsInChildren<MeshRenderer>(true)) { mr.enabled = !on; n++; }
+            int n = SetSdoBodyVisible(r, !on);
             if (on) r.Mmd.SetVisible(true);
             // 只在真的變了才寫 log —— 這個函式是補建迴圈每 0.25 秒會回頭跑的。
             if (on != r.Shown)
-                Log($"[mmd]   '{r.Avatar.name}': {(on ? "MMD shown" : "SDO shown")}, {n} SDO MeshRenderer(s) {(on ? "hidden" : "shown")}");
+                Log($"[mmd]   '{r.Avatar.name}': {(on ? "MMD shown" : "SDO shown")}, {n} SDO renderer(s) {(on ? "hidden" : "shown")}");
             r.Shown = on;
             return true;
         }

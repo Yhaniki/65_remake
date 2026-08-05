@@ -25,7 +25,7 @@ namespace Sdo.Osu
         /// 可以傳的副檔名。
         /// 模型本體 <c>.pmx</c>;貼圖 <c>.png .bmp .tga .jpg .jpeg .dds</c>;
         /// MMD 的 sphere map <c>.spa</c>(加算)<c>.sph</c>(乘算)—— 內容就是 bmp/png,只是副檔名不同;
-        /// <c>.ini</c> 是模型自己的 physics.ini(布料手感,見 MmdClothProfile);
+        /// <c>.ini</c> 是模型作者可能附的設定檔(但 <see cref="GeneratedFileName"/> 那一個除外,見下);
         /// <c>.txt</c> 是使用規約/readme(見上面,故意收)。
         ///
         /// <c>.pmd</c>(舊版 MMD 格式)不在裡面 —— PmxLoader 讀不了它,傳過去對方也用不了。
@@ -80,6 +80,21 @@ namespace Sdo.Osu
         /// </summary>
         public const long MaxPmxFileBytes = NetPackLimits.MaxSingleFileBytes;
 
+        /// <summary>
+        /// **遊戲自己寫進模型資料夾的**布料調校檔(<c>MmdClothProfile.FileName</c> 的值 —— 那邊在
+        /// Sdo.Game,這裡是零依賴的底層,不能引用,所以兩邊各存一份、改一邊要記得改另一邊)。
+        ///
+        /// 🔴 <b>它絕對不能算進 packId。</b>packId 是模型在網路上的身分,而這個檔是**本機調校的產物**:
+        /// 存過布料的人與沒存過的人,手上明明是同一份模型,算出來的 id 卻不一樣 ——
+        /// 於是「我明明有這個模型」卻被判定成沒有,白白再下載一份幾十 MB 的重複副本,
+        /// 而且畫面上完全看不出為什麼(實測踩過:差別就只有這一個 6 KB 的檔)。
+        ///
+        /// 傳給別人也不對:布料參數是從**對方的** mmdScale / 重力 / 碰撞半徑推出來的,
+        /// 搬到別台機器上未必是作者調好的那個手感。收端沒有它就從 .pmx 自己轉換一份,
+        /// 這正是 <see cref="PackFileVerdict.Generated"/> 的語意。
+        /// </summary>
+        public const string GeneratedFileName = "physics.ini";
+
         /// <summary>只看路徑與副檔名的判定(不需要知道檔案大小)。</summary>
         public static PackFileVerdict ClassifyPath(string relPath)
         {
@@ -87,6 +102,8 @@ namespace Sdo.Osu
             if (SongPackFilter.Depth(relPath) > MaxDepth) return PackFileVerdict.TooDeep;
 
             string name = SongPackFilter.FileNameOf(relPath);
+            if (string.Equals(name, GeneratedFileName, StringComparison.OrdinalIgnoreCase))
+                return PackFileVerdict.Generated;
             string ext = SongPackFilter.ExtensionOf(name);
             if (Has(Videos, ext)) return PackFileVerdict.Video;
             if (Has(Executables, ext)) return PackFileVerdict.Executable;
