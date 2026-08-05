@@ -38,8 +38,13 @@ namespace Sdo.Game
         public sealed class Entry
         {
             public string Name;      // display name, e.g. "IkaHatunemiku2025"
-            public string Dir;       // folder holding the .pmx (also the texture base dir)
+            public string Dir;       // folder holding the .pmx (the texture base dir)
             public string PmxPath;   // the .pmx to load
+            /// <summary>使用者丟進來的那一包的根資料夾(<c>MODEL/&lt;包名&gt;</c>)。貼圖在 <see cref="Dir"/> 底下
+            /// 找不到時,會退到整包裡照檔名找 —— 組立キット 型的包會把 .pmx 和貼圖分在不同的樹枝上
+            /// (十六夜咲夜:.pmx 在 <c>01-モデル/角色/</c>,28 張貼圖全在隔壁的 <c>02-共通テクスチャ/</c>,
+            /// 而 PMX 裡寫的是**純檔名沒有目錄**)。見 <see cref="MmdAvatar"/> 的 ResolvePath。</summary>
+            public string Root;
             public override string ToString() => Name;
         }
 
@@ -123,12 +128,13 @@ namespace Sdo.Game
             {
                 // 單模型的包:名字＝**放著那個 .pmx 的資料夾**名(與舊行為一字不差 —— 解出來是
                 // MODEL/pack/miku/miku.pmx 時叫 "miku",不是 "pack")。
-                Add(found, seen, LeafName(DirOf(candidates[0])), candidates[0]);
+                Add(found, seen, LeafName(DirOf(candidates[0])), candidates[0], dropDir);
                 return;
             }
             // 一包好幾個模型 → 各自用自己的 .pmx 檔名;檔名撞了就補上層資料夾名,再撞就編號。
             var stems = new List<string>(candidates.Count);
             foreach (var p in candidates) stems.Add(Path.GetFileNameWithoutExtension(p));
+            stems = ShortenNames(stems);
             var names = new List<string>(stems);
             // 撞名要照**原始檔名**數,不能邊改邊數 —— 改掉第一個之後第二個就只剩自己一份了。
             for (int i = 0; i < candidates.Count; i++)
@@ -139,8 +145,55 @@ namespace Sdo.Game
             {
                 string unique = names[i];
                 for (int n = 2; !localSeen.Add(unique); n++) unique = names[i] + " (" + n + ")";
-                Add(found, seen, unique, candidates[i]);
+                Add(found, seen, unique, candidates[i], dropDir);
             }
+        }
+
+        /// <summary>
+        /// 把一組檔名縮短成看得完的顯示名:砍掉**結尾那一整組括號**。MMD 模型的檔名很愛把整套穿搭寫進括號
+        /// (「RQ01_十六夜咲夜Ver2.20_Type-A(ダンス_帽子_ポニテA_チューブトップ_ボレロ_ショーパン_ピンヒール)」
+        /// —— 60 個字,設定面板一列只放得下十幾個)。
+        ///
+        /// <b>只有在砍完仍然彼此不同的時候才砍</b>:同一包裡若有兩個模型只差在括號內容(同一角色的兩套穿搭),
+        /// 砍掉就分不出來了,那寧可留長的。全形括號()與半形()都認。
+        /// </summary>
+        public static List<string> ShortenNames(List<string> stems)
+        {
+            if (stems == null || stems.Count == 0) return stems;
+            var shortened = new List<string>(stems.Count);
+            bool any = false;
+            foreach (var s in stems)
+            {
+                string t = StripTrailingParenthetical(s);
+                if (t != s) any = true;
+                shortened.Add(t);
+            }
+            if (!any) return stems;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in shortened) if (!seen.Add(s)) return stems;   // 砍完撞名 → 整組留原樣
+            return shortened;
+        }
+
+        /// <summary>結尾是 <c>(…)</c> 或 <c>(…)</c> 就把那一整組拿掉(砍完是空的就不砍)。</summary>
+        public static string StripTrailingParenthetical(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            string t = s.TrimEnd();
+            if (t.Length < 3) return s;
+            char close = t[t.Length - 1];
+            char open = close == ')' ? '(' : close == '）' ? '（' : '\0';
+            if (open == '\0') return s;
+            int depth = 0;
+            for (int i = t.Length - 1; i >= 0; i--)
+            {
+                if (t[i] == close) depth++;
+                else if (t[i] == open && --depth == 0)
+                {
+                    string head = t.Substring(0, i).TrimEnd(' ', '_', '-');
+                    return head.Length > 0 ? head : s;
+                }
+            }
+            return s;
         }
 
         private static int CountOf(List<string> names, string want)
@@ -152,10 +205,10 @@ namespace Sdo.Game
 
         // 同一個名字已經有人佔了(比較前面的 root、或同一個 root 比較前面的一包)→ 那一份遮住這一份,
         // 這正是「開發樹的模型蓋過打包進去的同名模型」靠的規則。
-        private static void Add(List<Entry> found, HashSet<string> seen, string name, string pmx)
+        private static void Add(List<Entry> found, HashSet<string> seen, string name, string pmx, string root)
         {
             if (!seen.Add(name)) return;
-            found.Add(new Entry { Name = name, Dir = DirOf(pmx), PmxPath = pmx });
+            found.Add(new Entry { Name = name, Dir = DirOf(pmx), PmxPath = pmx, Root = root });
         }
 
         // 這一包底下所有的 .pmx(含子資料夾,最多 maxDepth 層)。順序固定(依路徑排序),與檔案系統的列舉順序無關。

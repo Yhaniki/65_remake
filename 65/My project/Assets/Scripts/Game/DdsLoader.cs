@@ -632,7 +632,29 @@ namespace Sdo.Game
             return flipped;
         }
 
-        public static Texture2D LoadTga(byte[] d)
+        /// <summary>SDO 慣例的 TGA(見 <see cref="LoadTga(byte[], bool, bool)"/>)。</summary>
+        public static Texture2D LoadTga(byte[] d) => LoadTga(d, sdoRowOrder: true);
+
+        /// <summary>
+        /// TGA → Texture2D。<paramref name="sdoRowOrder"/> 決定**上下方向**,而這個專案裡有兩種需求:
+        ///
+        /// <list type="bullet">
+        /// <item><c>true</c>(SDO 原生素材,預設):圖的**上緣**放在 <c>SetPixels32</c> 的第 0 列,也就是 Unity
+        /// 取樣時的**下**緣。SDO 自己的美術與 UV 是 D3D 慣例(V=0 在上),整條管線(<see cref="Load(byte[])"/>、
+        /// <c>ScreenGameplay.Effects</c> 的四邊形、<c>SdoAvatarBuilder</c>)都建立在這個方向上。</item>
+        /// <item><c>false</c>(外來素材,例如 MMD 模型):與 Unity 自己的 <c>Texture2D.LoadImage</c>(PNG/JPG)
+        /// **一模一樣**的方向。</item>
+        /// </list>
+        ///
+        /// 🔴 兩者差一個上下翻轉,而且一定要分開:MMD 模型的貼圖是 PNG 與 TGA 混著用的(LaplusDarknesss 的
+        /// 頭髮是 .png、臉/身體/眼睛/皮膚是 .tga),同一具身體上如果兩條解碼路徑方向不同,畫面就是
+        /// **一部分正、一部分上下顛倒** —— 而且它跟 UV 沒有關係,調 <c>mmdFlipV</c> 只會把正的那部分也弄反。
+        ///
+        /// <paramref name="readable"/>：解完之後還要不要留著 CPU 那一份。SDO 自己的素材不留(省記憶體，
+        /// 而且它們解完就只是拿去畫)；MMD 模型要留 —— <see cref="MmdAvatar"/> 得逐材質統計貼圖的 alpha
+        /// 才分得出不透明/裁切/半透明，那是 <c>GetPixels32</c>，貼圖不可讀就整個統計不到（悄悄全判成不透明）。
+        /// </summary>
+        public static Texture2D LoadTga(byte[] d, bool sdoRowOrder, bool readable = false)
         {
             if (d == null || d.Length < 18) return null;
             int idLen = d[0], cmapType = d[1], imgType = d[2];
@@ -677,13 +699,18 @@ namespace Sdo.Game
                 }
             }
             var px = new Color32[total];
+            // lin 是「檔案裡的列序」:topLeft 的檔第 0 列是圖的上緣,否則第 0 列是圖的下緣。
+            // 要放到 SetPixels32 的哪一列,就看呼叫端要哪一種方向(見上面的 sdoRowOrder)。
+            bool linRow0IsImageTop = topLeft;
+            bool wantRow0Top = sdoRowOrder;
+            bool reverse = linRow0IsImageTop != wantRow0Top;
             for (int y = 0; y < h; y++)
             {
-                int dst = (topLeft ? y : (h - 1 - y)) * w;
+                int dst = (reverse ? (h - 1 - y) : y) * w;
                 Array.Copy(lin, y * w, px, dst, w);
             }
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
-            tex.SetPixels32(px); tex.Apply(false, true);
+            tex.SetPixels32(px); tex.Apply(false, !readable);
             return tex;
         }
 

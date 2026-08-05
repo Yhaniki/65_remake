@@ -386,6 +386,18 @@ namespace Sdo.Game
             foreach (var cl in _cloths) if (cl != null) cl.SetParameterChange();
         }
 
+        /// <summary>
+        /// 把每一片布料的模擬**重設到目前這一幀的姿勢** —— 粒子直接貼到骨頭現在的位置,不留任何速度。
+        ///
+        /// 用在「剛建好 / 剛顯示出來」的那幾幀:布料是在骨架還停在 .pmx rest 姿勢時建起來的,粒子的初始位置
+        /// 因此是 rest 的位置;下一幀重定向才把身體擺成當下的動作。差出來的那一段會被布料當成「身體瞬間移動了」
+        /// → 頭髮/裙擺從半空中盪下來,要一秒多才收斂。畫面上就是「一進房間頭髮先垂一次」。
+        /// </summary>
+        public void ResetToCurrentPose()
+        {
+            foreach (var c in _cloths) if (c != null) c.ResetCloth();
+        }
+
         private static Vector3 MmdBonePos(PmxLoader pmx, string nameJp) { foreach (var b in pmx.Bones) if (b.NameJp == nameJp) return b.Position; return Vector3.zero; }
         private static int Find(PmxLoader pmx, string nameJp) { for (int i = 0; i < pmx.Bones.Count; i++) if (pmx.Bones[i].NameJp == nameJp) return i; return -1; }
     }

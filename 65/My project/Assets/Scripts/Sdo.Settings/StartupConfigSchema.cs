@@ -221,6 +221,9 @@ namespace Sdo.Settings
             "opt_cameraFixed",
             // 房間右側面板 / 選歌畫面
             "defaultSpeed", "defaultNoteType", "defaultTeam", "defaultDropDirection", "defaultGameMode", "defaultScene",
+            // 不給 UI：MMD 的這四個一律是開的（模型該長的樣子 / 人要動得對的前提），關掉只在對照
+            // 「哪一邊才對」時才有意義 —— 那是開發用的，不是玩家設定。值仍在 config.ini，可以手改。
+            "mmdSphere", "mmdFlipV", "mmdAim", "mmdRootMotion",
         };
 
         private static List<ConfigField> Build()
@@ -493,9 +496,9 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "mmdLilToon", Category = CatMmd, Label = "lilToon 卡通渲染", Kind = ConfigFieldKind.Toggle,
-                Help = "關(預設)＝照 MMD 原本的畫法（unlit、模型自帶的 toon ramp 直接貼、純色鉛筆描邊）。"
-                     + "開＝改用 lilToon 著色：兩段式 cel 陰影、邊緣光、描邊會跟著明暗變色，也就是「原神那一類」的取向。"
+                Key = "mmdLilToon", Category = CatMmd, Label = "lilToon 渲染", Kind = ConfigFieldKind.Toggle,
+                Help = "開(預設)＝用 lilToon 著色：有光照、邊緣光、描邊會跟著明暗變色。"
+                     + "關＝照 MMD 原本的畫法（unlit、模型自帶的 toon ramp 直接貼、純色鉛筆描邊）。"
                      + "★這是換一整套著色，不是加效果 —— 開/關會重建身體。"
                      + "★注意 lilToon 吃光照，開了會自動補一顆平行光（其它東西全是 unlit，不受影響）。",
                 Get = () => B(RoomConfig.mmdLilToon), Set = v => RoomConfig.mmdLilToon = ParseBool(v),
@@ -503,8 +506,8 @@ namespace Sdo.Settings
             f.Add(new ConfigField
             {
                 Key = "mmdToon", Category = CatMmd, Label = "卡通著色", Kind = ConfigFieldKind.Toggle,
-                Help = "MMD 的 toon ramp（明暗只分兩段的卡通上色）。關＝一般平光。"
-                     + "★開著 lilToon 時這一格改成管 lilToon 的 cel 陰影（關＝沒有陰影分界，整片平光）。",
+                Help = "明暗只分兩段的卡通上色（開著 lilToon 時＝它的 cel 陰影分界）。"
+                     + "關(預設)＝平光；舞台燈光會在臉上切出很硬的一條分界，所以預設不開。",
                 Get = () => B(RoomConfig.mmdToon), Set = v => RoomConfig.mmdToon = ParseBool(v),
             });
             f.Add(new ConfigField
@@ -513,30 +516,11 @@ namespace Sdo.Settings
                 Help = "模型自帶的鉛筆描邊（edge）。關＝沒有黑邊。",
                 Get = () => B(RoomConfig.mmdOutline), Set = v => RoomConfig.mmdOutline = ParseBool(v),
             });
-            f.Add(new ConfigField
-            {
-                Key = "mmdSphere", Category = CatMmd, Label = "sphere 反光", Kind = ConfigFieldKind.Toggle,
-                Help = "模型自帶的 sphere map（眼睛/金屬的環境反光）。關＝反光整個不畫。",
-                Get = () => B(RoomConfig.mmdSphere), Set = v => RoomConfig.mmdSphere = ParseBool(v),
-            });
-            f.Add(new ConfigField
-            {
-                Key = "mmdFlipV", Category = CatMmd, Label = "貼圖 V 翻轉", Kind = ConfigFieldKind.Toggle,
-                Help = "PMX 的 UV 是 V 向下、Unity 是 V 向上，所以預設開。★某個模型的貼圖上下顛倒（領帶最容易看出來）就關這個。",
-                Get = () => B(RoomConfig.mmdFlipV), Set = v => RoomConfig.mmdFlipV = ParseBool(v),
-            });
-            f.Add(new ConfigField
-            {
-                Key = "mmdAim", Category = CatMmd, Label = "aim 重定向", Kind = ConfigFieldKind.Toggle,
-                Help = "用「骨頭指向」對齊手腳（開，預設）＝不怕 SDO 與 MMD 的待機姿勢不同。關＝改用整個世界旋轉差的對照模式，姿勢會歪，只在比對哪邊對時才關。",
-                Get = () => B(RoomConfig.mmdAim), Set = v => RoomConfig.mmdAim = ParseBool(v),
-            });
-            f.Add(new ConfigField
-            {
-                Key = "mmdRootMotion", Category = CatMmd, Label = "根骨位移", Kind = ConfigFieldKind.Toggle,
-                Help = "把 SDO 根骨的平移也帶給模型（開，預設）。關＝人原地跳、不會前進/浮沉。",
-                Get = () => B(RoomConfig.mmdRootMotion), Set = v => RoomConfig.mmdRootMotion = ParseBool(v),
-            });
+
+            // 🔴 mmdSphere / mmdFlipV / mmdAim / mmdRootMotion 刻意**不放上面板**（列在 CoveredElsewhere 的
+            //    「不給 UI」那一段）。它們一律是開的：sphere 反光與 V 翻轉是模型該長的樣子，aim 重定向與根骨
+            //    位移是「人要動得對」的前提。關掉只有在對照「哪一邊才對」時才有意義，那是開發用的，不是設定。
+            //    要關還是可以手改 config.ini —— 值都還在，只是不佔面板一列。
 
             return f;
         }

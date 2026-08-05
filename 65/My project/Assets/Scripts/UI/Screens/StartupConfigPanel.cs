@@ -30,6 +30,13 @@ namespace Sdo.UI.Screens
         public const float ExpandedH = 502f;
         private const float RowH = 18f, LabelW = 104f, ValueW = 54f, ListH = 314f, HelpH = 52f, Pad = 5f;
         private const float ValueEntryW = 40f, UnitW = 17f;
+        /// <summary>◀ 值 ▶ 那一格的**固定**寬度。
+        ///
+        /// 🔴 一定要是固定寬,不能只靠 <c>clipping = Clip</c> + <c>ExpandWidth</c>:GUILayout 排版時看的是
+        /// 樣式算出來的內容寬度,<c>Clip</c> 只影響「畫」不影響「排」。選項字串是執行期才知道的(MMD 模型名
+        /// ＝ .pmx 檔名,可以長到 40 幾個字),於是那一列會把整張表撐得比面板還寬 → 冒出橫向捲軸、每一列的
+        /// 標籤欄跟著被推出畫面外。釘死寬度之後,過長的名字就只是被裁掉。</summary>
+        private const float ChoiceW = PanelW - LabelW - 2f * Pad - 16f - 46f;
 
         /// <summary>體型（胖瘦）index 0..4 的名稱。對應 <c>SdoBodyShape.WeightFromIndex</c>：1＝標準(×1.0)。</summary>
         private static readonly string[] BodyShapeNames = { "瘦", "標準", "微胖", "胖", "很胖" };
@@ -182,7 +189,11 @@ namespace Sdo.UI.Screens
         private void DrawRows()
         {
             _byTab ??= BuildTabs();
-            _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.Height(ListH));
+            // 只有直的捲軸。橫的一旦出現就代表某一列把版面撐寬了(MMD 模型名可以很長),那時整張表會被推著
+            // 左右跑、每一列的標籤都對不上 —— 寧可讓那一列自己被裁掉,見 ChoiceW。
+            _scroll = GUILayout.BeginScrollView(_scroll, false, true,
+                                                GUIStyle.none, GUI.skin.verticalScrollbar, GUI.skin.scrollView,
+                                                GUILayout.Height(ListH));
             foreach (var f in _byTab[Mathf.Clamp(_tab, 0, _byTab.Length - 1)]) DrawField(f);
             GUILayout.EndScrollView();
         }
@@ -271,12 +282,12 @@ namespace Sdo.UI.Screens
             GUILayout.Label(f.Unit ?? "", _unit, GUILayout.Width(UnitW));
         }
 
-        // ◀ 值 ▶。值那格**一定要 Clip + ExpandWidth**：選項是執行期才知道的（MMD 模型＝資料夾名，可以很長），
-        // 讓 Label 用自己的偏好寬度的話，長名字會把 ▶ 擠出面板外面按不到。
+        // ◀ 值 ▶。值那格是**固定寬 + Clip**（理由見 ChoiceW）：選項字串是執行期才知道的，讓 Label 用自己的
+        // 偏好寬度的話，長名字會把整張表撐寬、▶ 被擠出面板外面按不到。
         private void DrawChoice(ConfigField f)
         {
             if (GUILayout.Button("◀", GUILayout.Width(20f), GUILayout.Height(RowH))) f.StepChoice(-1);
-            GUILayout.Label(f.ChoiceText(), _choice, GUILayout.ExpandWidth(true), GUILayout.Height(RowH));
+            GUILayout.Label(f.ChoiceText(), _choice, GUILayout.Width(ChoiceW), GUILayout.Height(RowH));
             if (GUILayout.Button("▶", GUILayout.Width(20f), GUILayout.Height(RowH))) f.StepChoice(1);
         }
 

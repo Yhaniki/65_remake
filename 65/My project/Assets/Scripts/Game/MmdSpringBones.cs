@@ -108,6 +108,10 @@ namespace Sdo.Game
 
         private void OnEnable() { _needsSeed = true; _acc = 0f; }   // re-settle after a hide/show (no stale-state fling)
 
+        /// <summary>把彈簧狀態重設到骨頭現在的位置(速度歸零)。<see cref="MmdAvatar"/> 在剛建好/剛顯示出來的
+        /// 那幾幀呼叫,免得頭髮從 .pmx rest 姿勢盪到當下的動作姿勢 —— 見那邊的 <c>_settleFrames</c>。</summary>
+        public void ResetToCurrentPose() { _needsSeed = true; _acc = 0f; }
+
         private void SeedRest()
         {
             foreach (int i in _order) { Vector3 t = RestTail(i); _prevTail[i] = t; _curTail[i] = t; _lastHead[i] = _bone[i].position; }

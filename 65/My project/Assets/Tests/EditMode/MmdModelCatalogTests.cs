@@ -111,6 +111,22 @@ namespace Sdo.Tests
             CollectionAssert.AreEqual(new[] { "koakuma", "meiling", "sakuya" }, Names(models));
             Assert.AreEqual("/M/pack/sakuya.pmx", models[2].PmxPath);
             Assert.AreEqual("/M/pack", models[2].Dir, "貼圖基準資料夾 = 放著那個 .pmx 的資料夾");
+            Assert.AreEqual("/M/pack", models[2].Root, "整包的根 = 使用者丟進來的那個資料夾（貼圖找不到時的搜尋範圍）");
+        }
+
+        [Test]
+        public void EntryRoot_IsTheWholeDrop_NotThePmxFolder()
+        {
+            // 組立キット 型的包會把 .pmx 和貼圖分在不同的樹枝上（.pmx 在 01-モデル/角色/，貼圖在
+            // 02-共通テクスチャ/），而 PMX 裡寫的是純檔名 → 貼圖只有靠「整包裡照檔名找」才找得到。
+            var models = new Fs()
+                .File("/M/RQ/01-model/sakuya/x.pmx")
+                .File("/M/RQ/02-tex/face.png")
+                .Scan("/M");
+
+            Assert.AreEqual(1, models.Count);
+            Assert.AreEqual("/M/RQ/01-model/sakuya", models[0].Dir);
+            Assert.AreEqual("/M/RQ", models[0].Root);
         }
 
         [Test]
@@ -138,6 +154,39 @@ namespace Sdo.Tests
                 .Scan("/M");
 
             CollectionAssert.AreEqual(new[] { "a / model", "b / model" }, Names(models));
+        }
+
+        // ---------------------------------------------------------------- 顯示名要看得完
+
+        [TestCase("RQ01_十六夜咲夜Ver2.20_Type-A(ダンス_帽子_ポニテA_チューブトップ_ボレロ_ショーパン_ピンヒール)",
+                  "RQ01_十六夜咲夜Ver2.20_Type-A")]
+        [TestCase("模型名（全形括號的說明）", "模型名")]
+        [TestCase("巢狀(外(內))", "巢狀")]
+        [TestCase("沒有括號", "沒有括號")]
+        [TestCase("(整個都是括號)", "(整個都是括號)")]   // 砍完是空的 → 不砍
+        [TestCase("", "")]
+        public void StripTrailingParenthetical_CutsTheOutfitDescription(string stem, string expected)
+        {
+            Assert.AreEqual(expected, MmdModelCatalog.StripTrailingParenthetical(stem));
+        }
+
+        [Test]
+        public void ShortenNames_KeepsTheLongFormWhenCuttingWouldMakeThemAmbiguous()
+        {
+            // 同一個角色的兩套穿搭:差別**只在括號裡** → 砍掉就分不出來了,整組留原樣。
+            var stems = new List<string> { "Sakuya(帽子_ポニテA)", "Sakuya(帽子_ボブ)" };
+            CollectionAssert.AreEqual(stems, MmdModelCatalog.ShortenNames(new List<string>(stems)));
+        }
+
+        [Test]
+        public void ModelNamesAreShortenedOnThePanel()
+        {
+            var models = new Fs()
+                .File("/M/kit/a/RQ01_Sakuya(帽子_ポニテA_ショーパン).pmx")
+                .File("/M/kit/b/RQ03_Koakuma(帽子_ボブ_タイトミニ).pmx")
+                .Scan("/M");
+
+            CollectionAssert.AreEqual(new[] { "RQ01_Sakuya", "RQ03_Koakuma" }, Names(models));
         }
 
         // ---------------------------------------------------------------- 埋得很深的包
@@ -268,6 +317,55 @@ namespace Sdo.Tests
                 Assert.IsTrue(System.IO.Directory.Exists(m.Dir), "texture dir missing: " + m.Dir);
                 Assert.IsNotEmpty(m.Name);
             }
+        }
+
+        /// <summary>
+        /// 真實資料:PMX 引用的貼圖只要**檔案在那一包裡**,就一定要找得到。
+        ///
+        /// 假的檔案系統測不到這一段 ——「組立キット」型的包會把 .pmx 和貼圖分在完全不同的樹枝上,而且 PMX 裡
+        /// 寫的是純檔名沒有目錄(十六夜咲夜:.pmx 在 <c>01-モデル/角色/</c>,貼圖在隔壁的
+        /// <c>02-共通テクスチャ/</c>),照字面找會全部落空 → 模型讀得到但整隻沒有貼圖。
+        ///
+        /// 🔴 斷言刻意是「在包裡就要找得到」而不是「每一張都要找得到」:有些包本來就沒附齊。十六夜咲夜的
+        /// RQスタイル 是**追加包**,臉/眼/皮膚/頭髮/toon 那些是共用本體模型的,它的 zip 裡根本沒有那些檔
+        /// (實測 28 張裡有 22 張不在包內)。那是資料不全,不是程式錯 —— 這個測試不該替使用者的下載內容背書。
+        /// </summary>
+        [Test]
+        public void RealDisk_TexturesPresentInThePackAreAlwaysFound_WhenInstalled()
+        {
+            var models = MmdModelCatalog.Discover(new List<string>(MmdAvatarSwap.ModelRoots()));
+            if (models.Count == 0) Assert.Ignore("no MMD model installed");
+
+            var broken = new List<string>();
+            foreach (var m in models)
+            {
+                var pmx = PmxLoader.Load(System.IO.File.ReadAllBytes(m.PmxPath));
+                if (pmx?.TexturePaths == null) continue;
+                var inPack = FileNamesUnder(m.Root);
+                foreach (var rel in pmx.TexturePaths)
+                {
+                    if (string.IsNullOrEmpty(rel)) continue;
+                    string file = System.IO.Path.GetFileName(rel.Replace('\\', '/'));
+                    if (!inPack.Contains(file)) continue;                       // 包裡本來就沒有 → 不是程式的事
+                    if (MmdAvatar.ResolveTexturePath(m.Dir, rel, m.Root) == null)
+                        broken.Add($"{m.Name}: '{rel}' 在包裡有檔案卻解析不到");
+                }
+            }
+
+            Assert.IsEmpty(broken, "貼圖明明在包裡卻找不到:\n  " + string.Join("\n  ", broken));
+        }
+
+        private static HashSet<string> FileNamesUnder(string root)
+        {
+            var set = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(root)) return set;
+            try
+            {
+                foreach (var f in System.IO.Directory.GetFiles(root, "*", System.IO.SearchOption.AllDirectories))
+                    set.Add(System.IO.Path.GetFileName(f));
+            }
+            catch { }
+            return set;
         }
 
         [Test]

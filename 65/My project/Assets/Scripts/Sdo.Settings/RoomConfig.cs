@@ -136,14 +136,18 @@ namespace Sdo.Settings
         // 這是兩件事：我想不想變成 MMD、我想不想看到別人的 MMD。關掉 → 別人一律是他的 SDO 穿搭，
         // 而且完全不會去下載別人的模型（零流量、零磁碟）。
         public static bool mmdShowOthers = true;
-        // 著色後端：關(預設)＝Sdo/MmdModel，MMD 固定管線的忠實移植（unlit、ramp 直接貼、鉛筆描邊）；
-        // 開＝lilToon（Assets/lilToon，MIT），兩段式 cel 陰影＋邊緣光＋吃光照的描邊，也就是「原神那一類」的取向。
+        // 著色後端：開(預設)＝lilToon（Assets/lilToon，MIT），有光照、邊緣光、描邊會跟著明暗變色；
+        // 關＝Sdo/MmdModel，MMD 固定管線的忠實移植（unlit、ramp 直接貼、純黑鉛筆描邊）。
         // 換值要重建身體（材質是整個模型共用的），由 MmdAvatarSwap 處理。
-        public static bool mmdLilToon = false;
-        public static bool mmdToon = true;          // 卡通著色（toon ramp）
+        public static bool mmdLilToon = true;
+        // 陰影分界。預設關：lilToon 的兩段式 cel 分界在舞台的動態燈光下會在臉上切出很硬的一條線，
+        // 平光比較耐看；要卡通分界感的人自己在 config.ini 打開。
+        public static bool mmdToon = false;         // 卡通著色（toon ramp / lilToon 的 cel 陰影）
         public static bool mmdOutline = true;       // 描邊（pencil edge）
-        public static bool mmdSphere = true;        // sphere 反光貼圖
         public static bool mmdPhysics = true;       // 頭髮/裙擺布料模擬
+        // ↓ 這四個沒有 UI（見 StartupConfigSchema.CoveredElsewhere 的「不給 UI」那一段）：它們一律是開的，
+        //   關掉只有在對照「哪一邊才對」的時候才有意義，不是給玩家調的。要關就手改 config.ini。
+        public static bool mmdSphere = true;        // sphere 反光貼圖
         public static bool mmdAim = true;           // aim 重定向（手腳姿勢；關＝改用 world-delta 對照模式）
         public static bool mmdRootMotion = true;    // 根骨位移（走路時整個人前進）
         public static bool mmdFlipV = true;         // 貼圖 V 翻轉（PMX 的 UV 是 V 向下；某些模型的貼圖要關掉才對）

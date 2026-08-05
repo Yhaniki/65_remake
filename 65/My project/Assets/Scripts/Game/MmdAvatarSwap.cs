@@ -148,13 +148,13 @@ namespace Sdo.Game
             float frameStart = Time.realtimeSinceStartup;
             for (int i = 0; i < n; i++)
             {
-                if (!MmdAvatar.PrewarmTexture(pmx, Sel.Dir, i)) break;
+                if (!MmdAvatar.PrewarmTexture(pmx, Sel.Dir, i, Sel.Root)) break;
                 if ((Time.realtimeSinceStartup - frameStart) * 1000f < PrewarmBudgetMs) continue;
                 yield return null;
                 frameStart = Time.realtimeSinceStartup;
                 frames++;
             }
-            MmdAvatar.Prewarm(pmx, Sel.Dir);   // 材質 + mesh(貼圖此時全在快取裡)
+            MmdAvatar.Prewarm(pmx, Sel.Dir, Sel.Root);   // 材質 + mesh(貼圖此時全在快取裡)
             Log($"[mmd] prewarm 完成 ({(Time.realtimeSinceStartup - t0) * 1000f:F0} ms, {n} 張貼圖分 {frames} 幀解碼) — " +
                 "之後每隻舞者只付自己的骨架/布料(實測 ~11 ms)");
         }
@@ -403,7 +403,7 @@ namespace Sdo.Game
                 if (r.Mmd != null) { if (probe) HideSdoBody(r); continue; }
                 if (r.Failed || !r.Avatar.gameObject.activeInHierarchy) continue;
                 if (r.Remote && !probe) continue;  // 遠端那條要 Directory.Exists → 節流(本機那條每幀都跑)
-                ResolveModel(r, out _, out string want);
+                ResolveModel(r, out _, out string want, out _);
                 if (want == null) continue;        // 沒東西可建(沒選模型 / 別人沒穿 / 他的模型還沒到)
                 Apply(r);
             }
@@ -561,8 +561,8 @@ namespace Sdo.Game
         private bool Apply(Reg r)
         {
             if (r.Avatar == null) return false;
-            string dir = null, pmxPath = null;
-            if (!r.Failed) ResolveModel(r, out dir, out pmxPath);
+            string dir = null, pmxPath = null, root = null;
+            if (!r.Failed) ResolveModel(r, out dir, out pmxPath, out root);
 
             // 已經畫著的身體不是現在該畫的那一份(換了模型 / 別人換了 / 關掉了)→ 丟掉,下面重建或就此回 SDO。
             if (r.Mmd != null && (pmxPath == null || !string.Equals(r.BuiltFrom, pmxPath, StringComparison.OrdinalIgnoreCase)))
@@ -579,7 +579,7 @@ namespace Sdo.Game
                 else
                 {
                     // 布料是建一隻 rig 最貴的一段 → 設定關掉布料時就整組不建(不是建了再關),換場景才會明顯變快。
-                    r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics);
+                    r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics, root);
                     if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); pmxPath = null; }
                     else { r.BuiltFrom = pmxPath; ApplyOptsTo(r.Mmd); }
                 }
@@ -629,9 +629,9 @@ namespace Sdo.Game
         /// 是「還沒到」,他就先維持自己的 SDO 穿搭(絕不拿本機選的模型頂上去:那會讓同房沒穿 MMD 的人
         /// 全變成我的模型)。
         /// </summary>
-        private static void ResolveModel(Reg r, out string dir, out string pmxPath)
+        private static void ResolveModel(Reg r, out string dir, out string pmxPath, out string root)
         {
-            dir = null; pmxPath = null;
+            dir = null; pmxPath = null; root = null;
             switch (SourceOf(r))
             {
                 case MmdSource.RemoteModel:
@@ -641,13 +641,13 @@ namespace Sdo.Game
                     try { p = MmdModelCatalog.PickPmx(Directory.GetFiles(d)); }
                     catch { p = null; }
                     if (p == null) return;
-                    dir = d; pmxPath = p;
+                    dir = d; pmxPath = p; root = d;   // 下載回來的一包就是一個模型,整包都可以拿來找貼圖
                     return;
 
                 case MmdSource.LocalModel:
                     var e = Sel;
                     if (e == null || string.IsNullOrEmpty(e.PmxPath)) return;
-                    dir = e.Dir; pmxPath = e.PmxPath;
+                    dir = e.Dir; pmxPath = e.PmxPath; root = e.Root;
                     return;
             }
         }

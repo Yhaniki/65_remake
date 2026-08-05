@@ -111,6 +111,15 @@ namespace Sdo.Game
         private bool _visible = true, _physicsOn = true;   // physics runs only when BOTH hold (independent toggles)
         private bool _ready;
 
+        /// <summary>剛建好/剛顯示出來時,要把布料黏在動作姿勢上幾幀(見 <see cref="_settleFrames"/>)。
+        /// 3 幀就夠:第 1 幀重定向把身體擺到當下的動作,第 2、3 幀吸收驅動器自己那一兩幀的暖機
+        /// (走路的角色第一幀的根位移還沒算出來)。</summary>
+        private const int SettleFrames = 3;
+
+        /// <summary>還要把布料重設到當前姿勢幾幀。&gt;0 的期間頭髮/裙擺完全不模擬,就貼在骨頭上 ——
+        /// 所以「進房間的第一眼」看到的就是已經垂好的樣子,不是從半空盪下來的過程。</summary>
+        private int _settleFrames;
+
         /// <summary>Is the MMD body currently the one being drawn (vs the native SDO body)?</summary>
         public bool Visible => _visible && _ready;
 
@@ -125,7 +134,8 @@ namespace Sdo.Game
         /// <summary><paramref name="cloth"/> false builds the rig with NO hair/skirt simulation — the physics bones just
         /// hold their styled rest pose and ride the head. That is what the head portraits (room 頭貼 / 結算頭貼) use: at
         /// that size the sway is invisible, and a cloth solver per rig is the most expensive part of a build.</summary>
-        public static MmdAvatar Build(SdoAvatar driver, PmxLoader pmx, string textureDir, int layer, bool cloth = true)
+        public static MmdAvatar Build(SdoAvatar driver, PmxLoader pmx, string textureDir, int layer, bool cloth = true,
+                                      string searchRoot = null)
         {
             if (driver == null || driver.Hrc == null || pmx == null || pmx.Bones.Count == 0 || pmx.VertexCount == 0)
                 return null;
@@ -134,12 +144,12 @@ namespace Sdo.Game
             var self = rootGo.AddComponent<MmdAvatar>();
             self.Driver = driver;
             self._mmdRoot = rootGo.transform;
-            try { self.Construct(pmx, textureDir, layer, cloth); }
+            try { self.Construct(pmx, textureDir, layer, cloth, searchRoot); }
             catch (Exception e) { Debug.LogWarning("[mmd] build fail: " + e.Message + "\n" + e.StackTrace); UnityEngine.Object.Destroy(rootGo); return null; }
             return self;
         }
 
-        private void Construct(PmxLoader pmx, string textureDir, int layer, bool cloth)
+        private void Construct(PmxLoader pmx, string textureDir, int layer, bool cloth, string searchRoot)
         {
             float t0 = Time.realtimeSinceStartup;
             int bc = pmx.Bones.Count;
@@ -189,7 +199,7 @@ namespace Sdo.Game
             _mmdRoot.localPosition = new Vector3(0f, feetY - minY * _unitScale, 0f);
 
             // ---- mesh + materials: SHARED across every rig of this model (see Shared / GetShared) ----
-            _sh = GetShared(pmx, textureDir);
+            _sh = GetShared(pmx, textureDir, searchRoot);
             var meshGo = new GameObject("MmdMesh");
             meshGo.transform.SetParent(_mmdRoot, false);
             var smr = meshGo.AddComponent<SkinnedMeshRenderer>();
@@ -256,6 +266,7 @@ namespace Sdo.Game
                 }
             }
             _ready = true;
+            _settleFrames = SettleFrames;   // 布料先黏在動作姿勢上幾幀,不要從 rest 姿勢盪下來
             string phys = _magica != null ? $"magica({_magica.ClothCount} cloth,{_magica.ColliderCount} col{(_magica.ProfilePath != null ? ",physics.ini" : "")})" : (_spring != null ? "spring" : (cloth ? "none" : "OFF (portrait)"));
             LogMilestone($"[mmd] built '{pmx.NameJp}' in {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms: {pmx.VertexCount} verts, {pmx.Materials.Count} mats, {bc} bones, " +
                          $"scale={_unitScale:F3}, facing={_qroot.eulerAngles.y:F0}°, driven={CountDriven()}/{bc}, aimed={aimed}, " +
@@ -349,6 +360,14 @@ namespace Sdo.Game
                     _bone[i].localRotation = fin;
                     _animLocalRot[i] = fin;
                 }
+
+            // 骨頭已經擺到這一幀該有的姿勢了 → 剛建好/剛顯示出來的那幾幀把布料黏過去(見 _settleFrames)。
+            if (_settleFrames > 0)
+            {
+                _settleFrames--;
+                _magica?.ResetToCurrentPose();
+                _spring?.ResetToCurrentPose();
+            }
         }
 
         /// <summary>大腿/小腿的 rest 骨長,加上腳踝要跟哪根 HRC 骨走 —— 一條腿的 IK 需要的全部。</summary>
@@ -434,7 +453,7 @@ namespace Sdo.Game
         }
 
         // ---- shared per-model assets: built for the first rig, reused by every rig after it ----
-        private static Shared GetShared(PmxLoader pmx, string textureDir)
+        private static Shared GetShared(PmxLoader pmx, string textureDir, string searchRoot)
         {
             if (_sharedByModel.TryGetValue(pmx, out var s) && s.Mesh != null && s.Materials != null &&
                 s.Materials.Length > 0 && s.Materials[0] != null && s.LilToon == UseLilToon)
@@ -445,7 +464,7 @@ namespace Sdo.Game
 
             var t0 = Time.realtimeSinceStartup;
             s = new Shared();
-            s.Materials = BuildMaterials(pmx, textureDir, s);   // sets s.Hide (+ the sphere/toon/edge lists)
+            s.Materials = BuildMaterials(pmx, textureDir, s, searchRoot);   // sets s.Hide (+ the sphere/toon/edge lists)
             var tMat = Time.realtimeSinceStartup;
             s.Mesh = BuildMesh(pmx, s);                         // skips the hidden submeshes
             var tMesh = Time.realtimeSinceStartup;
@@ -479,9 +498,9 @@ namespace Sdo.Game
         /// <summary>Build this model's shared mesh/materials/textures WITHOUT building a rig — so the cost is paid once,
         /// on the boot loading screen, instead of on the first room/song entry. No-op when they are already cached.
         /// See <c>MmdAvatarSwap.PrewarmCo</c>.</summary>
-        public static void Prewarm(PmxLoader pmx, string textureDir)
+        public static void Prewarm(PmxLoader pmx, string textureDir, string searchRoot = null)
         {
-            if (pmx != null && !string.IsNullOrEmpty(textureDir)) GetShared(pmx, textureDir);
+            if (pmx != null && !string.IsNullOrEmpty(textureDir)) GetShared(pmx, textureDir, searchRoot);
         }
 
         /// <summary>Decode ONE of the model's textures into the shared cache. The measured cost of building a model's
@@ -489,10 +508,10 @@ namespace Sdo.Game
         /// mipmap generation), and <see cref="Prewarm"/> does them all back-to-back in one frame. Calling this per
         /// texture with a <c>yield</c> between spreads that over frames, so a boot progress bar keeps moving instead of
         /// freezing. Returns false when the index is out of range (the caller's loop bound).</summary>
-        public static bool PrewarmTexture(PmxLoader pmx, string textureDir, int index)
+        public static bool PrewarmTexture(PmxLoader pmx, string textureDir, int index, string searchRoot = null)
         {
             if (pmx?.TexturePaths == null || index < 0 || index >= pmx.TexturePaths.Length) return false;
-            LoadTexture(textureDir, (pmx.TexturePaths[index] ?? "").Replace('\\', '/'));   // caches; null/missing is fine
+            LoadTexture(textureDir, (pmx.TexturePaths[index] ?? "").Replace('\\', '/'), searchRoot);   // caches; null/missing is fine
             return true;
         }
 
@@ -542,7 +561,7 @@ namespace Sdo.Game
         // ---- materials (MMD shader: authored alpha chooses visibility; texture alpha chooses opaque/cutout/blend) ----
         // Built with every effect ON; MmdAvatarSwap re-applies config.ini's [Mmd] toggles to each rig right after it is built,
         // and since the materials are shared those writes land on the same materials for all of them.
-        private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh)
+        private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh, string searchRoot)
         {
             // 兩個著色後端共用這一整段：貼圖是同一批、alpha 分類是同一套、三個顯示開關記的也是同一份清單。
             // 分岔只在「拿哪支 shader、把這些值寫進哪些屬性」——見 MmdLilToon。
@@ -556,7 +575,7 @@ namespace Sdo.Game
             var shader = Shader.Find("Sdo/MmdModel") ?? Shader.Find("Unlit/Texture");
             var mats = new Material[pmx.Materials.Count];
             var _hide = sh.Hide = new bool[pmx.Materials.Count];
-            var alpha = MeasureMaterialAlpha(pmx, dir);   // 逐材質、只看它自己的 UV 區(見 MeasureMaterialAlpha)
+            var alpha = MeasureMaterialAlpha(pmx, dir, searchRoot);   // 逐材質、只看它自己的 UV 區(見 MeasureMaterialAlpha)
             for (int i = 0; i < pmx.Materials.Count; i++)
             {
                 var pm = pmx.Materials[i];
@@ -567,7 +586,7 @@ namespace Sdo.Game
                     continue;
                 }
                 string texName = (pm.TextureIndex >= 0 && pm.TextureIndex < pmx.TexturePaths.Length) ? pmx.TexturePaths[pm.TextureIndex] : null;
-                Texture2D tex = texName != null ? LoadTexture(dir, texName) : null;
+                Texture2D tex = texName != null ? LoadTexture(dir, texName, searchRoot) : null;
                 bool missingBaseTexture = texName != null && tex == null;
                 float midFrac = alpha[i].x, holeFrac = alpha[i].y;
                 var renderMode = MmdMaterialClassifier.Classify(pm.Diffuse.a, midFrac, holeFrac, pm.DoubleSided);
@@ -576,13 +595,13 @@ namespace Sdo.Game
                 Texture2D sphereTex = null; float sphereMode = 0f;
                 if ((pm.SphereMode == 1 || pm.SphereMode == 2) && pm.SphereIndex >= 0 && pm.SphereIndex < pmx.TexturePaths.Length)
                 {
-                    sphereTex = LoadTexture(dir, pmx.TexturePaths[pm.SphereIndex]);
+                    sphereTex = LoadTexture(dir, pmx.TexturePaths[pm.SphereIndex], searchRoot);
                     if (sphereTex != null) sphereMode = pm.SphereMode;
                 }
 
                 // toon ramp (cel shading): a vertical light→shadow gradient sampled by N·L. Either a per-material toon
                 // TEXTURE (ToonIndex) or a built-in SHARED toon (ToonShared 0..9) → a synthesized 2-tone ramp fallback.
-                Texture2D toon = pm.ToonIndex >= 0 && pm.ToonIndex < pmx.TexturePaths.Length ? LoadTexture(dir, pmx.TexturePaths[pm.ToonIndex]) : null;
+                Texture2D toon = pm.ToonIndex >= 0 && pm.ToonIndex < pmx.TexturePaths.Length ? LoadTexture(dir, pmx.TexturePaths[pm.ToonIndex], searchRoot) : null;
                 if (toon == null && pm.ToonShared >= 0) toon = DefaultToonRamp();
                 bool hasToon = toon != null;
                 if (hasToon) toon.wrapMode = TextureWrapMode.Clamp;
@@ -740,7 +759,7 @@ namespace Sdo.Game
         /// 走訪順序是**按貼圖分組**,不是按材質:<c>GetPixels32</c> 會把整張圖複製到 managed 記憶體
         /// (2048² = 16 MB),一次只留一張,量完就丟 —— 峰值記憶體與材質數無關。
         /// </summary>
-        private static Vector2[] MeasureMaterialAlpha(PmxLoader pmx, string dir)
+        private static Vector2[] MeasureMaterialAlpha(PmxLoader pmx, string dir, string searchRoot)
         {
             var outv = new Vector2[pmx.Materials.Count];
             // 貼圖 → 用到它的材質。同一張只解一次 GetPixels32。
@@ -750,7 +769,7 @@ namespace Sdo.Game
                 var pm = pmx.Materials[i];
                 if (pm.Diffuse.a < 0.05f) continue;                    // 反正會被藏起來,不用量
                 if (pm.TextureIndex < 0 || pm.TextureIndex >= pmx.TexturePaths.Length) continue;
-                var tex = LoadTexture(dir, pmx.TexturePaths[pm.TextureIndex]);   // 已快取,不會重讀
+                var tex = LoadTexture(dir, pmx.TexturePaths[pm.TextureIndex], searchRoot);   // 已快取,不會重讀
                 if (tex == null) continue;
                 if (!byTexture.TryGetValue(tex, out var list)) byTexture[tex] = list = new List<int>();
                 list.Add(i);
@@ -803,11 +822,17 @@ namespace Sdo.Game
         // project's texel layout — the SDO DDS pipeline puts image-top at texel row 0, and Unity's PNG/BMP decode here
         // matches, so a flip actually scrambled the clothing atlas (skin bled onto the necktie). Verified by rendering
         // the model both ways: unflipped = correct Miku (green tie, right costume), flipped = broken.
+        //
+        // 🔴 這裡有三條解碼路徑(TGA / BMP / Unity 內建的 PNG-JPG),**它們的上下方向必須一致** —— 一個 MMD
+        // 模型可以三種格式混著用(LaplusDarknesss:頭髮 .png、臉/身體/眼睛/皮膚 .tga),方向不一致的症狀是
+        // 「一部分貼圖正、一部分上下顛倒」,而且那跟 UV 無關:調 mmdFlipV 只會把本來正的那部分也弄反。
+        // DdsLoader.LoadTga 預設是 SDO 自己那套 D3D 列序(圖的上緣放在 SetPixels32 的第 0 列),與 Unity 的
+        // LoadImage 差一個翻轉 → 外來模型一律要 sdoRowOrder:false。DecodeBmp 本來就與 LoadImage 同向。
         private static readonly Dictionary<string, Texture2D> _texCache = new Dictionary<string, Texture2D>();
-        private static Texture2D LoadTexture(string dir, string rel)
+        private static Texture2D LoadTexture(string dir, string rel, string searchRoot)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(rel)) return null;
-            string path = ResolvePath(dir, rel.Replace('\\', '/'));
+            string path = ResolvePath(dir, rel.Replace('\\', '/'), searchRoot);
             if (path == null) return null;
             // The same model is now built several times over (stage dancer, room walker, room 頭貼, 結算頭貼, both gender
             // previews) — decode each texture once and share it, or every extra rig re-reads the whole texture set.
@@ -817,7 +842,9 @@ namespace Sdo.Game
             Texture2D tex = null;
             try
             {
-                if (ext == ".tga") tex = DdsLoader.LoadTga(b);
+                // sdoRowOrder:false ＝ 與 LoadImage 同向(見上面);readable:true ＝ 留著 CPU 那一份,
+                // MeasureMaterialAlpha 要 GetPixels32 才分得出不透明/裁切/半透明(不可讀 → 整批誤判成不透明)。
+                if (ext == ".tga") tex = DdsLoader.LoadTga(b, sdoRowOrder: false, readable: true);
                 else if (b.Length > 2 && b[0] == 'B' && b[1] == 'M') tex = DecodeBmp(b);
                 else
                 {
@@ -839,20 +866,90 @@ namespace Sdo.Game
             return tex;
         }
 
-        private static string ResolvePath(string dir, string rel)
+        /// <summary>
+        /// PMX 裡的一條貼圖路徑 → 磁碟上真正的檔案(找不到 null)。三段:
+        /// ① 照字面(相對於 .pmx 的資料夾);② 同一個資料夾裡不分大小寫、可換副檔名地找;
+        /// ③ 還是沒有 → 在**整包**模型資料夾裡照檔名找(<paramref name="searchRoot"/>,見 <see cref="PackIndex"/>)。
+        /// </summary>
+        public static string ResolveTexturePath(string dir, string rel, string searchRoot)
+            => string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(rel) ? null
+             : ResolvePath(dir, rel.Replace('\\', '/'), searchRoot);
+
+        private static string ResolvePath(string dir, string rel, string searchRoot)
         {
             string full = Path.Combine(dir, rel);
             if (File.Exists(full)) return full;
             string sub = Path.GetDirectoryName(full), file = Path.GetFileName(full);
-            if (string.IsNullOrEmpty(sub) || !Directory.Exists(sub)) return null;
-            string stem = Path.GetFileNameWithoutExtension(file).ToLowerInvariant(), want = file.ToLowerInvariant(), stemHit = null;
-            foreach (var f in Directory.GetFiles(sub))
+            string stem = Path.GetFileNameWithoutExtension(file).ToLowerInvariant(), want = file.ToLowerInvariant();
+            if (!string.IsNullOrEmpty(sub) && Directory.Exists(sub))
             {
-                string fn = Path.GetFileName(f).ToLowerInvariant();
-                if (fn == want) return f;
-                if (stemHit == null && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) stemHit = f;
+                string stemHit = null;
+                foreach (var f in Directory.GetFiles(sub))
+                {
+                    string fn = Path.GetFileName(f).ToLowerInvariant();
+                    if (fn == want) return f;
+                    if (stemHit == null && Path.GetFileNameWithoutExtension(f).ToLowerInvariant() == stem) stemHit = f;
+                }
+                if (stemHit != null) return stemHit;
             }
-            return stemHit;
+            // 照字面找不到 → 在**整包**模型資料夾裡照檔名找(見 PackIndex)。
+            return FindInPack(searchRoot, want, stem);
+        }
+
+        /// <summary>
+        /// 一包模型底下所有圖檔的「檔名 → 路徑」索引。<c>null</c> 代表這一包沒給搜尋根(退化成舊行為)。
+        ///
+        /// 🔴 為什麼需要:PMX 裡的貼圖路徑是相對於 .pmx 的,但「組立キット」型的包會把 .pmx 和貼圖分在
+        /// 完全不同的樹枝上 —— 十六夜咲夜Ver2.20 的 .pmx 在 <c>01-モデル/十六夜咲夜/</c>,它引用的 28 張貼圖
+        /// 全部在隔壁的 <c>02-共通テクスチャ/</c>,而且 PMX 裡寫的是**純檔名、沒有目錄**。照字面找 28 張全部
+        /// 落空 → 模型讀得到但整隻沒有貼圖。作者的用法是「在 PMXEditor 裡組裝完再另存」,我們不能要求
+        /// 使用者做那一步,所以退一步:整包裡只要有同名檔就用它。
+        ///
+        /// 一包建一次,之後免費。同名檔案以「路徑排序後的第一個」為準 —— 與檔案系統的列舉順序無關。
+        /// </summary>
+        private static readonly Dictionary<string, Dictionary<string, string>> _packIndex =
+            new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>一包最多索引這麼多個圖檔(防呆:有人把搜尋根指到一棵很大的樹)。</summary>
+        private const int MaxPackIndexFiles = 20000;
+
+        private static readonly string[] ImageExtensions =
+            { ".png", ".bmp", ".tga", ".jpg", ".jpeg", ".dds", ".spa", ".sph", ".tif", ".tiff", ".gif" };
+
+        private static string FindInPack(string searchRoot, string wantLower, string stemLower)
+        {
+            if (string.IsNullOrEmpty(searchRoot)) return null;
+            var index = PackIndex(searchRoot);
+            if (index == null) return null;
+            if (index.TryGetValue(wantLower, out var hit)) return hit;
+            return index.TryGetValue(stemLower, out hit) ? hit : null;   // 副檔名被換過(.tga 存成 .png)
+        }
+
+        private static Dictionary<string, string> PackIndex(string searchRoot)
+        {
+            if (_packIndex.TryGetValue(searchRoot, out var cached)) return cached;
+            var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            int n = 0;
+            try
+            {
+                var all = Directory.GetFiles(searchRoot, "*", SearchOption.AllDirectories);
+                Array.Sort(all, StringComparer.OrdinalIgnoreCase);   // 同名檔的取捨要與列舉順序無關
+                foreach (var f in all)
+                {
+                    if (n >= MaxPackIndexFiles) break;
+                    string ext = Path.GetExtension(f).ToLowerInvariant();
+                    if (Array.IndexOf(ImageExtensions, ext) < 0) continue;
+                    n++;
+                    string fn = Path.GetFileName(f);
+                    if (!index.ContainsKey(fn)) index[fn] = f;
+                    string stem = Path.GetFileNameWithoutExtension(f);
+                    if (!index.ContainsKey(stem)) index[stem] = f;
+                }
+            }
+            catch { /* 讀不到就當這一包沒有可搜尋的貼圖 */ }
+            SdoLog.Note("mmd", $"[mmd] 貼圖索引 '{searchRoot}': {n} 個圖檔");
+            _packIndex[searchRoot] = index;
+            return index;
         }
 
         private static Texture2D DecodeBmp(byte[] d)
@@ -962,6 +1059,9 @@ namespace Sdo.Game
             var smr = GetComponentInChildren<SkinnedMeshRenderer>(true);
             if (smr != null) smr.enabled = on;
             enabled = on;
+            // 藏起來的期間 LateUpdate 沒跑(enabled=false),骨頭停在藏起來的那一刻;再顯示出來時動作已經
+            // 走遠了 → 布料會把那段差當成瞬移。跟剛建好一樣先黏幾幀。
+            if (on && !_visible) _settleFrames = SettleFrames;
             _visible = on; UpdateSpring();   // spring runs only when visible AND physics-enabled (no toggle clobber)
         }
     }
