@@ -1527,7 +1527,17 @@ namespace Sdo.UI.Screens
             string path = e.audioPath;
             System.Threading.Tasks.Task.Run(() =>
             {
-                int sec; try { sec = Sdo.Osu.AudioDuration.Seconds(path); } catch { sec = 0; }
+                // 走 VFS 開串流再量 —— 官方歌打包之後沒有實體檔案，用 path 版會讀不到（時間欄變 0）。
+                // Sdo.Osu 是 leaf assembly 不能參照 Sdo.Settings（會有循環），所以 VFS 這一步在這邊做。
+                int sec = 0;
+                try
+                {
+                    var head = VfsFile.ReadAllBytes(path);
+                    if (head != null)
+                        using (var fs = VfsFile.OpenRead(path))
+                            sec = Sdo.Osu.AudioDuration.Seconds(fs, Sdo.Osu.AudioFileType.Sniff(head));
+                }
+                catch { sec = 0; }
                 if (sec <= 0) return;   // unreadable/odd format → keep the chart-length fallback
                 // One song → one length; only overwrite difficulties that actually have a chart (empty slots stay 0).
                 if (e.notesEasy > 0) e.durEasy = sec;

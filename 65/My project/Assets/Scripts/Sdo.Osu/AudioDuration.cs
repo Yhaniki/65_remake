@@ -36,6 +36,39 @@ namespace Sdo.Osu
             catch { return 0; }
         }
 
+        /// <summary>同上，但吃**已經開好的串流** —— 呼叫端負責從哪裡拿到它。
+        ///
+        /// 為什麼要這個多載:DATA 打包成 pak 之後官方歌沒有實體檔案，上面那條 path 版就讀不到了
+        /// (症狀:歌單「時間」欄變 0)。但 <c>Sdo.Osu</c> 是 leaf assembly，**不能**參照
+        /// <c>Sdo.Settings</c>(會變成 Sdo.Osu → Sdo.Settings → Sdo.Net → Sdo.Osu 的循環)，
+        /// 所以 VFS 那一步留給呼叫端做，這裡只收串流。
+        ///
+        /// <paramref name="kind"/> 由呼叫端用 <see cref="AudioFileType.Sniff"/> 對檔頭判斷 ——
+        /// 依**內容**不是副檔名(名不符實的檔用錯解析器會量出 0 秒)。
+        /// mp3 需要可 seek 的串流(NLayer 要掃 Xing/VBR 表頭)。</summary>
+        public static int Seconds(Stream s, AudioKind kind)
+        {
+            if (s == null) return 0;
+            try
+            {
+                double sec = kind == AudioKind.Mp3 ? Mp3Seconds(s)
+                           : kind == AudioKind.Wav ? WavSeconds(s)
+                           : kind == AudioKind.Ogg ? OggSeconds(s) : 0.0;
+                return sec > 0.0 ? (int)Math.Round(sec) : 0;
+            }
+            catch { return 0; }
+        }
+
+        private static double Mp3Seconds(Stream s)
+        {
+            try
+            {
+                using (var mp3 = new NLayer.MpegFile(s))
+                    return mp3.Duration.TotalSeconds;
+            }
+            catch { return 0.0; }
+        }
+
         private static int Mp3Seconds(string path)
         {
             try

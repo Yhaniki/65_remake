@@ -7,6 +7,7 @@ using Sdo.Ruleset;
 using Sdo.Settings;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -118,7 +119,7 @@ namespace Sdo.Game
             string gn = want.EndsWith(".gn", StringComparison.OrdinalIgnoreCase) ? want : LocalPrefs.GetString(PrefLastGn, "");
             _diff = Mathf.Clamp(LocalPrefs.GetInt(PrefLastDiff, 0), 0, 2);
             _scope = LocalPrefs.GetString(PrefScope, EditorSongScope.All);   // 上次鎖的資料夾（校時常常要分好幾天）
-            if (string.IsNullOrEmpty(gn) || !File.Exists(SongPaths.Gn(gn) ?? "")) gn = PickDefaultGn();
+            if (string.IsNullOrEmpty(gn) || !VfsFile.Exists(SongPaths.Gn(gn) ?? "")) gn = PickDefaultGn();
             if (string.IsNullOrEmpty(gn)) { _status = "找不到任何可開的 .gn（song_table.csv 或 MUSIC 資料夾是空的）"; _showList = true; return; }
             LoadSong(gn, _diff);
         }
@@ -135,7 +136,7 @@ namespace Sdo.Game
                 if (best != null && e.fileId <= best.fileId) continue;   // 先比編號，再去碰硬碟
                 if (!(e.HasChart(0) || e.HasChart(1) || e.HasChart(2))) continue;
                 var p = SongPaths.Gn(e.gn);
-                if (!string.IsNullOrEmpty(p) && File.Exists(p)) best = e;
+                if (!string.IsNullOrEmpty(p) && VfsFile.Exists(p)) best = e;
             }
             return best?.gn;
         }
@@ -170,18 +171,18 @@ namespace Sdo.Game
             if (ext)
             {
                 string chartPath = e.ChartPath(_diff);
-                if (string.IsNullOrEmpty(chartPath) || !File.Exists(chartPath)) { _status = "找不到外部譜面檔：" + chartPath; _loading = false; yield break; }
+                if (string.IsNullOrEmpty(chartPath) || !VfsFile.Exists(chartPath)) { _status = "找不到外部譜面檔：" + chartPath; _loading = false; yield break; }
                 oggPath = e.audioPath;
             }
             else
             {
                 gnPath = SongPaths.Gn(_gn); oggPath = SongPaths.Ogg(_gn);
-                if (gnPath == null || !File.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
+                if (gnPath == null || !VfsFile.Exists(gnPath)) { _status = "找不到譜面檔：" + gnPath; _loading = false; yield break; }
             }
             bool virtualOsu = ext &&
                 e.chartFormat == (int)SongFormat.Osu &&
                 string.IsNullOrEmpty(oggPath);
-            _status = (!string.IsNullOrEmpty(oggPath) && File.Exists(oggPath))
+            _status = (!string.IsNullOrEmpty(oggPath) && VfsFile.Exists(oggPath))
                 ? ""
                 : virtualOsu
                     ? "虛擬音軌：keysound 可播放，沒有母音軌波形"

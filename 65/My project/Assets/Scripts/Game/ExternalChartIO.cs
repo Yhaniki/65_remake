@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Sdo.Osu;
+using Sdo.Settings.Vfs;
 
 namespace Sdo.Game
 {
@@ -24,12 +25,12 @@ namespace Sdo.Game
         {
             if (format == 3)
                 // .gn 歌曲包：一個檔裝三個難度，index 就是難度。金鑰優先用這首自己的，失敗才退回共用池。
-                return GnChart.Load(File.ReadAllBytes(path), index, ScreenGameplay.GnSeedsFor(seed));
+                return GnChart.Load(VfsFile.ReadAllBytes(path), index, ScreenGameplay.GnSeedsFor(seed));
             if (format == 4)
-                return MalodyChart.ToBeatmap(MalodyChart.Parse(File.ReadAllText(path)));   // .mc — one difficulty per file
+                return MalodyChart.ToBeatmap(MalodyChart.Parse(VfsFile.ReadAllText(path)));   // .mc — one difficulty per file
             return format == 2
-                ? SmChart.ToBeatmap(SmChart.Parse(File.ReadAllText(path)), index)          // .sm block
-                : OsuBeatmapParser.Parse(File.ReadAllText(path));                          // .osu
+                ? SmChart.ToBeatmap(SmChart.Parse(VfsFile.ReadAllText(path)), index)          // .sm block
+                : OsuBeatmapParser.Parse(VfsFile.ReadAllText(path));                          // .osu
         }
 
         /// <summary>Parse one chart; null when the file is missing or won't parse.</summary>
@@ -38,7 +39,7 @@ namespace Sdo.Game
             if (format == 0 || string.IsNullOrEmpty(path)) return null;
             try
             {
-                if (!File.Exists(path)) return null;
+                if (!VfsFile.Exists(path)) return null;
                 return Parse(format, path, index, seed);
             }
             catch (Exception ex)
@@ -70,15 +71,15 @@ namespace Sdo.Game
                 OsuBeatmap map = null;
                 try
                 {
-                    if (!File.Exists(path)) continue;
+                    if (!VfsFile.Exists(path)) continue;
                     if (format == 2)
                     {
-                        if (!songs.TryGetValue(path, out var sm)) songs[path] = sm = SmChart.Parse(File.ReadAllText(path));
+                        if (!songs.TryGetValue(path, out var sm)) songs[path] = sm = SmChart.Parse(VfsFile.ReadAllText(path));
                         map = SmChart.ToBeatmap(sm, index);
                     }
                     else if (format == 3)
                     {
-                        if (!packs.TryGetValue(path, out var bytes)) packs[path] = bytes = File.ReadAllBytes(path);
+                        if (!packs.TryGetValue(path, out var bytes)) packs[path] = bytes = VfsFile.ReadAllBytes(path);
                         map = GnChart.Load(bytes, index, ScreenGameplay.GnSeedsFor(seed));
                     }
                     else map = Parse(format, path, index, seed);
