@@ -15,8 +15,10 @@ namespace Sdo.Game
     /// the corresponding HRC bone points (bone→child direction from the driver's animated world positions), after a
     /// global facing yaw <c>Qroot</c>. Aim is immune to rest-pose differences — the SDO bind is a T-pose but MMD models
     /// rest in an A-pose, and a naive world-delta over-rotates the arms (they cross); aim just makes the limb point the
-    /// right way. Leaf bones with no mapped child (hand/head/foot tips) fall back to the world-delta. MMD 付与 append
-    /// bones (the leg "D" chain the mesh is skinned to) then copy their FK source's local rotation.
+    /// right way. Leaf bones with no mapped child (hand/fingertips) follow their parent; the head takes the world-delta
+    /// so it stays upright. MMD 付与 append bones (the leg "D" chain the mesh is skinned to) then copy their FK source's
+    /// local rotation. <see cref="MmdRetargetPlan"/> owns that per-bone decision — including the two rules that keep the
+    /// feet on the floor (センター takes translation only; 足首 aims at つま先).
     ///
     /// The rig is parented UNDER the driver's transform (placement/facing/walk inherited); a uniform scale matches the
     /// MMD model's height to the SDO avatar's.
@@ -28,6 +30,9 @@ namespace Sdo.Game
         public bool DriveRootTranslation = true;
         /// <summary>Aim retarget (default). OFF falls back to a pure world-delta (kept for A/B comparison).</summary>
         public bool UseAim = true;
+        /// <summary>把腳踝 IK 回 SDO 動作原本的位置(<see cref="MmdFootIk"/>)。關掉 = 只有 aim,腳會因為 MMD 腿
+        /// 比 SDO 短而踩不準 —— 留著開關是為了 A/B 對照。</summary>
+        public bool FootIk = true;
         /// <summary>Show MMD sphere maps (matcap sheen/glow). Toggle live to compare.</summary>
         public bool ShowSphere = true;
         /// <summary>Cel-shading toon ramp (N·L, fixed light). Toggle live.</summary>
@@ -183,24 +188,32 @@ namespace Sdo.Game
             smr.updateWhenOffscreen = true;
             smr.sharedMaterials = _sh.Materials;
 
-            // ---- retarget wiring ----
+            // ---- retarget wiring: WHICH bone is driven HOW is decided by MmdRetargetPlan (pure, tested) ----
             _hrcIndex = new int[bc]; _hrcRestInv = new Quaternion[bc];
             _aim = new bool[bc]; _aimChildHrc = new int[bc]; _aimRestDir = new Vector3[bc]; _useDelta = new bool[bc];
             var bip01ToMmd = new Dictionary<string, int>();
+            var mmdNames = new string[bc]; var mmdPos = new Vector3[bc];
             for (int i = 0; i < bc; i++)
             {
-                _hrcIndex[i] = -1;
-                if (MmdBoneMap.TryGetBip01(pmx.Bones[i].NameJp, out string bip01))
-                {
-                    if (!bip01ToMmd.ContainsKey(bip01)) bip01ToMmd[bip01] = i;
-                    if (hrc.Index.TryGetValue(bip01, out int h)) { _hrcIndex[i] = h; _hrcRestInv[i] = Quaternion.Inverse(hrc.BindWorld[h].rotation); }
-                    if (bip01 == "Bip01_Head") _useDelta[i] = true;   // head: absolute orientation → stays upright in idle
-                }
-                if (pmx.Bones[i].NameJp == MmdBoneMap.RootMmdBone) _rootBone = i;
+                mmdNames[i] = pmx.Bones[i].NameJp; mmdPos[i] = pmx.Bones[i].Position;
+                if (MmdBoneMap.TryGetBip01(mmdNames[i], out string bip01) && !bip01ToMmd.ContainsKey(bip01)) bip01ToMmd[bip01] = i;
+                if (mmdNames[i] == MmdBoneMap.RootMmdBone && _rootBone < 0) _rootBone = i;
             }
-            if (_rootBone >= 0) _useDelta[_rootBone] = true;           // root carries the whole-body rotation
             _bip01ToBone = bip01ToMmd;                                 // 掛特效用(BoneForBip01)
-            int aimed = BuildAim(pmx, hrc, bip01ToMmd);
+
+            var hrcBindPos = new Vector3[hrc.Names.Length];
+            for (int i = 0; i < hrcBindPos.Length; i++) hrcBindPos[i] = hrc.BindWorld[i].GetColumn(3);
+            var plan = MmdRetargetPlan.Build(mmdNames, mmdPos, hrc.Names, hrc.Parent, hrcBindPos);
+            int aimed = 0;
+            for (int i = 0; i < bc; i++)
+            {
+                _hrcIndex[i] = plan[i].Hrc;
+                if (plan[i].Hrc >= 0) _hrcRestInv[i] = Quaternion.Inverse(hrc.BindWorld[plan[i].Hrc].rotation);
+                if (plan[i].Mode == MmdDriveMode.Aim)
+                { _aim[i] = true; _aimChildHrc[i] = plan[i].AimChildHrc; _aimRestDir[i] = plan[i].AimRestDir; aimed++; }
+                else if (plan[i].Mode == MmdDriveMode.WorldDelta) _useDelta[i] = true;
+            }
+            _legs = BuildLegs(bip01ToMmd, mmdPos);
             if (_rootBone >= 0) _rootRestLocal = _bone[_rootBone].localPosition;
             if (hrc.Index.TryGetValue("Bip01", out int rootH)) { _hrcRootIndex = rootH; _hrcRootRestPos = hrc.BindWorld[rootH].GetColumn(3); }
 
@@ -238,25 +251,23 @@ namespace Sdo.Game
                          $"sphere={_sh.SphereMats.Count}, toon={_sh.ToonMats.Count}, edge={_sh.EdgeMats.Count}, physics={pmx.PhysicsBones.Count}({phys})");
         }
 
-        // Precompute the aim target/direction for every mapped bone that has a mapped child.
-        private int BuildAim(PmxLoader pmx, HrcLoader hrc, Dictionary<string, int> bip01ToMmd)
+        // One entry per leg whose thigh AND calf both aim and whose ankle is driven — anything less and there is no
+        // two-bone chain to solve, so that leg just keeps the aim result.
+        private Leg[] BuildLegs(Dictionary<string, int> bip01ToMmd, Vector3[] mmdPos)
         {
-            var mappedHrcNames = new HashSet<string>(MmdBoneMap.ToBip01.Values);
-            var hrcChildren = new List<int>[hrc.Names.Length];
-            for (int c = 0; c < hrc.Parent.Length; c++) { int p = hrc.Parent[c]; if (p < 0) continue; (hrcChildren[p] ?? (hrcChildren[p] = new List<int>())).Add(c); }
-            int n = 0;
-            for (int i = 0; i < pmx.Bones.Count; i++)
+            var legs = new List<Leg>(2);
+            foreach (string s in new[] { "L", "R" })
             {
-                int h = _hrcIndex[i]; if (h < 0 || hrcChildren[h] == null) continue;
-                int hrcChild = -1;
-                foreach (int c in hrcChildren[h]) if (mappedHrcNames.Contains(hrc.Names[c])) { hrcChild = c; break; }
-                if (hrcChild < 0 || !bip01ToMmd.TryGetValue(hrc.Names[hrcChild], out int mmdChild)) continue;
-                Vector3 rd = pmx.Bones[mmdChild].Position - pmx.Bones[i].Position;          // MMD rest dir (root-local)
-                Vector3 hd = (Vector3)hrc.BindWorld[hrcChild].GetColumn(3) - (Vector3)hrc.BindWorld[h].GetColumn(3);
-                if (rd.sqrMagnitude < 1e-6f || hd.sqrMagnitude < 1e-6f) continue;           // degenerate (e.g. Bip01→Pelvis) → delta fallback
-                _aim[i] = true; _aimChildHrc[i] = hrcChild; _aimRestDir[i] = rd.normalized; n++;
+                if (!bip01ToMmd.TryGetValue($"Bip01_{s}_Thigh", out int thigh) ||
+                    !bip01ToMmd.TryGetValue($"Bip01_{s}_Calf", out int calf) ||
+                    !bip01ToMmd.TryGetValue($"Bip01_{s}_Foot", out int ankle)) continue;
+                if (!_aim[thigh] || !_aim[calf] || _hrcIndex[ankle] < 0) continue;
+                float a = Vector3.Distance(mmdPos[thigh], mmdPos[calf]);
+                float b = Vector3.Distance(mmdPos[calf], mmdPos[ankle]);
+                if (!(a > 1e-4f) || !(b > 1e-4f)) continue;
+                legs.Add(new Leg { Thigh = thigh, Calf = calf, Ankle = ankle, HrcAnkle = _hrcIndex[ankle], A = a, B = b });
             }
-            return n;
+            return legs.Count > 0 ? legs.ToArray() : null;
         }
 
         private int CountDriven() { int n = 0; if (_hrcIndex != null) foreach (var h in _hrcIndex) if (h >= 0) n++; return n; }
@@ -302,6 +313,20 @@ namespace Sdo.Game
                 _animLocalRot[i] = local;
             }
 
+            // Root translation runs BEFORE the foot IK — the IK reads bone POSITIONS, and this is what puts the whole
+            // rig at this frame's height/offset. (It only writes a localPosition, so it cannot disturb the rotations
+            // solved above.)
+            if (DriveRootTranslation && _rootBone >= 0 && _hrcRootIndex >= 0)
+            {
+                Vector3 d = (Vector3)Driver.BoneAnimWorld(_hrcRootIndex).GetColumn(3) - _hrcRootRestPos;
+                _bone[_rootBone].localPosition = _rootRestLocal + (_qrootInv * d) / _unitScale;
+            }
+
+            // Foot IK: put the ankles back where the SDO motion actually puts them (aim copies direction, not bone
+            // length — see MmdFootIk). Before the 付与 pass, so the 足D chain the mesh is skinned to picks it up.
+            if (FootIk && _legs != null)
+                for (int k = 0; k < _legs.Length; k++) SolveLeg(_legs[k]);
+
             // 付与 append pass (足D chain copies FK legs so the skinned mesh follows)
             if (_appendOrder != null)
                 for (int k = 0; k < _appendOrder.Length; k++)
@@ -313,12 +338,43 @@ namespace Sdo.Game
                     _bone[i].localRotation = fin;
                     _animLocalRot[i] = fin;
                 }
+        }
 
-            if (DriveRootTranslation && _rootBone >= 0 && _hrcRootIndex >= 0)
+        /// <summary>大腿/小腿的 rest 骨長,加上腳踝要跟哪根 HRC 骨走 —— 一條腿的 IK 需要的全部。</summary>
+        private struct Leg { public int Thigh, Calf, Ankle, HrcAnkle; public float A, B; }
+        private Leg[] _legs;
+
+        // Solve one leg so its ankle lands on the SDO ankle, then write the two bones back. The ankle's own ORIENTATION
+        // is untouched (it aims at the toe — that is what levels the sole); only its parent moved, so its local
+        // rotation has to be recomputed against the new calf.
+        private void SolveLeg(Leg leg)
+        {
+            Vector3 target = (_qrootInv * ((Vector3)Driver.BoneAnimWorld(leg.HrcAnkle).GetColumn(3) - _mmdRoot.localPosition)) / _unitScale;
+            Vector3 hip = _mmdRoot.InverseTransformPoint(_bone[leg.Thigh].position);
+            Vector3 kneeHint = _mmdRoot.InverseTransformPoint(_bone[leg.Calf].position);
+            if (!MmdFootIk.Solve(hip, target, kneeHint, leg.A, leg.B, out Vector3 thighDir, out Vector3 kneePos)) return;
+
+            Quaternion rwT = _rwLocal[leg.Thigh];
+            WriteBone(leg.Thigh, Quaternion.FromToRotation(rwT * _aimRestDir[leg.Thigh], thighDir) * rwT);
+
+            Vector3 calfDir = target - kneePos;
+            if (calfDir.sqrMagnitude > 1e-10f)
             {
-                Vector3 d = (Vector3)Driver.BoneAnimWorld(_hrcRootIndex).GetColumn(3) - _hrcRootRestPos;
-                _bone[_rootBone].localPosition = _rootRestLocal + (_qrootInv * d) / _unitScale;
+                Quaternion rwC = _rwLocal[leg.Calf];
+                WriteBone(leg.Calf, Quaternion.FromToRotation(rwC * _aimRestDir[leg.Calf], calfDir.normalized) * rwC);
             }
+            WriteBone(leg.Ankle, _rwLocal[leg.Ankle]);   // same world orientation, new parent → new local
+        }
+
+        // Set a bone's world-in-root-local rotation, keeping _rwLocal/_animLocalRot (the 付与 source) in step.
+        private void WriteBone(int i, Quaternion rw)
+        {
+            int p = _parent[i];
+            Quaternion parentRw = p >= 0 ? _rwLocal[p] : Quaternion.identity;
+            _rwLocal[i] = rw;
+            Quaternion local = Quaternion.Inverse(parentRw) * rw;
+            _bone[i].localRotation = local;
+            _animLocalRot[i] = local;
         }
 
         // The twist component of rotation q about a (normalised) axis — swing-twist decomposition. Used to copy the
@@ -472,13 +528,12 @@ namespace Sdo.Game
             return mesh;
         }
 
-        // ---- materials (MMD shader: base + sphere; alpha class → opaque/cutout; morph-overlay & a=0 hidden) ----
+        // ---- materials (MMD shader: authored alpha chooses visibility; texture alpha chooses opaque/cutout/blend) ----
         // Built with every effect ON; MmdAvatarSwap re-applies config.ini's [Mmd] toggles to each rig right after it is built,
         // and since the materials are shared those writes land on the same materials for all of them.
         private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh)
         {
             var shader = Shader.Find("Sdo/MmdModel") ?? Shader.Find("Unlit/Texture");
-            var col = Shader.Find("Unlit/Color") ?? shader;
             var mats = new Material[pmx.Materials.Count];
             var _hide = sh.Hide = new bool[pmx.Materials.Count];
             for (int i = 0; i < pmx.Materials.Count; i++)
@@ -492,32 +547,19 @@ namespace Sdo.Game
                 }
                 string texName = (pm.TextureIndex >= 0 && pm.TextureIndex < pmx.TexturePaths.Length) ? pmx.TexturePaths[pm.TextureIndex] : null;
                 Texture2D tex = texName != null ? LoadTexture(dir, texName) : null;
-                if (tex == null)
-                {
-                    mats[i] = new Material(col) { color = pm.Diffuse, name = pm.NameJp ?? ("mat" + i) };
-                    SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{texName ?? "(none)"}' -> FALLBACK colour");
-                    continue;
-                }
-                AlphaStats(tex, out float midFrac, out float holeFrac);
-                // A substantially semi-transparent texture on the face = a morph-driven expression/blush/shadow overlay
-                // (照れ/表情/髪影). Without vertex/UV morphs these render wrong (the pink blob), so hide them.
-                if (midFrac >= 0.15f)
-                {
-                    _hide[i] = true; mats[i] = new Material(shader);
-                    SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{Path.GetFileName(texName)}' mid={midFrac:P0} -> HIDDEN (morph overlay)");
-                    continue;
-                }
-                bool cutout = holeFrac >= 0.02f || pm.DoubleSided;
+                bool missingBaseTexture = texName != null && tex == null;
+                float midFrac = 0f, holeFrac = 0f;
+                if (tex != null) AlphaStats(tex, out midFrac, out holeFrac);
+                var renderMode = MmdMaterialClassifier.Classify(pm.Diffuse.a, midFrac, holeFrac, pm.DoubleSided);
 
                 var mat = new Material(shader) { name = pm.NameEn ?? pm.NameJp ?? ("mat" + i) };
-                mat.SetTexture("_MainTex", tex);
-                mat.SetColor("_Color", new Color(pm.Diffuse.r, pm.Diffuse.g, pm.Diffuse.b, 1f));
+                // A PMX diffuse texture is optional. White preserves the authored diffuse colour while keeping the same
+                // cull/alpha/sphere/toon/edge path; a referenced-but-missing file uses the same visible fallback.
+                mat.SetTexture("_MainTex", tex ?? Texture2D.whiteTexture);
+                mat.SetColor("_Color", pm.Diffuse);
                 mat.SetFloat("_Cull", pm.DoubleSided ? 0f : 2f);           // Off : Back
-                // opaque vs alpha-test cutout (blend overlays already hidden above)
-                mat.SetFloat("_AlphaClip", cutout ? 1f : 0f);
                 mat.SetFloat("_Cutoff", 0.5f);
-                mat.SetFloat("_SrcBlend", 1f); mat.SetFloat("_DstBlend", 0f); mat.SetFloat("_ZWrite", 1f);
-                mat.renderQueue = cutout ? (int)RenderQueue.AlphaTest : (int)RenderQueue.Geometry;
+                MmdMaterialClassifier.Apply(mat, renderMode);
 
                 // sphere map (matcap): the MMD "shine" — eyes/skin/metal. Sampled by view normal, so NOT UV-flipped.
                 float sphereMode = 0f;
@@ -538,11 +580,15 @@ namespace Sdo.Game
 
                 // pencil outline: only edge-flagged materials get a non-zero edge size.
                 mat.SetColor("_EdgeColor", pm.EdgeColor);
-                if (pm.HasEdge) sh.EdgeMats.Add(new KeyValuePair<Material, float>(mat, pm.EdgeSize));
-                mat.SetFloat("_EdgeSize", pm.HasEdge ? pm.EdgeSize : 0f);
+                // The current outline pass is opaque and writes depth. Disable it for blended surfaces so translucent
+                // cloth does not acquire an opaque black/depth hull; cutout and opaque outlines remain unchanged.
+                bool hasEdge = pm.HasEdge && renderMode != MmdMaterialRenderMode.Blend;
+                if (hasEdge) sh.EdgeMats.Add(new KeyValuePair<Material, float>(mat, pm.EdgeSize));
+                mat.SetFloat("_EdgeSize", hasEdge ? pm.EdgeSize : 0f);
 
                 mats[i] = mat;
-                SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{Path.GetFileName(texName)}' {(cutout ? "CUTOUT" : "opaque")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}{(hasToon ? " +toon" : "")}{(pm.HasEdge ? " +edge" : "")}");
+                string baseTexLabel = texName != null ? Path.GetFileName(texName) : "(none)";
+                SdoLog.Note("mmd", $"  mat[{i}] '{pm.NameJp}' tex='{baseTexLabel}' {renderMode.ToString().ToUpperInvariant()}{(missingBaseTexture ? " FALLBACK-colour" : "")}{(pm.DoubleSided ? " 2sided" : "")}{(sphereMode > 0 ? " +sphere" + (int)sphereMode : "")}{(hasToon ? " +toon" : "")}{(hasEdge ? " +edge" : "")}");
             }
             return mats;
         }

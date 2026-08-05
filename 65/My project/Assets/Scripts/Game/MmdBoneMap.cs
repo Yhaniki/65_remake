@@ -12,6 +12,11 @@ namespace Sdo.Game
     ///
     /// Notes carried over from the pipeline: FEMALE.HRC has no Bip01_Spine2, so 上半身2 maps to Bip01_Spine1; the MMD
     /// 上半身 (upper body) maps to Bip01_Spine.
+    ///
+    /// 腳尖 (つま先) is deliberately NOT here even though both stock models have the bone: it is not the same point as
+    /// SDO's Bip01_Toe0. At rest the SDO toe sits ON the floor (y 0.04) while the MMD one is the toe JOINT, 1.22 above
+    /// it, and the two ankle→toe vectors differ by 8°. Mapping it would make 足首 aim at it and bake that 8° into every
+    /// frame. The ankle is driven by the world-delta instead — see <see cref="MmdRetargetPlan"/> rule ②.
     /// </summary>
     public static class MmdBoneMap
     {
@@ -53,9 +58,42 @@ namespace Sdo.Game
             { "右小指１", "Bip01_R_Finger4" },  { "右小指２", "Bip01_R_Finger41" }, { "右小指３", "Bip01_R_Finger42" },
         };
 
+        // Aim must continue along the SAME semantic chain. FEMALE.HRC stores siblings in file order, where Spine's
+        // first mapped child is R_Thigh and Neck's is R_Clavicle; choosing the first mapped child therefore bends the
+        // torso toward a leg and the neck toward a shoulder. A wrist deliberately has no continuation: arbitrarily
+        // aiming it at one of five fingers is worse than keeping the parent's orientation.
+        private static readonly Dictionary<string, string> AimChild = BuildAimChildMap();
+
+        private static Dictionary<string, string> BuildAimChildMap()
+        {
+            var map = new Dictionary<string, string>
+            {
+                { "Bip01", "Bip01_Pelvis" },
+                { "Bip01_Pelvis", "Bip01_Spine" },
+                { "Bip01_Spine", "Bip01_Spine1" },
+                { "Bip01_Spine1", "Bip01_Neck" },
+                { "Bip01_Neck", "Bip01_Head" },
+            };
+            foreach (string side in new[] { "L", "R" })
+            {
+                map[$"Bip01_{side}_Clavicle"] = $"Bip01_{side}_UpperArm";
+                map[$"Bip01_{side}_UpperArm"] = $"Bip01_{side}_Forearm";
+                map[$"Bip01_{side}_Forearm"] = $"Bip01_{side}_Hand";
+                map[$"Bip01_{side}_Thigh"] = $"Bip01_{side}_Calf";
+                map[$"Bip01_{side}_Calf"] = $"Bip01_{side}_Foot";
+                foreach (string finger in new[] { "Finger0", "Finger1", "Finger2", "Finger3", "Finger4" })
+                {
+                    map[$"Bip01_{side}_{finger}"] = $"Bip01_{side}_{finger}1";
+                    map[$"Bip01_{side}_{finger}1"] = $"Bip01_{side}_{finger}2";
+                }
+            }
+            return map;
+        }
+
         /// <summary>The MMD bone whose world POSITION carries the whole body's root translation (センター → Bip01).</summary>
         public const string RootMmdBone = "センター";
 
         public static bool TryGetBip01(string mmdName, out string bip01) => ToBip01.TryGetValue(mmdName ?? "", out bip01);
+        public static bool TryGetAimChild(string bip01, out string child) => AimChild.TryGetValue(bip01 ?? "", out child);
     }
 }
