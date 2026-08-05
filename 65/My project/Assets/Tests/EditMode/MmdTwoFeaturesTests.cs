@@ -123,6 +123,18 @@ namespace Sdo.Tests
             Assert.IsFalse(RoomConfig.IsMmdNone("IkaHatunemiku2025"));
         }
 
+        [Test]
+        public void The_Model_Dropdown_Always_Lists_None_First()
+        {
+            // 「不使用」是下拉的第一列，後面才是裝了哪些模型 —— 那是「我不要 MMD」唯一的入口
+            // （沒有另外的總開關），排到中間就等於藏起來了。
+            var names = MmdAvatarSwap.ModelNames();
+            Assert.AreEqual(MmdAvatarSwap.Models.Count + 1, names.Length, "清單＝不使用 ＋ 裝了幾個模型");
+            Assert.AreEqual(RoomConfig.mmdModelNone, names[0]);
+            for (int i = 0; i < MmdAvatarSwap.Models.Count; i++)
+                Assert.AreEqual(MmdAvatarSwap.Models[i].Name, names[i + 1], "後面照掃到的順序，不再插隊");
+        }
+
         [SetUp]
         public void Reset()
         {
