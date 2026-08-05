@@ -118,7 +118,7 @@ namespace Sdo.Game
             if (want != null && Sel != null) RoomConfig.mmdModel = Sel.Name;   // -mmdmodel 也走設定值,之後的比對才不會一直當成「變了」
             inst._applied = Snapshot();
             Log($"[mmd] armed — 設定在 config.ini [Mmd] / 開場設定面板的 MMD 分頁。" +
-                $"我自己={(UseLocalMmd ? "MMD" : "SDO 原角色")}, 看別人的 MMD={(RoomConfig.mmdShowOthers ? "開" : "關")}. " +
+                $"我自己={(UseLocalMmd ? "MMD" : "SDO 原角色")}, 顯示他人模型={(RoomConfig.mmdShowOthers ? "開" : "關")}. " +
                 (cli ? "-mmd → 這次啟動強制用模型. " : "") + ModelSummary());
             if (UseLocalMmd) inst.StartCoroutine(inst.PrewarmCo());
         }
@@ -365,9 +365,9 @@ namespace Sdo.Game
             }
             else if (now.ShowOthers != _applied.ShowOthers)
             {
-                // 「看別人的 MMD」只牽動遠端角色 —— 我自己身上那具與這個開關無關。
+                // 「顯示他人模型」只牽動遠端角色 —— 我自己身上那具與這個開關無關。
                 _applied = now;
-                Log($"[mmd] 看別人的 MMD → {(now.ShowOthers ? "開" : "關")}");
+                Log($"[mmd] 顯示他人模型 → {(now.ShowOthers ? "開" : "關")}");
                 RebuildWhere(r => r.Remote);
             }
             else if (now.LilToon != _applied.LilToon)

@@ -54,7 +54,7 @@ assets/MODEL/<包名>/<包名>/<包名>/01-モデル/<角色>/xxx.pmx
 | `mmdShowOthers` | **看不看得到別人的 MMD 模型**(1=看,預設)。與上面那個互相獨立:可以自己維持 SDO 原角色卻看得到別人的 MMD,也可以反過來 |
 | `mmdPhysics` | 頭髮/裙擺布料模擬。**嫌進場慢就關這個** —— 布料是建一隻 MMD 角色最貴的一段 |
 | `mmdGravity` / `mmdStiffness` / `mmdColliderScale` | 布料手感:重力倍率 / 硬度 / 身體碰撞半徑倍率 |
-| `mmdLilToon` | **著色後端**:1(預設)= lilToon(有光照 + 邊緣光),0 = MMD 原本的畫法。見下面「著色後端」 |
+| `mmdLilToon` | **著色後端**:0(預設)= MMD 原本的畫法(unlit,模型該長的樣子),1 = lilToon(有光照 + 邊緣光)。見下面「著色後端」 |
 | `mmdToon` / `mmdOutline` | 卡通著色(明暗分兩段的陰影分界,**預設關**:舞台燈光會在臉上切出很硬的一條線)/ 描邊 |
 | ~~`mmdSphere` / `mmdFlipV` / `mmdAim` / `mmdRootMotion`~~ | **不在面板上**:sphere 反光與貼圖 V 翻轉是模型該長的樣子,aim 重定向與根骨位移是「人要動得對」的前提 —— 一律開著。關掉只在對照「哪一邊才對」時有意義(開發用),要關就手改 `config.ini`(值都還在) |
 
@@ -68,9 +68,9 @@ assets/MODEL/<包名>/<包名>/<包名>/01-モデル/<角色>/xxx.pmx
 
 ## 著色後端:MMD 原本的畫法 vs lilToon
 
-`config.ini [Mmd] mmdLilToon`(設定面板 MMD 分頁「lilToon 渲染」)在兩套著色之間切。**這是換一整套,不是加效果** —— 開/關會重建身體(材質是整個模型共用的)。
+`config.ini [Mmd] mmdLilToon`(設定面板 MMD 分頁「lilToon 著色」)在兩套著色之間切。**這是換一整套,不是加效果** —— 開/關會重建身體(材質是整個模型共用的)。
 
-| | `mmdLilToon=0` | `mmdLilToon=1`(預設) |
+| | `mmdLilToon=0`(預設) | `mmdLilToon=1` |
 |---|---|---|
 | shader | `Sdo/MmdModel`(`Assets/Shaders/MmdModel.shader`) | lilToon(`Assets/lilToon`,MIT) |
 | 明暗 | unlit,模型自帶的 toon ramp 直接貼 | 兩段式 cel 陰影(border/blur 決定分界,不是貼 ramp) |
@@ -183,7 +183,7 @@ cp "/tmp/lilToon/Assets/lilToon.meta" "65/My project/Assets/lilToon.meta"
 **會出事的三種模型**
 
 1. **英文骨名**:重定向表 `MmdBoneMap.cs` 的 key 是 MMD 準標準**日文**骨名(センター/上半身/左腕/左ひざ…)。骨名不是這套 → 沒有骨頭被驅動 → 模型站著不動。同包有 JP 版就自動挑 JP,正是為此。
-2. **剛體命名很特別**:`MmdMagicaCloth.GroupOf()` 用剛體名稱的關鍵字把布料分成 4 組(瀏海 `Bang|前髪` / 裙子 `Dress|Skirt|スカート|裙` / 領帶 `Tie|ネクタイ` / 其餘算頭髮)分別套手感參數。名稱對不上不會壞掉,只是全部落進「頭髮」那組,裙子可能偏硬或偏軟 —— 用設定面板的布料重力/硬度即時調。
+2. **剛體命名很特別**:`MmdMagicaCloth.GroupOf()` 用剛體名稱的關鍵字把布料分成 4 組(瀏海 `Bang|前髪` / 裙子 `Dress|Skirt|スカート|裙` / 領帶 `Tie|ネクタイ` / 其餘算頭髮)分別套手感參數。名稱對不上不會壞掉,只是全部落進「頭髮」那組,裙子可能偏硬或偏軟 —— 用設定面板的布料重力/剛性即時調。
 3. **貼圖 V 翻轉**:少數模型 UV 是反的(領帶/腰帶最容易看出來)→ `config.ini` 的 `mmdFlipV=0`(面板上沒有這一列)。
    ⚠️ **但如果是「一部分貼圖正、一部分上下顛倒」,那不是 UV 的問題,別去動 `mmdFlipV`**(調它只會把本來
    正的那部分也弄反)。那是**不同圖檔格式走了不同的解碼路徑**:一個模型可以 PNG / TGA / BMP 混著用

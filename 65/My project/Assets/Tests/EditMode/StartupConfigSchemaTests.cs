@@ -232,7 +232,7 @@ namespace Sdo.Tests
         [Test]
         public void Mmd_Settings_Write_Through_To_RoomConfig()
         {
-            // 「用不用 MMD」不再是一個布林總開關 —— 它就是「我用的模型」那一列（(不使用) 是其中一個選項）。
+            // 「用不用 MMD」不再是一個布林總開關 —— 它就是「使用模型」那一列（(不使用) 是其中一個選項）。
             Assert.IsNull(StartupConfigSchema.ByKey("mmdEnabled"), "mmdEnabled 已淘汰，設定面板不該還有這一列");
 
             var others = StartupConfigSchema.ByKey("mmdShowOthers");

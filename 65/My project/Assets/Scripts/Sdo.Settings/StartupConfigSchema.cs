@@ -432,7 +432,7 @@ namespace Sdo.Settings
             // 現在整組搬進這裡 → 跟其它設定一樣寫進 config.ini，下次開遊戲還在。
             f.Add(new ConfigField
             {
-                Key = "mmdModel", Category = CatMmd, Label = "我用的模型", Kind = ConfigFieldKind.Choice,
+                Key = "mmdModel", Category = CatMmd, Label = "使用模型", Kind = ConfigFieldKind.Choice,
                 ChoicesProvider = () => MmdModelsProvider?.Invoke(),
                 UnknownChoiceText = cur => cur.Length == 0 ? "(自動：第一個)" : cur + "(找不到)",
                 Help = "★選了就是要用它 —— 沒有另外的總開關。第一個選項「" + RoomConfig.mmdModelNone + "」＝維持 SDO 原角色。"
@@ -441,20 +441,20 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "mmdShowOthers", Category = CatMmd, Label = "看別人的 MMD 模型", Kind = ConfigFieldKind.Toggle,
+                Key = "mmdShowOthers", Category = CatMmd, Label = "顯示他人模型", Kind = ConfigFieldKind.Toggle,
                 Help = "開(預設)＝同房的人穿 MMD 模型時，你也看得到（本機沒有就自動跟伺服器下載）。關＝別人一律照他的 SDO 穿搭顯示，而且完全不下載。"
-                     + "★這與上面「我用的模型」互相獨立：可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。",
+                     + "★這與上面「使用模型」互相獨立：可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。",
                 Get = () => B(RoomConfig.mmdShowOthers), Set = v => RoomConfig.mmdShowOthers = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdShareModel", Category = CatMmd, Label = "分享模型給同房", Kind = ConfigFieldKind.Toggle,
+                Key = "mmdShareModel", Category = CatMmd, Label = "分享模型", Kind = ConfigFieldKind.Toggle,
                 Help = "開(預設)＝把你的模型上傳給伺服器,同房的人也看得到你的 MMD。關＝別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。★很多 MMD 模型的使用規約禁止再配布,這個開關就是為此存在的。",
                 Get = () => B(RoomConfig.mmdShareModel), Set = v => RoomConfig.mmdShareModel = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdPhysics", Category = CatMmd, Label = "頭髮裙擺物理", Kind = ConfigFieldKind.Toggle,
+                Key = "mmdPhysics", Category = CatMmd, Label = "布料物理模擬", Kind = ConfigFieldKind.Toggle,
                 Help = "布料模擬（頭髮/裙擺/領帶）。★嫌換場景進遊戲慢就關這個 —— 布料求解是建一隻 MMD 角色最貴的一段。",
                 Get = () => B(RoomConfig.mmdPhysics), Set = v => RoomConfig.mmdPhysics = ParseBool(v),
             });
@@ -467,21 +467,21 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "mmdStiffness", Category = CatMmd, Label = "布料硬度", Kind = ConfigFieldKind.Slider,
+                Key = "mmdStiffness", Category = CatMmd, Label = "布料剛性", Kind = ConfigFieldKind.Slider,
                 Min = 0.03f, Max = 0.9f, Unit = "×",
                 Help = "回彈到原本造型的力道。低＝軟趴趴被重力拉直；高＝硬挺、甩不太動（雙馬尾那種被作者鎖死的部位本來就接近硬的）。",
                 Get = () => Num(RoomConfig.mmdStiffness), Set = v => RoomConfig.mmdStiffness = ParseFloat(v, RoomConfig.mmdStiffness),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdColliderScale", Category = CatMmd, Label = "身體碰撞半徑", Kind = ConfigFieldKind.Slider,
+                Key = "mmdColliderScale", Category = CatMmd, Label = "碰撞體半徑", Kind = ConfigFieldKind.Slider,
                 Min = 0.2f, Max = 4f, Unit = "×",
                 Help = "布料撞身體用的碰撞體半徑倍率。太小＝裙子穿過腿；太大＝裙子被撐飛。",
                 Get = () => Num(RoomConfig.mmdColliderScale), Set = v => RoomConfig.mmdColliderScale = ParseFloat(v, RoomConfig.mmdColliderScale),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdProfile", Category = CatMmd, Label = "這個模型的物理", Kind = ConfigFieldKind.Action,
+                Key = "mmdProfile", Category = CatMmd, Label = "物理設定檔", Kind = ConfigFieldKind.Action,
                 Actions = new[] { "存檔", "還原" },
                 Help = "「存檔」＝把現在跑的物理數值(轉換值 × 上面那幾根滑桿)寫成模型資料夾裡的 physics.ini,之後這個模型就照它跑,換別的模型不受影響。「還原」＝刪掉那個檔,回到直接從 .pmx 轉換的值。右邊顯示現在用的是哪一種。",
                 Invoke = i => i == 0 ? MmdProfileSave?.Invoke() : MmdProfileDelete?.Invoke(),
@@ -489,30 +489,30 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "mmdScale", Category = CatMmd, Label = "模型大小", Kind = ConfigFieldKind.Slider,
+                Key = "mmdScale", Category = CatMmd, Label = "模型縮放", Kind = ConfigFieldKind.Slider,
                 Min = 0.3f, Max = 3f, Unit = "×",
                 Help = "1＝自動把模型縮放到跟 SDO 舞者一樣高（每個模型的原始尺寸差很多，所以預設是自動對齊）。覺得這個模型看起來偏大/偏小就在這裡乘上去。",
                 Get = () => Num(RoomConfig.mmdScale), Set = v => RoomConfig.mmdScale = ParseFloat(v, RoomConfig.mmdScale),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdLilToon", Category = CatMmd, Label = "lilToon 渲染", Kind = ConfigFieldKind.Toggle,
-                Help = "開(預設)＝用 lilToon 著色：有光照、邊緣光、描邊會跟著明暗變色。"
-                     + "關＝照 MMD 原本的畫法（unlit、模型自帶的 toon ramp 直接貼、純色鉛筆描邊）。"
+                Key = "mmdLilToon", Category = CatMmd, Label = "lilToon 著色", Kind = ConfigFieldKind.Toggle,
+                Help = "開＝用 lilToon 著色：有光照、邊緣光、描邊會跟著明暗變色。"
+                     + "關(預設)＝照 MMD 原本的畫法（unlit、模型自帶的 toon ramp 直接貼、純色鉛筆描邊）。"
                      + "★這是換一整套著色，不是加效果 —— 開/關會重建身體。"
                      + "★注意 lilToon 吃光照，開了會自動補一顆平行光（其它東西全是 unlit，不受影響）。",
                 Get = () => B(RoomConfig.mmdLilToon), Set = v => RoomConfig.mmdLilToon = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdToon", Category = CatMmd, Label = "卡通著色", Kind = ConfigFieldKind.Toggle,
+                Key = "mmdToon", Category = CatMmd, Label = "卡通陰影", Kind = ConfigFieldKind.Toggle,
                 Help = "明暗只分兩段的卡通上色（開著 lilToon 時＝它的 cel 陰影分界）。"
                      + "關(預設)＝平光；舞台燈光會在臉上切出很硬的一條分界，所以預設不開。",
                 Get = () => B(RoomConfig.mmdToon), Set = v => RoomConfig.mmdToon = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdOutline", Category = CatMmd, Label = "描邊", Kind = ConfigFieldKind.Toggle,
+                Key = "mmdOutline", Category = CatMmd, Label = "輪廓描邊", Kind = ConfigFieldKind.Toggle,
                 Help = "模型自帶的鉛筆描邊（edge）。關＝沒有黑邊。",
                 Get = () => B(RoomConfig.mmdOutline), Set = v => RoomConfig.mmdOutline = ParseBool(v),
             });
