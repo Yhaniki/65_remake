@@ -407,6 +407,14 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void GroupLabel_Shows_The_Group_And_How_Far_Along_It_Is()
+        {
+            Assert.AreEqual("Pack　(3/12)", ExternalSongLibrary.GroupLabel("Pack", 3, 12));
+            Assert.AreEqual("(1/1)", ExternalSongLibrary.GroupLabel("", 1, 1), "群組名讀不到就只剩序號");
+            Assert.AreEqual("(1/1)", ExternalSongLibrary.GroupLabel(null, 1, 1));
+        }
+
+        [Test]
         public void A_Song_Still_On_Disk_Keeps_Its_Gn_Across_A_Rescan()
         {
             // Drop + re-register is only safe because the gn is content-derived: the favourite and the restored

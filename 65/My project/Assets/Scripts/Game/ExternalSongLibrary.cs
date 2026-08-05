@@ -67,8 +67,8 @@ namespace Sdo.Game
         /// The bar stays determinate: the walk finishes first, and its folder count is the denominator (a folder can
         /// yield several songs, so the bar counts FOLDERS, not songs). Catalog registration stays on the main thread.
         ///
-        /// <paramref name="onProgress"/> is (fraction 0..1, folder line, detail line): the folder currently being read
-        /// (group / name — updated BEFORE each folder loads, so on a big library the names flick past under the bar),
+        /// <paramref name="onProgress"/> is (fraction 0..1, group line, detail line): the GROUP currently being read
+        /// (name + 第幾個/共幾個 — 一個群組整批掃完才換，所以那一行是一個一個走完，不是十幾個名字同時亂跳），
         /// and a detail line with the last song found + a running total. The boot overlay shows both under the bar.
         ///
         /// RE-RUNNABLE: the same coroutine is what 選歌 → 分類瀏覽 → 更新 runs to pick up songs added / edited /
@@ -211,6 +211,15 @@ namespace Sdo.Game
             return sb.ToString();
         }
 
+        /// <summary>載入條上那一行：正在掃的群組 + 它是第幾個。一個群組整批掃完才換一次 —— 玩家看得清楚現在走到哪，
+        /// 而不是十幾個群組同時在跳。群組名讀不到（空字串）就只顯示序號。純字串組合 —— public for tests。</summary>
+        public static string GroupLabel(string group, int index, int count)
+        {
+            string n = "(" + index + "/" + count + ")";
+            group = group ?? "";
+            return group.Length == 0 ? n : group + "　" + n;
+        }
+
         private static void Report(Action<float, string, string> onProgress, ScanJob job)
         {
             int total = job.Total;   // 0 while the tree is still being walked → hold the bar at its floor
@@ -266,6 +275,11 @@ namespace Sdo.Game
                 // the deterministic alphabetical walk order (external fileIds are assigned from it); only the progress
                 // counters are shared, and those go through Interlocked. Songs is filled single-threaded afterwards.
                 //
+                // 平行的單位是「資料夾」，但**順序的單位是群組**：worklist 先切成一群一批
+                // (ExternalSongScanner.GroupWorklist)，一批做完才做下一批。全部丟進同一個 Parallel.For 時，進度列的
+                // 群組名是十幾條執行緒互相蓋寫的，玩家看到的是一堆群組同時在跳；一批一批做則是一次只有一個群組在跑，
+                // 名字停在那裡直到它掃完。批內照樣吃滿所有核心，所以整體時間幾乎沒差（只有每批結尾那一小段收尾）。
+                //
                 // Before parsing a folder we check the cache (loaded on the main thread, read-only here → safe to share):
                 // if its source files are unchanged since last boot we reuse the parsed result (only re-reading the tiny
                 // sidecar, for a disc built since), skipping the expensive chart parse + star-rating entirely. lines[i] is
@@ -274,62 +288,57 @@ namespace Sdo.Game
                 var lines = new ExternalScanCache.Folder[work.Count];
                 int done = 0, found = 0;
                 var opts = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) };
-                try
+                var batches = ExternalSongScanner.GroupWorklist(work);
+                for (int b = 0; b < batches.Count; b++)
                 {
-                    Parallel.For(0, work.Count, opts, i =>
+                    var batch = batches[b];
+                    _folder = ExternalSongLibrary.GroupLabel(batch.Group, b + 1, batches.Count);   // 整批掃完才換 → 名字不會亂跳
+                    try
                     {
-                        var sd = work[i];
-                        _folder = FolderLabel(sd);   // racy across threads — it only drives the boot bar's flicker
-                        try
+                        Parallel.For(0, batch.Indices.Count, opts, k =>
                         {
-                            string sig = ExternalScanCache.Signature(sd.Path);
-                            List<ExternalSong> f;
-                            string packId;
-                            if (sig.Length > 0 && _cache.TryGetValue(sd.Path, out var hit) && hit.sig == sig)
+                            int i = batch.Indices[k];
+                            var sd = work[i];
+                            try
                             {
-                                f = ExternalScanCache.FromFolder(hit);                        // reuse — no parse
-                                foreach (var s in f) ExternalSongScanner.ReapplySidecar(s);   // pick up a disc built since caching
-                                ExternalSongScanner.ApplyServerConfig(f, sd.Path);            // 包的 serverconfig 在隔壁資料夾 → 不在快取簽章裡，每次重讀
-                                packId = hit.packId ?? "";                                    // 快取命中就沿用:sig 沒變 → 可傳的檔沒變 → packId 一定沒變
+                                string sig = ExternalScanCache.Signature(sd.Path);
+                                List<ExternalSong> f;
+                                string packId;
+                                if (sig.Length > 0 && _cache.TryGetValue(sd.Path, out var hit) && hit.sig == sig)
+                                {
+                                    f = ExternalScanCache.FromFolder(hit);                        // reuse — no parse
+                                    foreach (var s in f) ExternalSongScanner.ReapplySidecar(s);   // pick up a disc built since caching
+                                    ExternalSongScanner.ApplyServerConfig(f, sd.Path);            // 包的 serverconfig 在隔壁資料夾 → 不在快取簽章裡，每次重讀
+                                    packId = hit.packId ?? "";                                    // 快取命中就沿用:sig 沒變 → 可傳的檔沒變 → packId 一定沒變
+                                }
+                                else
+                                {
+                                    f = ExternalSongScanner.LoadFolder(sd.Group, sd.Path);        // cold / changed → parse
+                                    // 缺歌傳檔用的跨電腦身分。只在 cold/changed 時算(要讀譜面算 SHA-256),
+                                    // 之後都吃快取 —— 不然每次開機都要把整個歌庫的譜面重讀一遍。
+                                    packId = SongPackScan.Compute(sd.Path) ?? "";
+                                }
+                                if (f != null) foreach (var s in f) if (s != null) s.PackId = packId;
+                                results[i] = f;   // one folder can hold several songs (several sets / several .sm)
+                                if (sig.Length > 0) lines[i] = ExternalScanCache.ToFolder(sd.Path, sig, f, packId);   // don't cache unreadable folders
+                                if (f != null && f.Count > 0)
+                                {
+                                    _found = Interlocked.Add(ref found, f.Count);
+                                    _current = f[f.Count - 1].Title ?? "";
+                                }
                             }
-                            else
-                            {
-                                f = ExternalSongScanner.LoadFolder(sd.Group, sd.Path);        // cold / changed → parse
-                                // 缺歌傳檔用的跨電腦身分。只在 cold/changed 時算(要讀譜面算 SHA-256),
-                                // 之後都吃快取 —— 不然每次開機都要把整個歌庫的譜面重讀一遍。
-                                packId = SongPackScan.Compute(sd.Path) ?? "";
-                            }
-                            if (f != null) foreach (var s in f) if (s != null) s.PackId = packId;
-                            results[i] = f;   // one folder can hold several songs (several sets / several .sm)
-                            if (sig.Length > 0) lines[i] = ExternalScanCache.ToFolder(sd.Path, sig, f, packId);   // don't cache unreadable folders
-                            if (f != null && f.Count > 0)
-                            {
-                                _found = Interlocked.Add(ref found, f.Count);
-                                _current = f[f.Count - 1].Title ?? "";
-                            }
-                        }
-                        catch { /* a bad folder must never abort the scan */ }
-                        _done = Interlocked.Increment(ref done);
-                    });
+                            catch { /* a bad folder must never abort the scan */ }
+                            _done = Interlocked.Increment(ref done);
+                        });
+                    }
+                    catch (AggregateException) { /* per-folder errors are already swallowed; guard the whole loop anyway */ }
                 }
-                catch (AggregateException) { /* per-folder errors are already swallowed; guard the whole loop anyway */ }
 
                 foreach (var list in results)
                     if (list != null && list.Count > 0) Songs.AddRange(list);
                 foreach (var ln in lines)
                     if (ln != null) CacheLines.Add(ln);   // in worklist order; the coroutine persists them (prunes gone folders)
                 _folder = "";
-            }
-
-            // "group / folderName" for the boot bar — what the player sees being read. Path's leaf is the folder name.
-            private static string FolderLabel(ExternalSongScanner.SongDir d)
-            {
-                string name = "";
-                try { name = new System.IO.DirectoryInfo(d.Path).Name; } catch { }
-                string group = d.Group ?? "";
-                if (group.Length == 0) return name;
-                if (name.Length == 0 || string.Equals(name, group, StringComparison.OrdinalIgnoreCase)) return group;
-                return group + " / " + name;
             }
         }
 

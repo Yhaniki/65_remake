@@ -705,6 +705,63 @@ namespace Sdo.Tests
             Assert.AreEqual(5, songs[0].Charts[2].NoteCount, "短長條收成 tap → 少一次放開判定");
         }
 
+        // ---- GroupWorklist（掃描的順序單位＝群組，批內才平行）----
+
+        private static List<ExternalSongScanner.SongDir> Work(params string[] groups)
+        {
+            var w = new List<ExternalSongScanner.SongDir>();
+            for (int i = 0; i < groups.Length; i++)
+                w.Add(new ExternalSongScanner.SongDir { Group = groups[i], Path = "d" + i });
+            return w;
+        }
+
+        [Test]
+        public void GroupWorklist_Batches_By_Group_In_First_Seen_Order()
+        {
+            var b = ExternalSongScanner.GroupWorklist(Work("A", "A", "B"));
+
+            Assert.AreEqual(2, b.Count);
+            Assert.AreEqual("A", b[0].Group);
+            CollectionAssert.AreEqual(new[] { 0, 1 }, b[0].Indices);
+            Assert.AreEqual("B", b[1].Group);
+            CollectionAssert.AreEqual(new[] { 2 }, b[1].Indices);
+        }
+
+        [Test]
+        public void GroupWorklist_Gathers_A_Group_Whose_Folders_Are_Not_Adjacent()
+        {
+            // root 底下的單曲資料夾全掛 rootGroup，會跟各個 pack 在 worklist 裡交錯 —— 那些不相連的位置
+            // 必須收攏成同一批，不然同一個群組名會在載入條上出現好幾次。
+            var b = ExternalSongScanner.GroupWorklist(Work("Songs", "Pack", "Songs", "Pack"));
+
+            Assert.AreEqual(2, b.Count);
+            CollectionAssert.AreEqual(new[] { 0, 2 }, b[0].Indices);
+            CollectionAssert.AreEqual(new[] { 1, 3 }, b[1].Indices);
+        }
+
+        [Test]
+        public void GroupWorklist_Merges_Case_Variants_And_Covers_Every_Folder()
+        {
+            // 不同 root 可能把同一個群組寫成不同大小寫；顯示名取第一次出現的那個。
+            var b = ExternalSongScanner.GroupWorklist(Work("Pack", "PACK", "", ""));
+
+            Assert.AreEqual(2, b.Count);
+            Assert.AreEqual("Pack", b[0].Group);
+            CollectionAssert.AreEqual(new[] { 0, 1 }, b[0].Indices);
+            Assert.AreEqual("", b[1].Group, "群組名讀不到的資料夾自成一批");
+
+            int total = 0;
+            foreach (var g in b) total += g.Indices.Count;
+            Assert.AreEqual(4, total, "每個資料夾都要恰好被分到一批 —— 漏一個就等於漏掃一個資料夾");
+        }
+
+        [Test]
+        public void GroupWorklist_Handles_An_Empty_Worklist()
+        {
+            Assert.AreEqual(0, ExternalSongScanner.GroupWorklist(null).Count);
+            Assert.AreEqual(0, ExternalSongScanner.GroupWorklist(new List<ExternalSongScanner.SongDir>()).Count);
+        }
+
         [Test]
         public void Osu_Note_Count_Counts_The_Hold_Release_Too()
         {

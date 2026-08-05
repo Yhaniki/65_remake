@@ -105,6 +105,43 @@ namespace Sdo.Osu
             return work;
         }
 
+        /// <summary>一個群組要載入的資料夾（<see cref="Indices"/> 是它們在 worklist 裡的位置，順序即 worklist 順序）。</summary>
+        public sealed class GroupBatch
+        {
+            public string Group = "";
+            public readonly List<int> Indices = new List<int>();
+        }
+
+        /// <summary>
+        /// 把 worklist 切成「一個群組一批」。掃描端依這個順序**一批一批**做（批內才平行），
+        /// 進度列上的群組名才會是一個一個走完，而不是十幾個群組同時在跳。
+        ///
+        /// 群組順序 = 它在 worklist 裡第一次出現的順序（也就是 <see cref="BuildWorklist"/> 的字母序走訪順序）；
+        /// 同一個群組的資料夾在 worklist 裡不一定相連（root 底下的單曲資料夾都掛 rootGroup，會跟各個 pack 交錯），
+        /// 所以是「依名字收攏」而不是「切連續區段」。名字比對忽略大小寫（不同 root 可能大小寫不同），
+        /// 顯示用的名字取第一次出現的那個。純函式 —— 不碰檔案系統。
+        /// </summary>
+        public static List<GroupBatch> GroupWorklist(IReadOnlyList<SongDir> work)
+        {
+            var batches = new List<GroupBatch>();
+            if (work == null) return batches;
+            var byName = new Dictionary<string, GroupBatch>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < work.Count; i++)
+            {
+                var d = work[i];
+                if (d == null) continue;
+                string g = d.Group ?? "";
+                if (!byName.TryGetValue(g, out var b))
+                {
+                    b = new GroupBatch { Group = g };
+                    byName[g] = b;
+                    batches.Add(b);
+                }
+                b.Indices.Add(i);
+            }
+            return batches;
+        }
+
         private static void Collect(List<SongDir> work, string dir, string group, int depth, HashSet<string> visited)
         {
             string full;
