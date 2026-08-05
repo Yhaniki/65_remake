@@ -150,8 +150,11 @@ cp "/tmp/lilToon/Assets/lilToon.meta" "65/My project/Assets/lilToon.meta"
 * 模型的身分是**內容指紋** `packId`(`ModelPackId`,全檔 SHA-256),與外部歌用的是同一套機制與同一條傳檔管線
   (`kind=model`)。同一份模型在兩台機器上算出同一個 id → server 已經有就是**零上傳**,每次進房不會重傳。
 * 你的 `packId` 放在外觀裡(`setLook` 的 `mmd` 欄位)跟著房間快照廣播 —— 它就是外觀的一部分。
-* 別人傳來的模型放 `DATA/MODEL/.net/<hex>/`。開頭的點讓它**不會出現在設定面板的模型清單裡**
-  (那是別人的模型,不是你裝的)。
+* 別人傳來的模型放 `DATA/ADDON/MODEL/.net/<hex>/` —— 跟你自己丟模型的那一層同一棵樹
+  (`AddonFolder=` 指到別顆碟時它跟著走,而且 ADDON 永遠不會被打包進 pak)。
+  開頭的點讓它**不會出現在設定面板的模型清單裡**(那是別人的模型,不是你裝的)。
+* 傳輸中房間上方那一格會有跑條:**條掛在模型主人那一格**(下載中的是你,但畫面上要變樣子的是他)。
+  綠 = 下載、藍 = 上傳,與缺歌的跑條同一條版位。
 * 下載回來會自己重算一次 packId,對不上就整包丟掉 —— 不把「server 一定是好的」當前提。
 * **歌永遠優先**:缺歌會擋住整場比賽,模型只是外觀。所以只要有歌在傳,模型這條就一步都不動。
 
@@ -229,7 +232,7 @@ python tools/mmd_cloth_validate/compare.py        # 對真值 → report.md
 |---|---|
 | `Assets/Scripts/Game/MmdModelCatalog.cs` | 掃 DATA/MODEL:一包 → 0..n 個模型,語系版本合併 + 組立キット 篩選(純邏輯 + 單元測試) |
 | `Assets/Scripts/Game/MmdAvatarSwap.cs` | 讀 `config.ini [Mmd]`、模型選擇、解析快取、每隻角色的 SDO⇄MMD 切換(遠端角色各用各的模型) |
-| `Assets/Scripts/Game/MmdModelStore.cs` | packId ⇄ 本機資料夾;下載區 `DATA/MODEL/.net/` |
+| `Assets/Scripts/Game/MmdModelStore.cs` | packId ⇄ 本機資料夾;下載區 `DATA/ADDON/MODEL/.net/` |
 | `Assets/Scripts/Sdo.Osu/ModelPackId.cs` | 模型的內容指紋(全檔 SHA-256)+ 整包驗證 |
 | `Assets/Scripts/Sdo.Osu/ModelPackFilter.cs` | 哪些檔可以傳(client 與 server 編同一份) |
 | `Assets/Scripts/UI/Core/NetModelTransfer.cs` | 上傳/下載的編排(歌優先、失敗不重試到底) |

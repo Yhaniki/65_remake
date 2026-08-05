@@ -56,6 +56,8 @@ namespace Sdo.Game
             public bool Framed;           // 取景已凍結?
             public bool Rendered;         // 這張 RT 至少拍過一次 → 之後永遠有畫面可以顯示(見 Texture)
             public float DistModel;       // 模型空間的相機距離 —— **只有這個凍結**(頭的大小不能忽大忽小)
+            public bool MmdFramed;        // 上一幀是照 MMD 的頭取景的(見 AimFromMmd)—— 換回 SDO 時要重新凍結 dist
+            public MmdAvatar Mmd;         // 抓 Rends 那一刻這隻身上掛的 MMD(換了就要重抓,見 Refresh)
         }
 
         private readonly Dictionary<int, Slot> _slots = new Dictionary<int, Slot>();
@@ -164,7 +166,22 @@ namespace Sdo.Game
             // 而漏掉的話舊陣列裡全是已銷毀的 renderer → 這一格會凍在舊畫面上。
             if (s.Rends == null || s.Root != root) Refresh(s);
             if (s.Rends == null || s.Rends.Length == 0) return false;
-            if (!s.Framed && !TryFreeze(s, av)) return false;
+
+            // 🔴 這一隻正在畫 MMD 模型的話,取景一定要走 MMD 的頭(見 AimFromMmd)——
+            //    SDO 那具被藏起來只是 renderer.enabled=false,mesh 還在、bounds 照樣算得出來,
+            //    所以照 "FACE" 量框不會失敗,只會安靜地對準**一張看不見的臉**,而畫面上是 MMD 的頭。
+            bool mmd = AimFromMmd(av, root, out Vector3 aimLocal, out float mmdDist);
+            if (mmd)
+            {
+                if (!s.MmdFramed) { s.MmdFramed = true; s.Framed = false; }   // 換上 MMD → SDO 那份凍結作廢
+                s.DistModel = mmdDist;   // MMD 的框本來就穩定(純頭骨算的,髮/角/帽子不參與),不必凍結
+            }
+            else
+            {
+                if (s.MmdFramed) { s.MmdFramed = false; s.Framed = false; }   // 換回 SDO → 重新量一次
+                if (!s.Framed && !TryFreeze(s, av)) return false;
+                if (!AimFromFace(s, out aimLocal)) return false;
+            }
 
             // 只補「root 骨的平移」(走路時整個人前進/浮沉),頭自己的擺動不補 —— 擺動要在框內演出,
             // 相機跟著擺的話頭反而看起來是靜止的(這條與本機那顆的處理一致)。
@@ -176,9 +193,6 @@ namespace Sdo.Game
             // (實測症狀:客戶端看到的房主頭貼只露到頭髮,而同一隻角色在他自己機器上是正的)。
             // 每幀從活的臉框算中心 → 頭永遠在框裡,而大小仍然穩定。
             // 成本:一幀只拍一格,對那一格的 9 個 renderer 取一次 bounds 聯集,可忽略。
-            Vector3 aimLocal;
-            if (!AimFromFace(s, out aimLocal)) return false;
-
             // 相機的位置與朝向**在角色自己的座標系裡**算,再一起變換到世界 ——
             // 幾何與本機那顆(相機固定在 -Z、轉的是 avatar)逐項相同,不必自己推「臉朝哪個世界方向」。
             // (第一版自己推方向 → 拍到後腦:模型的臉是 +Z,而房間裡「面向鏡頭」是 yaw 180,兩個負號疊起來就反了。)
@@ -203,6 +217,31 @@ namespace Sdo.Game
             }
             s.Rendered = true;
             return true;
+        }
+
+        /// <summary>
+        /// 這一隻正在畫 MMD 模型 → 照**模型的頭**取景,回傳角色座標系的中心與相機距離。
+        /// 沒在畫 MMD(或模型量不出頭)回 false,呼叫端就走原本的 SDO 臉框那條。
+        ///
+        /// 與本機那顆(<see cref="RoomHeadPortrait.UpdateCam"/>)走的是同一組 API 與同一組常數
+        /// (<see cref="MmdAvatar.FramePortrait"/> —— MMD 的框是「純頭」,SDO 那個是頭+髮,高約 40%,
+        /// 兩邊的常數不能混用)。少了這一段,遠端頭貼會對準被藏起來的 SDO 的臉,頭就偏出框外。
+        ///
+        /// <see cref="MmdAvatar.TryHeadBounds"/> 給的是**世界**座標,而這裡整段幾何都在角色自己的
+        /// 座標系裡算(見呼叫端),所以要換回去 —— 距離也要除掉角色身上的縮放。
+        /// </summary>
+        private bool AimFromMmd(SdoAvatar av, Transform root, out Vector3 aimLocal, out float distLocal)
+        {
+            aimLocal = default; distLocal = 0f;
+            if (av == null || root == null) return false;
+            var rig = MmdAvatarSwap.ActiveFor(av);
+            if (rig == null || !rig.TryHeadBounds(out var headWorld)) return false;
+
+            MmdAvatar.FramePortrait(headWorld, zoom, 0f, out Vector3 aimWorld, out float distWorld);
+            aimLocal = root.InverseTransformPoint(aimWorld);
+            float scale = Mathf.Abs(root.lossyScale.y);
+            distLocal = distWorld / Mathf.Max(scale, 1e-4f);
+            return distLocal > 1e-4f;
         }
 
         /// <summary>從活的臉框算這一幀的取景中心(與凍結 dist 時用的是同一個純函式,只是輸入是活的)。</summary>
@@ -260,33 +299,55 @@ namespace Sdo.Game
                 // 角色不在(旁觀者、或正在重建)→ 快取失效。Rendered 保留 → 那格繼續顯示最後拍到的臉。
                 s.Rends = null; s.Root = null; s.Framed = false; return;
             }
-            if (s.Rends != null && s.Root == root) return;   // 同一隻角色 → 什麼都不用做
+            // 🔴 換上/脫掉 MMD 也要重抓。MMD 的身體是 driver 的**子物件**,而且是角色生出來之後
+            // (下載完成)才掛上去的 —— 只比對 root 的話,快取裡永遠沒有那個 SkinnedMeshRenderer,
+            // 於是拍別人那一格時關不掉他的 MMD,別人的模型就跑進這一格頭貼裡。
+            var mmd = MmdAvatarSwap.ActiveFor(av);
+            if (s.Rends != null && s.Root == root && ReferenceEquals(s.Mmd, mmd)) return;
             s.Rends = av.GetComponentsInChildren<Renderer>(true);
             s.Root = root;
+            s.Mmd = mmd;
             s.Framed = false;
         }
+
+        /// <summary>
+        /// 這一次拍照**是我們關掉的**那些 renderer —— <see cref="ShowAll"/> 只恢復它們。
+        ///
+        /// 🔴 這是整個類別最容易搞錯的一點,而且錯了的症狀離這裡很遠:
+        /// 舊版的 ShowAll 是無條件 <c>enabled = true</c>,於是每幀拍完一格,就把
+        /// <c>MmdAvatarSwap</c> **刻意關掉**的 SDO 身體一起打開 —— 畫面上是 MMD 模型與
+        /// 那個人的 SDO 穿搭**兩具疊在一起**,而這邊的程式碼看起來完全合理
+        /// (「拍照前藏別人、拍完恢復」)。實測 log:MMD 掛上去 72 ms 後 9 個渲染器又全亮了。
+        ///
+        /// 記下「本來是開著、被我們關掉」的那些,就不會去碰別人基於別的理由關掉的東西。
+        /// </summary>
+        private readonly List<Renderer> _hiddenForShot = new List<Renderer>();
 
         // 拍某個人時,把其他人的 renderer 關掉。只動 Renderer.enabled ——
         // **不要用 GameObject.SetActive**(商城踩過:滾動時衣服會整批消失)。
         private void HideOthers(int keepUserId)
         {
+            _hiddenForShot.Clear();
             foreach (var kv in _slots)
             {
                 if (kv.Key == keepUserId) continue;
                 var rs = kv.Value.Rends;
                 if (rs == null) continue;
-                for (int i = 0; i < rs.Length; i++) if (rs[i] != null) rs[i].enabled = false;
+                for (int i = 0; i < rs.Length; i++)
+                {
+                    var r = rs[i];
+                    if (r == null || !r.enabled) continue;   // 本來就關著的不是我們的事(見 _hiddenForShot)
+                    r.enabled = false;
+                    _hiddenForShot.Add(r);
+                }
             }
         }
 
         private void ShowAll()
         {
-            foreach (var kv in _slots)
-            {
-                var rs = kv.Value.Rends;
-                if (rs == null) continue;
-                for (int i = 0; i < rs.Length; i++) if (rs[i] != null) rs[i].enabled = true;
-            }
+            for (int i = 0; i < _hiddenForShot.Count; i++)
+                if (_hiddenForShot[i] != null) _hiddenForShot[i].enabled = true;
+            _hiddenForShot.Clear();
         }
 
         private static bool MeshUnion(Renderer[] rends, string nameContains, out Bounds b)

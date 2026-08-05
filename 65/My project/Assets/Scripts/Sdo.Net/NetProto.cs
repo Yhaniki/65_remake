@@ -202,6 +202,16 @@
         /// <summary>MMD 模型包(一個 .pmx 加它的貼圖)。見 <c>ModelPackId</c>。</summary>
         public const string BlobKindModel = "model";
 
+        /// <summary>
+        /// 檔案清單裡每一項的「**壓縮後**長度」(<c>blobUploadBegin</c> 的 files 與 <c>blobManifest</c> 都帶)。
+        /// 線路上真正流動的位元組數就是它 —— 收端照這個長度切出每個檔的邊界,收滿再解壓。
+        ///
+        /// 缺這個欄位 / 0 = 這個檔不壓縮,照 <c>len</c> 傳(空檔案、以及這個功能出現之前的 client)。
+        /// 🔴 <c>sha256</c> 與 packId 永遠是**原始**內容算的,壓縮不改變任何東西的身分 ——
+        /// 收端解壓完照樣比對 sha256,所以壓縮出錯一定會被抓到。見 <c>PackCompression</c>。
+        /// </summary>
+        public const string FieldCompressedLength = "clen";
+
         public const string SetAvailability = "setAvailability";
         public const string BlobQuery = "blobQuery";
         public const string BlobInfo = "blobInfo";

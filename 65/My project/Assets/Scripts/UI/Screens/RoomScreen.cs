@@ -4785,7 +4785,11 @@ namespace Sdo.UI.Screens
             bool show = false;
             if (taken)
             {
+                // 歌先看:歌缺著就按不了準備,那條進度比「他的模型還沒到」重要得多
+                // (而且兩者不會同時跑 —— NetModelTransfer 讓歌先走)。
                 if (NetSongTransfer.TryProgressOf(Ctx, seat.UserId, out frac, out uploading)) show = true;
+                // MMD 模型:條掛在**模型的主人**那一格(下載中的是我,但要變樣子的是他)。
+                else if (NetModelTransfer.TryProgressOf(Ctx, seat.UserId, out frac, out uploading)) show = true;
                 else if (seat.Avail == Availability.Downloading) { frac = seat.AvailProgress; show = true; }
             }
 

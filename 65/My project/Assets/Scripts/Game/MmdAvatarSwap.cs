@@ -55,6 +55,15 @@ namespace Sdo.Game
                                          // 🔴 是 .pmx 路徑不是資料夾:一個資料夾可以裝好幾個模型(見 MmdModelCatalog)
             public bool Shown;           // 上一次套用的結果是「畫 MMD」嗎(只有變了才寫 log)
             public bool NotedReopen;     // 「MMD 在畫、SDO 那具卻又亮起來」已經寫過一行了(只寫一次,見 HideSdoBody)
+
+            /// <summary>上一次關掉的那些渲染器(InstanceID)。用途只有診斷:再次發現亮著的東西時,
+            /// 它**在不在這個集合裡**把問題一刀切成兩類 —— 在 = 有人把舊的打開,不在 = 又長出新的部件。
+            /// 兩者的畫面症狀一模一樣(兩具身體疊著),但要修的地方完全不同。</summary>
+            public readonly HashSet<int> Hidden = new HashSet<int>();
+
+            /// <summary>SDO 那具身體的渲染器(不含 MMD 自己那棵)。<see cref="HideSdoBody"/> 每 0.25 秒重抓一次,
+            /// <see cref="EnforceSdoHidden"/> 每幀拿它把亮起來的壓回去 —— 有快取才能每幀做而不配置任何記憶體。</summary>
+            public Renderer[] SdoRends;
         }
         private readonly List<Reg> _regs = new List<Reg>();
 
@@ -250,12 +259,13 @@ namespace Sdo.Game
         {
             // SDO 那具要在 MMD 還「在」的時候恢復:Destroy 要到幀尾才生效,先丟再掃的話
             // 這一趟會把正在被銷毀的 MMD 渲染器一起打開(見 SetSdoBodyVisible 的排除條件)。
-            if (r.Avatar != null) SetSdoBodyVisible(r, true);
+            if (r.Avatar != null) SetSdoBodyVisible(r, true, "DropBody");
             if (r.Mmd != null) Destroy(r.Mmd.gameObject);
             r.Mmd = null;
             r.BuiltFrom = null;
             r.Shown = false;   // 重建之後那一行「MMD shown」還是要出現(log 只在狀態變了才寫)
             r.NotedReopen = false;
+            r.SdoRends = null; r.Hidden.Clear();   // SDO 身體現在該看得見 —— 別再被每幀那條壓回去
         }
 
         /// <summary>
@@ -354,6 +364,20 @@ namespace Sdo.Game
         private const float ProbeSec = 0.25f;
         private float _nextProbeAt;
 
+        /// <summary>
+        /// 收尾再壓一次。<see cref="Update"/> 那條擋不住**在 LateUpdate 才把身體打開**的東西 ——
+        /// SDO 的姿勢就是在 LateUpdate 算的(<c>SdoAvatar.LateUpdate</c>),而渲染在所有 LateUpdate 之後,
+        /// 所以最後一道要放在這裡,否則那一幀還是兩具都畫得出來。
+        /// </summary>
+        private void LateUpdate()
+        {
+            for (int i = 0; i < _regs.Count; i++)
+            {
+                var r = _regs[i];
+                if (r.Avatar != null && r.Mmd != null) EnforceSdoHidden(r);
+            }
+        }
+
         private void Update()
         {
             var now = Snapshot();
@@ -403,7 +427,11 @@ namespace Sdo.Game
             {
                 var r = _regs[i];
                 if (r.Avatar == null) continue;
-                if (r.Mmd != null) { if (probe) HideSdoBody(r); continue; }
+                // MMD 在畫的那幾隻:每幀都要把 SDO 那具壓住(EnforceSdoHidden 走快取清單,零配置),
+                // 0.25 秒才重新掃描一次找「後來才長出來的部件」。
+                // 🔴 只靠 0.25 秒那條是不夠的 —— 只要有東西每幀把身體打開,兩具就會**一直**疊在一起,
+                //    而 log 上看到的只是每 0.25 秒壓回去一次(實測踩過:壓回去 141ms 後又亮起來)。
+                if (r.Mmd != null) { if (probe) HideSdoBody(r); else EnforceSdoHidden(r); continue; }
                 if (r.Failed || !r.Avatar.gameObject.activeInHierarchy) continue;
                 if (r.Remote && !probe) continue;  // 遠端那條要 Directory.Exists → 節流(本機那條每幀都跑)
                 ResolveModel(r, out _, out string want, out _);
@@ -423,19 +451,27 @@ namespace Sdo.Game
         {
             if (r.Avatar == null) return;
             var mmdRoot = r.Mmd != null ? r.Mmd.transform : null;
-            int live = 0; string first = null;
-            foreach (var rend in r.Avatar.GetComponentsInChildren<Renderer>(true))
+            int reopened = 0, fresh = 0; string first = null;
+            var all = r.Avatar.GetComponentsInChildren<Renderer>(true);
+            var keep = new List<Renderer>(all.Length);
+            foreach (var rend in all)
             {
                 if (mmdRoot != null && rend.transform.IsChildOf(mmdRoot)) continue;
+                keep.Add(rend);
                 if (!rend.enabled) continue;
                 if (first == null) first = rend.name + "(" + rend.GetType().Name + ")";
-                live++;
+                if (r.Hidden.Contains(rend.GetInstanceID())) reopened++; else fresh++;
                 rend.enabled = false;
+                r.Hidden.Add(rend.GetInstanceID());
             }
-            if (live > 0 && !r.NotedReopen)
+            r.SdoRends = keep.ToArray();   // 給每幀那條用(見 EnforceSdoHidden)
+            if (reopened + fresh > 0 && !r.NotedReopen)
             {
                 r.NotedReopen = true;
-                Log($"[mmd]   '{r.Avatar.name}': SDO 那具又亮了 {live} 個渲染器(第一個 {first})→ 已壓回");
+                // 這兩個數字把問題一刀切開:reopened = 關過的又被打開(要找是誰打開的);
+                // fresh = 之後才長出來的新部件(那是建構時序的問題,壓回去就對了)。
+                Log($"[mmd]   '{r.Avatar.name}': SDO 那具又亮了(關過又被打開 {reopened}、新長出來 {fresh}"
+                  + $",第一個 {first})→ 已壓回");
             }
         }
 
@@ -452,7 +488,26 @@ namespace Sdo.Game
         /// rootGo 掛在 driver 底下),所以同一趟 <c>GetComponentsInChildren</c> 一定會掃到它,
         /// 不排除的話這個函式會把剛建好的 MMD 身體自己關掉。
         /// </summary>
-        private static int SetSdoBodyVisible(Reg r, bool visible)
+        /// <summary>
+        /// 每幀把 SDO 那具壓住(走 <see cref="Reg.SdoRends"/> 快取,不配置任何記憶體)。
+        ///
+        /// <b>為什麼要每幀。</b>只要有東西每幀把身體打開,0.25 秒壓一次就等於「大多數的幀都疊著」——
+        /// 使用者看到的是持續重疊,而 log 上只有一行「已壓回」,兩者看起來完全對不起來。
+        /// 這條是**症狀的止血**,不是根治:真正把身體打開的是誰,由 <see cref="HideSdoBody"/> 與
+        /// <see cref="SetSdoBodyVisible"/> 的診斷行指出來。
+        /// </summary>
+        private static void EnforceSdoHidden(Reg r)
+        {
+            var list = r.SdoRends;
+            if (list == null) return;
+            for (int i = 0; i < list.Length; i++)
+            {
+                var rend = list[i];
+                if (rend != null && rend.enabled) rend.enabled = false;
+            }
+        }
+
+        private static int SetSdoBodyVisible(Reg r, bool visible, string why = "")
         {
             if (r.Avatar == null) return 0;
             var mmdRoot = r.Mmd != null ? r.Mmd.transform : null;
@@ -461,8 +516,15 @@ namespace Sdo.Game
             {
                 if (mmdRoot != null && rend.transform.IsChildOf(mmdRoot)) continue;
                 rend.enabled = visible;
+                if (visible) r.Hidden.Remove(rend.GetInstanceID());
+                else r.Hidden.Add(rend.GetInstanceID());
                 n++;
             }
+            // 「MMD 還在畫,卻有人把 SDO 那具打開」—— 這條路只有換模型/重建會走(DropBody),
+            // 走到了就一定要留痕:它與「新部件長出來」在畫面上是同一個症狀(兩具疊著),
+            // 但如果之後沒有重新 Apply,人就會**一直**維持兩具都看得到。
+            if (visible && r.Mmd != null && r.Shown)
+                Log($"[mmd]   '{r.Avatar.name}': 把 SDO 那具打開了({(string.IsNullOrEmpty(why) ? "?" : why)},{n} 個渲染器)");
             return n;
         }
 
@@ -508,7 +570,16 @@ namespace Sdo.Game
         public static string ModelPath => Sel?.PmxPath;
 
         /// <summary>本機現在選的那個模型的資料夾(沒裝模型時 null)。</summary>
-        public static string ModelDir => Sel?.Dir;
+        /// <summary>
+        /// 本機現在選的那個模型**要分享出去的那個資料夾**(沒裝模型時 null)。
+        ///
+        /// 🔴 這裡一定要是 <see cref="MmdModelCatalog.Entry.Root"/>(整包),不是 <c>Dir</c>(.pmx 所在那一層)。
+        /// 很多模型包把 .pmx 和貼圖分在不同的樹枝上(ラプラス:<c>PMX/*.pmx</c> + <c>sourceimages/*.tga</c>;
+        /// 組立キット 更誇張),打包 Dir 的話**只送得出 .pmx**,對方拿到零張貼圖 →
+        /// 材質全部退回 FALLBACK-colour,畫面上是一具純白的影子,而且 log 只有一行
+        /// 「貼圖索引 …: 0 個圖檔」(實測踩過)。.pmx 與貼圖同層的包(初音)Root == Dir,行為不變。
+        /// </summary>
+        public static string ModelDir => Sel != null ? (Sel.Root ?? Sel.Dir) : null;
 
         /// <summary>本機現在選的那個模型的顯示名稱(＝資料夾名)。</summary>
         public static string ModelName => Sel?.Name ?? "";
@@ -527,7 +598,9 @@ namespace Sdo.Game
                 if (!UseLocalMmd) return "";
                 if (!RoomConfig.mmdShareModel) return "";
                 var e = Sel;
-                return e == null ? "" : MmdModelStore.PackIdOf(e.Dir);
+                // 身分要跟**送出去的東西**算在同一個資料夾上(見 ModelDir):算 Dir、送 Root 的話,
+                // server 重算的 packId 與宣告的對不上,整趟上傳會被「重算的 packId 與宣稱的不符」擋掉。
+                return e == null ? "" : MmdModelStore.PackIdOf(e.Root ?? e.Dir);
             }
         }
 
@@ -684,11 +757,14 @@ namespace Sdo.Game
                 case MmdSource.RemoteModel:
                     string d = MmdModelStore.DirForPack(r.Pack, _models);
                     if (string.IsNullOrEmpty(d)) return;
-                    string p;
-                    try { p = MmdModelCatalog.PickPmx(Directory.GetFiles(d)); }
-                    catch { p = null; }
+                    // .pmx 可能在包裡自己的一層(ラプラス:PMX/*.pmx)—— 見 MmdModelStore.FindPmx。
+                    string p = MmdModelStore.FindPmx(d);
                     if (p == null) return;
-                    dir = d; pmxPath = p; root = d;   // 下載回來的一包就是一個模型,整包都可以拿來找貼圖
+                    // 貼圖先找 .pmx 同層,找不到退到整包(root)—— 那正是「.pmx 與貼圖分在不同樹枝」的包
+                    // (PMX/ + sourceimages/)唯一找得到貼圖的方式。
+                    try { dir = Path.GetDirectoryName(p); } catch { dir = d; }
+                    if (string.IsNullOrEmpty(dir)) dir = d;
+                    pmxPath = p; root = d;
                     return;
 
                 case MmdSource.LocalModel:

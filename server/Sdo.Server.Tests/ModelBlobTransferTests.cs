@@ -96,6 +96,69 @@ namespace Sdo.Tests
             Assert.AreEqual(PmxBytes.Length + TexBytes.Length, bytes.Length, "收到的位元組數對不上");
         }
 
+        /// <summary>
+        /// **壓縮傳輸的端對端**:client 送壓縮位元組 → server 解壓驗 sha256 → 存壓縮版 →
+        /// 另一個人下載時拿到的是同一份壓縮位元組(server 不必再壓一次)。
+        ///
+        /// 這條守的是整個協定改動:兩端對「一個檔在線路上有多長」只要有一格不一致,
+        /// 後面每個檔都從錯的位移開始,而症狀只會是「內容與 sha256 不符」—— 完全指不到根因。
+        /// 動機見 <see cref="PackCompression"/>:未壓縮的 .tga 貼圖讓一份模型從 353 MB 變成 39 MB。
+        /// </summary>
+        [Test]
+        public void Compressed_Upload_RoundTrips_And_TheServerKeepsTheCompressedForm()
+        {
+            var wearer = Control("穿模型的");
+            CreateRoom(wearer);
+
+            var files = CompressedManifest();
+            Assert.IsTrue(files[0].IsCompressed && files[1].IsCompressed, "測試資料本身要壓得動");
+
+            // 🔴 packId 一定要與**不壓縮**時算出來的完全相同 —— 壓縮不改變任何東西的身分。
+            string packId = ModelPackId.Compute(files);
+            Assert.AreEqual(ModelPackId.Compute(Manifest()), packId, "clen 不可以進 packId");
+            SetLookWithModel(wearer, packId, "TestMiku");
+
+            var up = FileConn(wearer);
+            var need = UploadBegin(up, packId, files, NetProto.BlobKindModel);
+            Assert.AreEqual(files.Count, need.Count);
+            for (int i = 0; i < need.Count; i++)
+                up.SendChunks(Deflate(PayloadFor(files[need[i]].RelPath)));   // 送的是壓縮位元組
+            FinishUpload(up);
+
+            // 下載:manifest 要帶 clen,而且送來的量是壓縮後的。
+            var viewer = Control("看的人");
+            var probe = FileConn(viewer);
+            probe.Send(JObj.New().Str(NetProto.FieldType, NetProto.BlobDownloadBegin).Int(NetProto.FieldRequest, 31).Str("packId", packId));
+            var man = probe.WaitFor(NetProto.BlobManifest);
+            Assert.IsNotNull(man, "沒收到 manifest:" + LastError(probe));
+
+            var got = ReadManifest(man);
+            Assert.AreEqual(files.Count, got.Count);
+            for (int i = 0; i < got.Count; i++)
+            {
+                Assert.IsTrue(got[i].IsCompressed, "server 存的是壓縮版 → manifest 一定要帶 clen,否則收端會照原始長度切");
+                Assert.AreEqual(files[i].Length, got[i].Length, "原始長度不變(收端要靠它決定解壓後對不對)");
+                Assert.Less(got[i].CompressedLength, got[i].Length);
+            }
+
+            long wire = got[0].CompressedLength + got[1].CompressedLength;
+            var bytes = probe.ReceiveAllChunks(NetProto.BlobDownloadDone, 8000);
+            Assert.IsNotNull(bytes, "下載沒收完");
+            Assert.AreEqual(wire, bytes.Length, "線路上流動的應該是壓縮後的量");
+            Assert.Less(bytes.Length, PmxBytes.Length + TexBytes.Length, "壓縮之後要比原始少");
+
+            // 照 clen 切開、逐檔解壓 —— 這正是 client 收端做的事。
+            int off = 0;
+            for (int i = 0; i < got.Count; i++)
+            {
+                var slice = new byte[got[i].CompressedLength];
+                Array.Copy(bytes, off, slice, 0, slice.Length);
+                off += slice.Length;
+                CollectionAssert.AreEqual(PayloadFor(got[i].RelPath), Inflate(slice),
+                    "解壓後要與原始內容一個位元組不差:" + got[i].RelPath);
+            }
+        }
+
         [Test]
         public void Uploading_The_Same_Model_Twice_Needs_Zero_Files()
         {
@@ -269,6 +332,40 @@ namespace Sdo.Tests
 
         private static byte[] PayloadFor(string rel) => rel == "model.pmx" ? PmxBytes : TexBytes;
 
+        /// <summary>同一份模型,但每個檔都帶「壓縮後長度」—— 新 client 送出來的樣子。</summary>
+        private static List<PackFileEntry> CompressedManifest()
+        {
+            var list = new List<PackFileEntry>();
+            foreach (var f in Manifest())
+                list.Add(new PackFileEntry(f.RelPath, f.Length, f.Sha256, Deflate(PayloadFor(f.RelPath)).Length));
+            return list;
+        }
+
+        // 與 PackCompression 同一套(raw deflate)—— 測試自己壓一份,才驗得出兩端的認知一致。
+        private static byte[] Deflate(byte[] data)
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var z = new System.IO.Compression.DeflateStream(
+                           ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+                    z.Write(data, 0, data.Length);
+                return ms.ToArray();
+            }
+        }
+
+        private static byte[] Inflate(byte[] data)
+        {
+            using (var src = new MemoryStream(data))
+            using (var z = new System.IO.Compression.DeflateStream(src, System.IO.Compression.CompressionMode.Decompress))
+            using (var outMs = new MemoryStream())
+            {
+                var buf = new byte[64 * 1024];
+                int n;
+                while ((n = z.Read(buf, 0, buf.Length)) > 0) outMs.Write(buf, 0, n);
+                return outMs.ToArray();
+            }
+        }
+
         private static string Sha(byte[] data)
         {
             using (var sha = System.Security.Cryptography.SHA256.Create())
@@ -284,7 +381,12 @@ namespace Sdo.Tests
         {
             var arr = JArr.New();
             for (int i = 0; i < files.Count; i++)
-                arr.Add(JObj.New().Str("path", files[i].RelPath).Long("len", files[i].Length).Str("sha256", files[i].Sha256));
+            {
+                var o = JObj.New().Str("path", files[i].RelPath).Long("len", files[i].Length).Str("sha256", files[i].Sha256);
+                // 壓縮傳的才帶 clen —— 沒帶就是照原始長度傳(舊 client 就長這樣)。
+                if (files[i].IsCompressed) o.Long(NetProto.FieldCompressedLength, files[i].CompressedLength);
+                arr.Add(o);
+            }
             return JObj.New()
                 .Str(NetProto.FieldType, NetProto.BlobUploadBegin)
                 .Int(NetProto.FieldRequest, 10)
@@ -315,7 +417,9 @@ namespace Sdo.Tests
             var list = new List<PackFileEntry>();
             var arr = NetJson.Arr(node, "files");
             for (int i = 0; i < arr.Count; i++)
-                list.Add(new PackFileEntry(NetJson.Str(arr[i], "path"), NetJson.Long(arr[i], "len"), NetJson.Str(arr[i], "sha256")));
+                list.Add(new PackFileEntry(NetJson.Str(arr[i], "path"), NetJson.Long(arr[i], "len"),
+                                           NetJson.Str(arr[i], "sha256"),
+                                           NetJson.Long(arr[i], NetProto.FieldCompressedLength)));
             return list;
         }
 

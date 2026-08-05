@@ -91,12 +91,18 @@ namespace Sdo.Osu
         }
 
         /// <summary>
-        /// 一份模型包的總量上限。實測初音那份 ~10 MB(十張 2048² 貼圖是大宗);
-        /// 帶多套服裝的模型可以到 50-60 MB。128 MB 留了很寬的餘裕,同時擋住「把整個素材庫當模型上傳」。
-        /// 這是**分享**的上限,不是本機能用的模型上限 —— 自己放在 DATA/MODEL 的模型多大都能用,
+        /// 一份模型包的總量上限(**原始**大小,也就是解壓之後落在磁碟上的量)。
+        ///
+        /// 實測:初音那份 ~10 MB(十張 2048² 貼圖是大宗);ラプラス 那份 353 MB —— 因為它的貼圖是
+        /// 未壓縮的 .tga(六張 50-67 MB)。線路上走的是壓縮後的量(見 <see cref="PackCompression"/>,
+        /// 實測 353 MB → 39 MB),所以這個數字管的是**收端的磁碟**,不是頻寬。
+        ///
+        /// 1 GB 對「一份模型」已經很寬,同時擋住「把整個素材庫當模型上傳」,也是收端對付
+        /// zip bomb 的那道閘(壓縮比可以到 1000:1,見 <c>NetSongFetcher.OnManifest</c>)。
+        /// 這是**分享**的上限,不是本機能用的模型上限 —— 自己放在 ADDON/MODEL 的模型多大都能用,
         /// 只是超過這個大小就不會傳給別人(別人看到你的 SDO 穿搭)。
         /// </summary>
-        public const long MaxPackBytes = 128L * 1024 * 1024;
+        public const long MaxPackBytes = 1024L * 1024 * 1024;
 
         // ---- 以下碰 IO ----
 
@@ -128,13 +134,34 @@ namespace Sdo.Osu
         }
 
         /// <summary>掃資料夾直接得到 packId。算不出來(讀不到 / 不是合法模型包)回空字串。</summary>
-        public static string ForFolder(string folderPath)
+        public static string ForFolder(string folderPath) => ForFolder(folderPath, out _);
+
+        /// <summary>
+        /// 同上,另外給出**算不出來的原因**(給 log 用;成功時是空字串)。
+        ///
+        /// 🔴 <b>有檔案因為太大被跳過 = 這個資料夾不能當成一個包。</b>
+        /// <see cref="ScanFolder"/> 對「不能傳的檔」一律安靜跳過 —— 影片、執行檔、壓縮檔跳過就跳過,
+        /// 模型本來就不需要它們。但**貼圖不一樣**:少一張,對方看到的就是一具沒有貼圖的白影,
+        /// 而包本身還是通過驗證、照樣上傳,畫面上完全看不出為什麼
+        /// (實測踩過:50-67 MB 的未壓縮 .tga 全被跳過,只有 3 張 .png 傳過去 → 身體全白)。
+        ///
+        /// 寧可算不出 packId:那會讓 <c>MmdAvatarSwap.LocalPackId</c> 回空,別人看到的是這個人的
+        /// SDO 穿搭 —— 那是**正確的降級**,而不是一具壞掉的模型。
+        /// </summary>
+        public static string ForFolder(string folderPath, out string reason)
         {
+            reason = "";
             List<PackFileEntry> files;
             PackScanStats stats;
-            if (!ScanFolder(folderPath, out files, out stats)) return string.Empty;
+            if (!ScanFolder(folderPath, out files, out stats)) { reason = "掃不到可以分享的檔案"; return string.Empty; }
+            if (stats.SkippedTooBig > 0)
+            {
+                reason = "有 " + stats.SkippedTooBig + " 個檔超過單檔上限("
+                       + (ModelPackFilter.MaxImageFileBytes / (1024 * 1024)) + " MB)—— 傳出去會缺貼圖,變成一具白影";
+                return string.Empty;
+            }
             string why;
-            if (!IsValidPack(files, out why)) return string.Empty;
+            if (!IsValidPack(files, out why)) { reason = why; return string.Empty; }
             return Compute(files);
         }
 

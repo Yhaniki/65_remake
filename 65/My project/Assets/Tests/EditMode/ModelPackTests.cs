@@ -45,6 +45,9 @@ namespace Sdo.Tests
             Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("physics.ini", 4096));
             Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("PHYSICS.INI", 4096));
             Assert.IsFalse(ModelPackFilter.IsTransferable("physics.ini", 4096));
+            // Windows 自己放在資料夾裡的那個,同一個理由(有的機器有、有的沒有 → 同一份模型兩個 id)。
+            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("desktop.ini", 244));
+            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("PMX/desktop.ini", 244));
 
             // 帶著它的清單要被判成不合法 —— server 收檔時跑的是同一份規則,
             // 兩邊必須同時排除,否則 client 算的 id 與 server 重算的對不上,上傳一律被拒。
@@ -55,6 +58,45 @@ namespace Sdo.Tests
             string why;
             Assert.IsFalse(ModelPackId.IsValidPack(withIni, out why));
             StringAssert.Contains("physics.ini", why);
+        }
+
+        /// <summary>
+        /// 有貼圖大到不能傳 → 這個資料夾**算不出 packId**,而不是安靜地少送那幾張。
+        ///
+        /// ScanFolder 對「不能傳的檔」一律跳過(影片/執行檔跳過就跳過),但貼圖少一張,對方看到的
+        /// 就是一具沒有貼圖的白影,而包本身還是通過驗證、照樣上傳 —— 畫面上完全看不出為什麼。
+        /// (實測踩過:ラプラス 的貼圖是 50-67 MB 的未壓縮 .tga,全被跳過,只有 3 張 .png 傳過去。)
+        /// 算不出 packId 的結果是對外宣告「我沒穿模型」→ 別人看到 SDO 穿搭,那是正確的降級。
+        /// </summary>
+        [Test]
+        public void ModelPackId_ForFolder_RefusesTheWholeFolder_WhenATextureIsTooBigToSend()
+        {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sdo_modelbig_" + System.Guid.NewGuid().ToString("N"));
+            try
+            {
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, "miku.pmx"), new byte[] { 1, 2, 3, 4 });
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, "small.png"), new byte[] { 5, 6, 7 });
+
+                string ok = ModelPackId.ForFolder(dir, out string okWhy);
+                Assert.IsNotEmpty(ok, "都在上限內時要算得出來(" + okWhy + ")");
+
+                // 超過單檔貼圖上限的那一張。用 SetLength 開稀疏檔,不真的寫 8 MB 進去。
+                string big = System.IO.Path.Combine(dir, "huge.tga");
+                using (var fs = new System.IO.FileStream(big, System.IO.FileMode.Create, System.IO.FileAccess.Write))
+                    fs.SetLength(ModelPackFilter.MaxImageFileBytes + 1);
+
+                Assert.AreEqual(PackFileVerdict.TooBig,
+                    ModelPackFilter.Classify("huge.tga", ModelPackFilter.MaxImageFileBytes + 1));
+
+                string got = ModelPackId.ForFolder(dir, out string why);
+                Assert.IsEmpty(got, "有貼圖傳不出去,整個資料夾就不該有 packId(否則對方拿到白影)");
+                StringAssert.Contains("上限", why);
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
         }
 
         /// <summary>
@@ -109,13 +151,21 @@ namespace Sdo.Tests
             Assert.AreEqual(PackFileVerdict.TooDeep, ModelPackFilter.Classify("a/b/c.png", 100));
         }
 
+        /// <summary>
+        /// 貼圖的上限要放得下**未壓縮**的 .tga:4096² RGBA 沒壓縮就是 64 MB 一張,而 MMD 模型常常這樣附
+        /// (實測 ラプラス 那份:六張 50-67 MB)。舊值 8 MB 是照 PNG 訂的,對 .tga 完全不夠 ——
+        /// 而太大的檔是**安靜跳過**的,結果是那份模型照樣上傳、對方拿到一具沒有貼圖的白影。
+        ///
+        /// 線路上走的是壓縮後的量(見 <see cref="PackCompression"/>,那些 .tga 壓到 5-11%),
+        /// 所以這個數字管的是「什麼東西算得上一張貼圖」,不是頻寬。
+        /// </summary>
         [Test]
-        public void ModelFilter_Caps_TextureSize_LooserThanSongs_ButStillCaps()
+        public void ModelFilter_Caps_TextureSize_LargeEnoughForUncompressedTga_ButStillCaps()
         {
-            // 2048² 的人物貼圖 1.5 MB 是常態,4096² 會撞到歌曲那邊的 4 MB —— 所以放寬到 8 MB。
             Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("textures/face.png", 6L << 20));
-            Assert.AreEqual(PackFileVerdict.TooBig, ModelPackFilter.Classify("textures/face.png", 9L << 20));
-            // 但「改名成 .png 的影片」仍然擋得住。
+            // 4096² RGBA 的 .tga —— 這正是踩到的那一種,必須收得下。
+            Assert.AreEqual(PackFileVerdict.Include, ModelPackFilter.Classify("textures/face.tga", 64L << 20));
+            // 但仍然有天花板(擋住「把整個素材庫塞成一張貼圖」)。
             Assert.AreEqual(PackFileVerdict.TooBig, ModelPackFilter.Classify("textures/face.png", 200L << 20));
         }
 

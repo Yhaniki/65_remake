@@ -131,6 +131,18 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void NetRoot_SitsUnderTheAddonModelFolder()
+        {
+            // 下載回來的模型要跟**使用者自己丟模型的那一層**同一棵樹(<ADDON>/MODEL):
+            // ADDON 是 reserved 目錄(永遠不進 pak),而且 config.ini 的 AddonFolder= 可以把整棵指到
+            // 別顆碟 —— 寫進遊戲自己的 <DATA>/MODEL 的話,那兩件事都不成立。
+            string root = MmdModelStore.NetRoot();
+            if (root == null) Assert.Ignore("拿不到資料根(這台沒有 DATA)");
+            Assert.AreEqual(Path.Combine(SdoExtracted.AddonModelDir, MmdModelStore.NetSubDir), root);
+            StringAssert.Contains("/ADDON/MODEL/" + MmdModelStore.NetSubDir, root.Replace('\\', '/'));
+        }
+
+        [Test]
         public void NetDirFor_RefusesAMalformedPackId()
         {
             // 直接拿它去拼路徑的話,一個惡意的「packId」就是路徑穿越。

@@ -62,10 +62,84 @@ namespace Sdo.Tests
         public void A_Blob_Path_Is_Only_Built_For_A_Real_Sha256()
         {
             // sha 也是 client 送來的,也會變成檔名。
-            Assert.IsNotNull(_io.BlobPath(ShaA));
+            // 🔴 這是路徑注入那道關:不合法的一律 null,絕不讓它落到檔案系統上。
             Assert.IsNull(_io.BlobPath("../../../evil"), "路徑穿越必須擋掉");
             Assert.IsNull(_io.BlobPath("ABCDEF"), "大寫/太短都不算");
             Assert.IsNull(_io.BlobPath(null));
+            Assert.IsNull(_io.TargetBlobPath("../../../evil", compressed: false), "寫入目標同樣要擋");
+
+            // 合法但**還不在磁碟上** → 也是 null。BlobPath 回的是「實際存在的那一份」,
+            // 因為一個 sha 在磁碟上有兩種可能的長相(<sha> 原始 / <sha>.z 壓縮),
+            // 光看 sha 猜不出是哪一個。要「該寫在哪」用 TargetBlobPath。
+            Assert.IsNull(_io.BlobPath(ShaA), "還沒收進來的本體不該回路徑");
+            Assert.IsNotNull(_io.TargetBlobPath(ShaA, compressed: false));
+            Assert.IsNotNull(_io.TargetBlobPath(ShaA, compressed: true));
+        }
+
+        /// <summary>
+        /// 壓縮版的本體:收的時候給 <c>.z</c>,倉庫存的也是 <c>.z</c>(磁碟省 9 倍,下載時直接送、
+        /// server 不必壓也不必解)。但**驗證一律對原始內容做** —— 解壓再算 sha256,對不上就整個丟掉。
+        /// </summary>
+        [Test]
+        public void A_Compressed_Blob_Is_Verified_Against_The_ORIGINAL_Content()
+        {
+            var raw = Encoding.UTF8.GetBytes("the quick brown fox jumps over the lazy dog, repeatedly. "
+                                             + new string('x', 4096));
+            var rawPath = Path.Combine(_io.TmpDir, "raw.bin");
+            File.WriteAllBytes(rawPath, raw);
+            string sha = DiskBlobIo.HashFile(rawPath);
+
+            var zPath = Path.Combine(_io.TmpDir, "raw.bin.z");
+            Assert.Greater(PackCompression.CompressFile(rawPath, zPath), 0);
+
+            Assert.IsTrue(_io.CommitCompressedBlob(zPath, sha), "解壓後 hash 對得上就該收");
+            Assert.IsTrue(_io.HasBlob(sha));
+            Assert.IsTrue(_io.IsBlobCompressed(sha), "倉庫存的應該是壓縮版");
+            StringAssert.EndsWith(".z", _io.BlobPath(sha));
+            Assert.Less(_io.BlobLength(sha), raw.Length, "壓縮版要比原始小");
+        }
+
+        [Test]
+        public void A_Compressed_Blob_Whose_Content_Does_Not_Match_Is_Refused()
+        {
+            var rawPath = Path.Combine(_io.TmpDir, "raw.bin");
+            File.WriteAllText(rawPath, "hello");
+            var zPath = Path.Combine(_io.TmpDir, "raw.bin.z");
+            Assert.Greater(PackCompression.CompressFile(rawPath, zPath), 0);
+
+            Assert.IsFalse(_io.CommitCompressedBlob(zPath, ShaA), "解壓後的 hash 不符不能收");
+            Assert.IsFalse(_io.HasBlob(ShaA));
+            Assert.IsFalse(File.Exists(zPath), "不收的暫存要清掉");
+        }
+
+        [Test]
+        public void A_Corrupt_Compressed_Upload_Is_Refused_Not_Crashed()
+        {
+            var zPath = Path.Combine(_io.TmpDir, "bad.z");
+            File.WriteAllBytes(zPath, new byte[] { 9, 9, 9, 9, 9, 9, 9, 9 });
+
+            Assert.IsFalse(_io.CommitCompressedBlob(zPath, ShaA), "解不開的東西不能收");
+            Assert.IsFalse(File.Exists(zPath));
+        }
+
+        /// <summary>
+        /// 壓縮版的本體叫 <c>&lt;sha&gt;.z</c> —— 列舉時要還原成 sha,否則 janitor 會覺得倉庫是空的:
+        /// 每個包都被判成「缺檔」,而磁碟用量永遠算成 0。
+        /// </summary>
+        [Test]
+        public void Listing_And_Usage_See_Compressed_Blobs_Too()
+        {
+            var rawPath = Path.Combine(_io.TmpDir, "raw.bin");
+            File.WriteAllBytes(rawPath, Encoding.UTF8.GetBytes(new string('q', 8192)));
+            string sha = DiskBlobIo.HashFile(rawPath);
+            var zPath = Path.Combine(_io.TmpDir, "raw.bin.z");
+            PackCompression.CompressFile(rawPath, zPath);
+            Assert.IsTrue(_io.CommitCompressedBlob(zPath, sha));
+
+            CollectionAssert.Contains(new List<string>(_io.ListBlobShas()), sha);
+            Assert.Greater(_io.UsedBytes(), 0);
+            Assert.IsTrue(_io.DeleteBlob(sha));
+            Assert.IsFalse(_io.HasBlob(sha));
         }
 
         [Test]

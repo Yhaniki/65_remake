@@ -168,6 +168,18 @@ namespace Sdo.Server.Net
                 string rel = SafeRelPath.Normalize(NetJson.Str(f, "path"));
                 long len = NetJson.Long(f, "len");
                 string sha = (NetJson.Str(f, "sha256") ?? "").ToLowerInvariant();
+                // 壓縮後長度(見 NetProto.FieldCompressedLength)。>0 就是「這個檔壓縮傳」,
+                // 照這個長度收。🔴 **不能因為它不比原始小就當成不壓縮** —— 送端是照它切 chunk 的,
+                // 兩邊的判斷只要有一格不一樣,後面每個檔都從錯的位移開始,
+                // 而錯誤訊息只會說「內容與 sha256 不符」,完全指不到這裡。
+                // 內容對不對由下面的 sha256 重算把關,不需要靠長度猜。
+                long clen = NetJson.Long(f, NetProto.FieldCompressedLength);
+                if (clen < 0) clen = 0;
+                if (clen > NetPackLimits.MaxSingleFileBytes)
+                {
+                    SendBlobError(conn, rq, NetProto.BlobErrTooBig, "壓縮後長度不合理:" + rel);
+                    return;
+                }
 
                 if (!SafeRelPath.IsSafe(rel)) { SendBlobError(conn, rq, NetProto.BlobErrBadPath, "路徑不安全:" + rel); return; }
                 if (!seen.Add(rel)) { SendBlobError(conn, rq, NetProto.BlobErrBadPath, "同一個路徑出現兩次:" + rel); return; }
@@ -180,7 +192,7 @@ namespace Sdo.Server.Net
                 }
                 if (!DiskBlobIo.IsSha256(sha)) { SendBlobError(conn, rq, NetProto.BlobErrHashMismatch, "缺 sha256:" + rel); return; }
 
-                files.Add(new PackFileEntry(rel, len, sha));
+                files.Add(new PackFileEntry(rel, len, sha, clen));
                 total += len;
             }
 
@@ -219,7 +231,7 @@ namespace Sdo.Server.Net
             {
                 if (_blobs.HasBlob(files[i].Sha256)) continue;
                 need.Add(i);
-                needBytes += files[i].Length;
+                needBytes += files[i].WireLength;   // 配額/進度看的是線路上真正要走的量
             }
 
             long cap = (long)_opts.MaxTotalBlobGb * 1024L * 1024L * 1024L;
@@ -336,7 +348,10 @@ namespace Sdo.Server.Net
             }
 
             var f = sess.Files[sess.Need[sess.Cursor]];
-            long remain = f.Length - sess.CurReceived;
+            // 線路長度(壓縮的話就是壓縮後的)—— 收滿的判準要與送端切 chunk 的依據完全一致,
+            // 否則每個檔都從錯的位移開始,而錯誤訊息只會說「內容與 sha256 不符」。
+            long wire = f.WireLength;
+            long remain = wire - sess.CurReceived;
             if (payload.Length > remain)
             {
                 // 送超過宣稱的長度 —— 壞掉的 client 或惡意填充。不截斷,直接拒:
@@ -357,11 +372,15 @@ namespace Sdo.Server.Net
             sess.DoneBytes += payload.Length;
             sess.LastAdvanceMs = now;      // 有位元組進來 = 沒有卡死(見 SweepStalledUploads)
 
-            if (sess.CurReceived >= f.Length)
+            if (sess.CurReceived >= wire)
             {
-                // 這個檔收完 → 自己重算 hash 收進倉庫
+                // 這個檔收完 → 自己重算 hash 收進倉庫。壓縮的先解壓再算(hash 一律對**原始**內容,
+                // 所以 packId 與這個功能出現之前完全一致),驗過之後倉庫存的是**壓縮版**。
                 CloseUploadStream(sess);
-                if (!_blobs.CommitBlob(sess.CurTmpPath, f.Sha256))
+                bool ok = f.IsCompressed
+                    ? _blobs.CommitCompressedBlob(sess.CurTmpPath, f.Sha256)
+                    : _blobs.CommitBlob(sess.CurTmpPath, f.Sha256);
+                if (!ok)
                 {
                     SendBlobError(conn, 0, NetProto.BlobErrHashMismatch, "內容與 sha256 不符:" + f.RelPath);
                     AbortUpload(conn.ConnId, "內容與 sha256 不符:" + f.RelPath);
@@ -522,13 +541,23 @@ namespace Sdo.Server.Net
 
             _blobs.Touch(packId, now);      // 有人在下載 = 這包還在用
 
+            // 🔴 clen 以**磁碟上實際的那份**為準,不是 pack 紀錄裡寫的 —— 倉庫是內容尋址的,
+            // 同一個 sha 的本體可能是這個功能出現之前存下來的原始檔,也可能是之後收的壓縮版。
+            // 照紀錄送的話會用錯的長度切,而收端只會說「內容與 sha256 不符」。
             long total = 0;
             var files = JArr.New();
             for (int i = 0; i < pack.Files.Count; i++)
             {
                 var f = pack.Files[i];
-                total += f.Length;
-                files.Add(JObj.New().Str("path", f.RelPath).Long("len", f.Length).Str("sha256", f.Sha256 ?? ""));
+                var o = JObj.New().Str("path", f.RelPath).Long("len", f.Length).Str("sha256", f.Sha256 ?? "");
+                long wire = f.Length;
+                if (f.Length > 0 && _blobs.IsBlobCompressed(f.Sha256))
+                {
+                    long clen = _blobs.BlobLength(f.Sha256);
+                    if (clen > 0 && clen < f.Length) { o.Long(NetProto.FieldCompressedLength, clen); wire = clen; }
+                }
+                total += wire;
+                files.Add(o);
             }
 
             conn.Send(JObj.New()

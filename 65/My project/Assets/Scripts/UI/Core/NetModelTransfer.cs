@@ -88,6 +88,48 @@ namespace Sdo.UI.Core
         /// <summary>正在下載的那個模型的進度 0..1(沒在下載就是 0)。</summary>
         public static float Progress => _fx != null ? _fx.Progress : 0f;
 
+        /// <summary>
+        /// 這一格頭貼下面要不要畫模型傳檔的跑條(0..1)。回 false = 這個人身上沒有正在傳的模型。
+        ///
+        /// 跑條掛在**那份模型的主人**身上,而不是掛在「誰的機器在搬位元組」上 —— 下載中的是我,
+        /// 但畫面上會變的是**他**那一格(他現在是 SDO 穿搭,傳完才會變成他的模型)。所以:
+        ///   • <b>下載</b> → 條出現在所有宣告了這個 packId 的座位下面(可能不只一個人穿同一份);
+        ///   • <b>上傳</b> → 條出現在自己那一格(正在傳的就是我身上這一份)。
+        ///
+        /// 🔴 這條是**本機自己的**進度,不經過 server —— 模型的下載方向沒有房內轉播
+        /// (server 只轉播上傳,見 <c>Hub.Blobs.BroadcastBlobProgress</c>)。少了它,一份 10 MB 的模型
+        /// 傳三十秒,畫面上那個人就是純粹「一直沒變成 MMD」,分不出是在傳、還是根本沒分享。
+        /// </summary>
+        public static bool TryProgressOf(AppContext ctx, int userId, out float frac, out bool uploading)
+        {
+            frac = 0f; uploading = false;
+            if (ctx == null || ctx.Net == null || userId == 0) return false;
+            if (_fx == null || !_fx.IsBusy) return false;
+            string pack = _fx.PackId;
+            if (string.IsNullOrEmpty(pack)) return false;
+
+            if (_fx.IsUploading)
+            {
+                // 上傳的是我身上這一份 —— 不用查外觀(server 端的座位快照可能還沒帶上剛換的模型)。
+                if (userId != ctx.Net.UserId) return false;
+            }
+            else if (!WearsPack(ctx, userId, pack)) return false;
+
+            frac = _fx.Progress;
+            uploading = _fx.IsUploading;
+            return true;
+        }
+
+        /// <summary>這個座位宣告的模型正好是 <paramref name="pack"/> 嗎(旁觀者沒有頭貼格子,不查)。</summary>
+        private static bool WearsPack(AppContext ctx, int userId, string pack)
+        {
+            var snap = ctx.Net.Room;
+            if (snap == null) return false;
+            var seat = snap.SeatOf(userId);
+            if (seat == null || seat.Look == null) return false;
+            return string.Equals(seat.Look.MmdPack, pack, StringComparison.Ordinal);
+        }
+
         /// <summary>每幀呼叫(<c>FrontendApp.Update</c>)。</summary>
         public static void Tick(AppContext ctx)
         {

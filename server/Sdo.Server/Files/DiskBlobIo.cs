@@ -84,8 +84,40 @@ namespace Sdo.Server.Files
             return name == null ? null : Path.Combine(PacksDir, name + ".json");
         }
 
-        /// <summary>sha → 本體檔案的絕對路徑。sha 不是 64 字小寫 hex → null(**擋路徑注入**)。</summary>
+        /// <summary>
+        /// sha → 本體檔案的絕對路徑,**回傳磁碟上實際存在的那一個**;都不在回 null。
+        /// sha 不是 64 字小寫 hex 也回 null(**擋路徑注入**)。
+        ///
+        /// 一份本體有兩種可能的長相:<c>&lt;sha&gt;</c>(原始)或 <c>&lt;sha&gt;.z</c>(deflate,見
+        /// <see cref="PackCompression"/>)。新收的一律存壓縮版 —— 磁碟省下來的同時,
+        /// 下載時可以**直接把位元組送出去**,server 完全不必壓也不必解。
+        /// 副檔名區分讓這件事天然向後相容:壓縮功能出現之前存下來的本體是原始的,照樣讀得到。
+        /// </summary>
         public string BlobPath(string sha)
+        {
+            var raw = RawBlobPath(sha);
+            if (raw == null) return null;
+            if (File.Exists(raw)) return raw;
+            var z = raw + PackCompression.Extension;
+            return File.Exists(z) ? z : null;
+        }
+
+        /// <summary>這個 sha 的本體「該」寫在哪(不管在不在)。<paramref name="compressed"/> 決定副檔名。</summary>
+        public string TargetBlobPath(string sha, bool compressed)
+        {
+            var raw = RawBlobPath(sha);
+            if (raw == null) return null;
+            return compressed ? raw + PackCompression.Extension : raw;
+        }
+
+        /// <summary>這個 sha 的本體是壓縮版嗎(不存在也回 false)。</summary>
+        public bool IsBlobCompressed(string sha)
+        {
+            var p = BlobPath(sha);
+            return p != null && p.EndsWith(PackCompression.Extension, StringComparison.Ordinal);
+        }
+
+        private string RawBlobPath(string sha)
         {
             if (!IsSha256(sha)) return null;
             return Path.Combine(FilesDir, sha.Substring(0, 2), sha);
@@ -105,11 +137,7 @@ namespace Sdo.Server.Files
 
         // ---- 檔案本體 ----
 
-        public bool HasBlob(string sha)
-        {
-            var p = BlobPath(sha);
-            return p != null && File.Exists(p);
-        }
+        public bool HasBlob(string sha) => BlobPath(sha) != null;   // BlobPath 只回存在的那一個
 
         public long BlobLength(string sha)
         {
@@ -129,7 +157,38 @@ namespace Sdo.Server.Files
         /// 把暫存檔收進倉庫。**會自己重算 SHA-256 驗證**(絕不信上傳者宣稱的 hash),
         /// 對不上就不收 → 回 false 並刪掉暫存。
         /// </summary>
-        public bool CommitBlob(string tmpPath, string expectSha)
+        public bool CommitBlob(string tmpPath, string expectSha) => Commit(tmpPath, expectSha, compressed: false);
+
+        /// <summary>
+        /// 收一個**壓縮過**的暫存檔(<c>.z</c>)。同樣絕不信上傳者:先解壓到旁邊、重算 SHA-256,
+        /// 對不上就整個丟掉;對得上才把**壓縮版**收進倉庫(解壓出來的那份用完就刪)。
+        ///
+        /// 存壓縮版是刻意的:磁碟省 9 倍,而且之後每一次下載都可以把位元組原封不動送出去 ——
+        /// server 是單執行緒的 actor loop,在那裡面壓縮幾百 MB 會把所有房間一起卡住。
+        /// </summary>
+        public bool CommitCompressedBlob(string zTmpPath, string expectSha)
+        {
+            if (!IsSha256(expectSha) || !File.Exists(zTmpPath)) return false;
+
+            var rawTmp = zTmpPath + ".raw";
+            if (!PackCompression.DecompressFile(zTmpPath, rawTmp))
+            {
+                TryDelete(rawTmp);
+                TryDelete(zTmpPath);
+                return false;
+            }
+
+            string actual = HashFile(rawTmp);
+            TryDelete(rawTmp);   // 驗完就不需要了 —— 倉庫存的是壓縮版
+            if (!string.Equals(actual, expectSha, StringComparison.Ordinal))
+            {
+                TryDelete(zTmpPath);
+                return false;
+            }
+            return Place(zTmpPath, expectSha, compressed: true);
+        }
+
+        private bool Commit(string tmpPath, string expectSha, bool compressed)
         {
             if (!IsSha256(expectSha) || !File.Exists(tmpPath)) return false;
 
@@ -139,8 +198,15 @@ namespace Sdo.Server.Files
                 TryDelete(tmpPath);
                 return false;
             }
+            return Place(tmpPath, expectSha, compressed);
+        }
 
-            var dst = BlobPath(expectSha);
+        private bool Place(string tmpPath, string expectSha, bool compressed)
+        {
+            // 已經有這個本體了(去重命中)—— 不管在磁碟上是哪一種長相,內容都是同一份。
+            if (HasBlob(expectSha)) { TryDelete(tmpPath); return true; }
+
+            var dst = TargetBlobPath(expectSha, compressed);
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(dst));
@@ -168,6 +234,11 @@ namespace Sdo.Server.Files
                 for (int j = 0; j < files.Length; j++)
                 {
                     var name = Path.GetFileName(files[j]);
+                    // 壓縮版的本體叫 <sha>.z —— 還原成 sha 才認得出來。
+                    // 漏掉這一步的話 janitor 會覺得倉庫是空的:清理計畫把每個包都判成「缺檔」,
+                    // 而磁碟用量永遠算成 0(見 UsedBytes)。
+                    if (name.EndsWith(PackCompression.Extension, StringComparison.Ordinal))
+                        name = name.Substring(0, name.Length - PackCompression.Extension.Length);
                     if (IsSha256(name)) yield return name;
                 }
             }

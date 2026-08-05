@@ -69,10 +69,17 @@ namespace Sdo.Osu
         public const int MaxDepth = 1;
 
         /// <summary>
-        /// 單張貼圖的上限。比歌曲那邊(4 MB)寬:2048² 的 PNG 人物貼圖 1.5 MB 是常態,
-        /// 4096² 的高解析模型會撞到 4 MB。8 MB 仍然擋得住「改名成 .png 的影片」。
+        /// 單張貼圖的上限(**原始**大小)。
+        ///
+        /// 🔴 這個數字要放得下**未壓縮**的貼圖:MMD 模型常常附 .tga,而 4096² RGBA 沒壓縮就是 64 MB
+        /// 一張(實測 ラプラス 那份:六張 50-67 MB 的 .tga)。舊值 8 MB 是照「2048² 的 PNG 約 1.5 MB」
+        /// 訂的,對 .png/.jpg 很合理,對 .tga 完全不夠 —— 而 <c>ScanFolder</c> 對太大的檔是**安靜跳過**的,
+        /// 於是那份模型照樣通過驗證、照樣上傳,對方拿到的是一具沒有貼圖的白影。
+        ///
+        /// 真正控制流量與磁碟的不是這個數字,而是**壓縮之後**的量(見 <see cref="PackCompression"/>:
+        /// 那些 .tga 壓到 5-11%)加上 server 的總量上限與每小時上傳配額。這裡只要擋住「明顯不是貼圖」的東西。
         /// </summary>
-        public const long MaxImageFileBytes = 8L * 1024 * 1024;
+        public const long MaxImageFileBytes = 128L * 1024 * 1024;
 
         /// <summary>
         /// 單一 .pmx 的上限。實測初音那份 8 MB;帶大量表情/多套服裝的模型可以到 20-30 MB。
@@ -95,6 +102,14 @@ namespace Sdo.Osu
         /// </summary>
         public const string GeneratedFileName = "physics.ini";
 
+        /// <summary>
+        /// 不屬於模型、但會混進資料夾裡的檔。<see cref="GeneratedFileName"/> 是遊戲寫的,
+        /// <c>desktop.ini</c> 是 Windows 自己放的(資料夾圖示/顯示設定)—— 兩者都會讓
+        /// 「同一份模型」在不同機器上算出不同的 packId,理由與 physics.ini 完全相同。
+        /// (實測:下載回來的那一包裡就躺著一個 desktop.ini。)
+        /// </summary>
+        private static readonly string[] NotPartOfTheModel = { GeneratedFileName, "desktop.ini" };
+
         /// <summary>只看路徑與副檔名的判定(不需要知道檔案大小)。</summary>
         public static PackFileVerdict ClassifyPath(string relPath)
         {
@@ -102,8 +117,9 @@ namespace Sdo.Osu
             if (SongPackFilter.Depth(relPath) > MaxDepth) return PackFileVerdict.TooDeep;
 
             string name = SongPackFilter.FileNameOf(relPath);
-            if (string.Equals(name, GeneratedFileName, StringComparison.OrdinalIgnoreCase))
-                return PackFileVerdict.Generated;
+            for (int i = 0; i < NotPartOfTheModel.Length; i++)
+                if (string.Equals(name, NotPartOfTheModel[i], StringComparison.OrdinalIgnoreCase))
+                    return PackFileVerdict.Generated;
             string ext = SongPackFilter.ExtensionOf(name);
             if (Has(Videos, ext)) return PackFileVerdict.Video;
             if (Has(Executables, ext)) return PackFileVerdict.Executable;
@@ -120,7 +136,9 @@ namespace Sdo.Osu
             if (v != PackFileVerdict.Include) return v;
 
             if (lengthBytes < 0) return PackFileVerdict.TooBig;   // 讀不到大小 → 當成不能傳
-            if (lengthBytes > NetPackLimits.MaxSingleFileBytes) return PackFileVerdict.TooBig;
+            // 模型有自己的單檔上限(見 MaxImageFileBytes 的說明)—— 歌曲那邊的 32 MB 是照
+            // 「一首歌的音檔」訂的,套到未壓縮的 .tga 上會把整份模型的貼圖全部擋掉。
+            if (lengthBytes > MaxImageFileBytes) return PackFileVerdict.TooBig;
 
             string ext = SongPackFilter.ExtensionOf(SongPackFilter.FileNameOf(relPath));
             if (Has(Images, ext) && lengthBytes > MaxImageFileBytes) return PackFileVerdict.TooBig;

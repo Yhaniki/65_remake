@@ -76,6 +76,15 @@ namespace Sdo.Game.Net
         private FileStream _readStream;
         private long _sentBytes, _totalSendBytes;
 
+        /// <summary>
+        /// 壓縮版的暫存目錄(上傳用)。每個要傳的檔在這裡有一份 <c>&lt;index&gt;.z</c>,
+        /// 線路上送的就是它 —— 見 <see cref="PackCompression"/>。
+        ///
+        /// 為什麼壓成檔案而不是邊傳邊壓:收端要**照長度**切出每個檔的邊界,所以清單送出去的時候
+        /// 就得知道每個檔壓完有多長。串流壓縮到最後一刻才知道,那個數字就趕不上清單。
+        /// </summary>
+        private string _packedDir = "";
+
         // ---- 下載 ----
         private string _destFolder = "";
 
@@ -169,11 +178,22 @@ namespace Sdo.Game.Net
             State = NetTransferState.Connecting;
             _link = new NetConnection();   // 每趟一條新的(見 _link 的註解)
 
-            // 清單的 hash 先在背景算(一首歌的音檔幾十 MB,主執行緒算會明顯卡一下)。
-            // SongPackScan 是純 System.IO,沒有任何 Unity API → 可以安全地在 worker thread 上跑。
+            // 清單的 hash 先在背景算(一首歌的音檔幾十 MB,主執行緒算會明顯卡一下),
+            // **順便把每個檔壓好** —— 反正這一趟已經要把整個資料夾讀過一遍。
+            // SongPackScan / ModelPackId / PackCompression 都是純 System.IO,沒有任何 Unity API
+            // → 可以安全地在 worker thread 上跑(🔴 所以暫存目錄不能用 Application.temporaryCachePath,
+            //   那是 Unity API;路徑要在主執行緒這裡就決定好)。
             var src = _srcFolder;
             bool model = IsModel;
-            _hashTask = Task.Run(() => model ? ScanModelFolder(src) : SongPackScan.Enumerate(src, hashEverything: true));
+            _packedDir = Path.Combine(Path.GetTempPath(),
+                                      "sdo_pack_" + Guid.NewGuid().ToString("N"));
+            var packed = _packedDir;
+            _hashTask = Task.Run(() =>
+            {
+                var files = model ? ScanModelFolder(src) : SongPackScan.Enumerate(src, hashEverything: true);
+                PackAll(src, files, packed);
+                return files;
+            });
 
             // 檔案連線與 control 連線是**同一台 server 的同一個 port** → 加密設定當然要一樣。
             // (漏掉這裡的話 server 開了 TLS,傳檔那條會用明文去撞 TLS 握手,錯誤訊息只有「Eof」。)
@@ -210,6 +230,40 @@ namespace Sdo.Game.Net
             return ModelPackId.ScanFolder(dir, out files, out stats) ? files : new List<PackFileEntry>();
         }
 
+        /// <summary>
+        /// 把清單上的每個檔壓一份到 <paramref name="packedDir"/>(檔名就是它在清單裡的 index)。
+        /// 在 worker thread 上跑,所以只能碰純 <c>System.IO</c>。
+        ///
+        /// 壓不動的(已經是 png/jpg/ogg 那類)會**照原樣傳**:壓縮版沒有比較小就不值得多一次
+        /// 解壓,而且 <c>CompressedLength = 0</c> 正是「這個檔不壓縮」的表示法。
+        /// 長度 0 的檔一塊 chunk 都不會傳(兩端都有對稱的跳過邏輯),更不需要壓。
+        /// </summary>
+        private static void PackAll(string srcFolder, List<PackFileEntry> files, string packedDir)
+        {
+            if (files == null || files.Count == 0) return;
+            try { Directory.CreateDirectory(packedDir); }
+            catch { return; }   // 壓不了就整批照原樣傳(CompressedLength 全是 0)
+
+            for (int i = 0; i < files.Count; i++)
+            {
+                var f = files[i];
+                if (f.Length <= 0) continue;
+
+                var srcPath = Path.Combine(srcFolder, f.RelPath.Replace('/', Path.DirectorySeparatorChar));
+                var dstPath = Path.Combine(packedDir, i.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                                      + PackCompression.Extension);
+                long clen = PackCompression.CompressFile(srcPath, dstPath);
+                if (clen <= 0 || clen >= f.Length)
+                {
+                    // 壓不動 → 丟掉壓縮版,照原檔傳。
+                    try { if (File.Exists(dstPath)) File.Delete(dstPath); } catch { }
+                    continue;
+                }
+                f.CompressedLength = clen;
+                files[i] = f;   // struct → 要寫回去
+            }
+        }
+
         public void Cancel(string why)
         {
             if (!IsBusy) return;
@@ -228,6 +282,7 @@ namespace Sdo.Game.Net
             _incoming = null; _inCursor = 0; _inReceived = 0;
             _sentBytes = _totalSendBytes = _recvBytes = _totalRecvBytes = 0;
             _writePath = "";
+            DropPackedDir();   // 上一趟壓好的那些 .z(不清的話系統暫存區會一直長)
         }
 
         // ================= 每幀 =================
@@ -386,10 +441,16 @@ namespace Sdo.Game.Net
 
             var arr = JArr.New();
             for (int i = 0; i < _manifest.Count; i++)
-                arr.Add(JObj.New()
+            {
+                var o = JObj.New()
                     .Str("path", _manifest[i].RelPath)
                     .Long("len", _manifest[i].Length)
-                    .Str("sha256", _manifest[i].Sha256 ?? ""));
+                    .Str("sha256", _manifest[i].Sha256 ?? "");
+                // 壓得動的才帶 clen —— 沒帶就是「照原始長度傳」(見 NetProto.FieldCompressedLength)。
+                if (_manifest[i].IsCompressed)
+                    o.Long(NetProto.FieldCompressedLength, _manifest[i].CompressedLength);
+                arr.Add(o);
+            }
 
             _link.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.BlobUploadBegin)
@@ -457,7 +518,13 @@ namespace Sdo.Game.Net
             int idx = _need[_needCursor];
             if (idx < 0 || idx >= _manifest.Count) { Fail("server 要的檔案編號超出範圍"); return false; }
 
-            var full = Path.Combine(_srcFolder, _manifest[idx].RelPath.Replace('/', Path.DirectorySeparatorChar));
+            // 壓得動的送壓縮版(PackAll 已經壓在暫存目錄裡,檔名就是 index),其餘照原檔送。
+            // 🔴 這個判斷要與清單裡送出去的 clen 完全一致 —— 一邊說壓了、一邊送原檔的話,
+            //    收端會照 clen 切,切出來的每個檔都從錯的位移開始,而錯誤訊息只會說「內容與 sha256 不符」。
+            string full = _manifest[idx].IsCompressed
+                ? Path.Combine(_packedDir, idx.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                           + PackCompression.Extension)
+                : Path.Combine(_srcFolder, _manifest[idx].RelPath.Replace('/', Path.DirectorySeparatorChar));
             try { _readStream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
             catch (Exception ex) { Fail("開不了 " + _manifest[idx].RelPath + ":" + ex.Message); return false; }
             return true;
@@ -550,7 +617,7 @@ namespace Sdo.Game.Net
                 int idx = (int)ToLong(arr[i]);
                 if (idx < 0 || idx >= _manifest.Count) continue;
                 _need.Add(idx);
-                _totalSendBytes += _manifest[idx].Length;
+                _totalSendBytes += _manifest[idx].WireLength;   // 進度條要反映線路上真正要送的量
             }
             _needCursor = 0;
             _sentBytes = 0;
@@ -576,6 +643,11 @@ namespace Sdo.Game.Net
                 string rel = SafeRelPath.Normalize(NetJson.Str(arr[i], "path"));
                 long len = NetJson.Long(arr[i], "len");
                 string sha = NetJson.Str(arr[i], "sha256");
+                // >0 = 這個檔壓縮傳,照這個長度收(見 NetProto.FieldCompressedLength)。
+                // 🔴 不能因為「不比原始小」就自作主張當成不壓縮 —— 送端是照它切的,
+                // 判斷不一致的話後面每個檔都錯位,而症狀只會是「內容與 sha256 不符」。
+                long clen = NetJson.Long(arr[i], NetProto.FieldCompressedLength);
+                if (clen < 0) clen = 0;
 
                 // 🔴 server 給的路徑也要驗 —— 這條路徑會直接變成本機的檔案名稱。
                 // 我們信任自己人開的 server,但「信任」不是「把寫檔位置交給對面決定」。
@@ -589,8 +661,8 @@ namespace Sdo.Game.Net
                     Fail("server 給的檔案清單不安全:" + rel);
                     return;
                 }
-                _incoming.Add(new PackFileEntry(rel, len, sha));
-                _totalRecvBytes += len;
+                _incoming.Add(new PackFileEntry(rel, len, sha, clen));
+                _totalRecvBytes += clen > 0 ? clen : len;   // 進度條看線路上真正要收的量
             }
 
             if (_incoming.Count == 0) { Fail("server 給的清單是空的"); return; }
@@ -599,6 +671,18 @@ namespace Sdo.Game.Net
             if (_totalRecvBytes > limitBytes)
             {
                 Fail("這首歌超過下載上限(" + (_totalRecvBytes / (1024 * 1024)) + " MB)");
+                return;
+            }
+
+            // 🔴 **解壓後**的總量也要有上限。上面那道看的是線路上的量,而 deflate 的壓縮比可以到 1000:1 ——
+            // 一個被入侵的 server 可以用 40 MB 的合法流量把收端的磁碟塞爆(zip bomb),
+            // 而每一個檔的 sha256 都要等寫完才驗得出來,那時磁碟早就滿了。
+            long rawTotal = 0;
+            for (int i = 0; i < _incoming.Count; i++) rawTotal += _incoming[i].Length;
+            long rawCap = IsModel ? ModelPackId.MaxPackBytes : NetLimits.DefaultMaxBlobBytes;
+            if (rawTotal > rawCap)
+            {
+                Fail("解壓後的總量超過上限(" + (rawTotal / (1024 * 1024)) + " MB)");
                 return;
             }
 
@@ -620,7 +704,10 @@ namespace Sdo.Game.Net
             if (_writeStream == null && !OpenNextDownloadFile()) return;
 
             var f = _incoming[_inCursor];
-            long remain = f.Length - _inReceived;
+            // 🔴 收滿的判準是**線路長度**(壓縮的話就是壓縮後的長度),不是原始長度 ——
+            //    照原始長度收的話,壓縮檔會在收到原始長度那一刻被當成收完,後面每個檔全部錯位。
+            long wire = f.WireLength;
+            long remain = wire - _inReceived;
             int n = (int)Math.Min(payload.Length, remain);
 
             try { _writeStream.Write(payload, 0, n); }
@@ -629,9 +716,10 @@ namespace Sdo.Game.Net
             _inReceived += n;
             _recvBytes += n;
 
-            if (_inReceived < f.Length) return;
+            if (_inReceived < wire) return;
 
             CloseStreams();
+            if (f.IsCompressed && !Inflate(f)) return;   // .z 收滿了 → 就地解壓成正式檔
             _inCursor++;
             _inReceived = 0;
             SkipEmptyIncoming();
@@ -666,8 +754,11 @@ namespace Sdo.Game.Net
         private bool OpenNextDownloadFile()
         {
             if (_inCursor >= _incoming.Count) return false;
-            var rel = _incoming[_inCursor].RelPath.Replace('/', Path.DirectorySeparatorChar);
-            _writePath = Path.Combine(_destFolder, rel);
+            var f = _incoming[_inCursor];
+            var rel = f.RelPath.Replace('/', Path.DirectorySeparatorChar);
+            // 壓縮的先落在 <正式檔名>.z,收滿再就地解壓(見 Inflate)。這樣正式檔名在解壓成功之前
+            // 根本不存在 —— 半個檔不會被誤認成「已經有這個檔了」。
+            _writePath = Path.Combine(_destFolder, rel) + (f.IsCompressed ? PackCompression.Extension : "");
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_writePath));
@@ -675,6 +766,33 @@ namespace Sdo.Game.Net
             }
             catch (Exception ex) { Fail("建不了檔案 " + rel + ":" + ex.Message); return false; }
             return true;
+        }
+
+        /// <summary>
+        /// 剛收滿的那個 <c>.z</c> → 解壓成正式檔,然後把 <c>.z</c> 刪掉。
+        ///
+        /// 解壓失敗就是硬失敗:內容已經壞了,繼續收下去只會讓 <see cref="FinishDownload"/> 的 sha256
+        /// 比對指向這個檔,而真正的原因(壓縮流壞掉)只有這裡看得到。
+        /// </summary>
+        private bool Inflate(PackFileEntry f)
+        {
+            var rel = f.RelPath.Replace('/', Path.DirectorySeparatorChar);
+            var outPath = Path.Combine(_destFolder, rel);
+            var zPath = outPath + PackCompression.Extension;
+
+            if (!PackCompression.DecompressFile(zPath, outPath))
+            {
+                TryDeleteFile(zPath);
+                Fail("解壓失敗:" + f.RelPath);
+                return false;
+            }
+            TryDeleteFile(zPath);
+            return true;
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
         /// <summary>chunk 收完了 → 逐檔比對 SHA-256。</summary>
@@ -746,7 +864,19 @@ namespace Sdo.Game.Net
         public void Dispose()
         {
             CloseStreams();
+            DropPackedDir();
             if (_link != null) { _link.Close("dispose"); _link = null; }
+        }
+
+        /// <summary>丟掉這一趟壓好的那些 <c>.z</c>(整個暫存目錄)。</summary>
+        private void DropPackedDir()
+        {
+            if (string.IsNullOrEmpty(_packedDir)) return;
+            var d = _packedDir;
+            _packedDir = "";
+            // 🔴 背景那個壓縮 task 可能還在寫這個目錄(取消/失敗會走到這裡)——
+            // 刪不掉就算了,系統暫存區本來就會被清,總比為了刪它去等一個可能永遠不回來的 task 好。
+            try { if (Directory.Exists(d)) Directory.Delete(d, true); } catch { }
         }
 
         private static long ToLong(object o)

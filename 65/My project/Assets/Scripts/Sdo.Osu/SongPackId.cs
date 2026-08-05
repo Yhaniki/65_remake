@@ -22,12 +22,36 @@ namespace Sdo.Osu
         /// </summary>
         public string Sha256;
 
+        /// <summary>
+        /// 這個檔**壓縮之後**有幾個位元組(<see cref="PackCompression"/>)—— 線路上真正流動的量。
+        /// 0 = 還不知道 / 不壓縮(舊 client 送來的清單沒有這個欄位,那時就照原始長度傳)。
+        ///
+        /// 🔴 **不參與 packId**(<see cref="SongPackId.BuildManifest"/> 只看 RelPath/Length/Sha256)——
+        /// 壓縮是傳輸與儲存的細節,不是模型/歌曲的身分。壓縮率哪天變了,既有的包也不該換一個 id。
+        /// </summary>
+        public long CompressedLength;
+
         public PackFileEntry(string relPath, long length, string sha256)
         {
             RelPath = relPath;
             Length = length;
             Sha256 = sha256;
+            CompressedLength = 0;
         }
+
+        public PackFileEntry(string relPath, long length, string sha256, long compressedLength)
+        {
+            RelPath = relPath;
+            Length = length;
+            Sha256 = sha256;
+            CompressedLength = compressedLength;
+        }
+
+        /// <summary>線路上要傳幾個位元組:有壓縮版就是壓縮後的長度,否則是原始長度。</summary>
+        public long WireLength => CompressedLength > 0 ? CompressedLength : Length;
+
+        /// <summary>這個檔在線路上是壓縮的嗎。</summary>
+        public bool IsCompressed => CompressedLength > 0;
     }
 
     /// <summary>掃一個歌曲資料夾的結果統計 —— 用來回報給 host 看「跳過了什麼」。</summary>
