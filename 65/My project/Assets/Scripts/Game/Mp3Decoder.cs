@@ -624,6 +624,8 @@ namespace Sdo.Game
         /// accurately in ~15 ms, so this is ~10× faster than a full decode (≈120 ms vs ≈1.4 s) and starts the preview
         /// almost immediately. <paramref name="startSec"/> &lt; 0 (or past the end) uses
         /// <paramref name="automaticStartRatio"/>. Background-thread safe.
+        /// <b>注意</b>:NLayer 的 seek 對 MPEG-2 / MPEG-2.5 的 mp3 會算出界丟例外(那時這裡回 null)——
+        /// 那種檔要走 <see cref="DecodeWindowMad"/>。
         /// </summary>
         public static Mp3Pcm DecodeWindow(string path, float startSec, float lenSec,
             float automaticStartRatio = SongPreviewWindow.LegacyAutomaticStartRatio)
@@ -661,6 +663,72 @@ namespace Sdo.Game
             catch { return null; }
         }
 
+        /// <summary>
+        /// 用 <b>libmad</b> 解出一段試聽窗 —— NLayer 的 seek 在某些 mp3 上會壞掉時的後路。
+        ///
+        /// NLayer 的高階 seek 對 <b>MPEG-2 / MPEG-2.5</b>(取樣率 ≤ 24 kHz、每幀 576 樣本)這類檔案並不可靠:
+        /// 它會在內部幀索引上算出界丟 <c>IndexOutOfRangeException</c>,而且之後連 <c>ReadSamples</c> 都跟著爆。
+        /// 實例:Over the Ocean[Blue] 的 mp3(MPEG-2 Layer III、22050 Hz、64 kbps、129 s)—— seek 到 2.0 s 或
+        /// 51.7 s(它的 #SAMPLESTART)直接丟例外,但從 0 循序讀完全正常。所以那種歌「遊戲裡放得出來,選歌
+        /// 試聽卻沒聲音」:遊戲內是整檔循序解,試聽卻要先 seek 到試聽點。
+        ///
+        /// libmad 沒有 seek API,這裡是整檔解完再切窗 —— 用的就是遊戲內播放的同一顆解碼器,音量處理
+        /// (<see cref="NormalizeIfHot"/>)也在切窗前對整首做,所以試聽和實際遊玩聽起來一致。
+        /// 純 CPU、不碰 Unity API,可以在背景執行緒跑。回 null = 這條路走不通(DLL 不在或檔案解不開)。
+        /// </summary>
+        public static Mp3Pcm DecodeWindowMad(string path, float startSec, float lenSec,
+            float automaticStartRatio = SongPreviewWindow.LegacyAutomaticStartRatio)
+        {
+            try
+            {
+                var pcm = MadDecoder.Decode(path, out int dropped, out int pretend);
+                if (pcm == null || pcm.Samples == null || pcm.Channels <= 0 || pcm.SampleRate <= 0) return null;
+
+                NormalizeIfHot(pcm.Samples, pcm.Samples.Length);
+
+                if (!WindowSlice(pcm.Samples.Length, pcm.Channels, pcm.SampleRate,
+                                 startSec, lenSec, automaticStartRatio, out int from, out int count))
+                    return null;
+
+                var window = new float[count];
+                Array.Copy(pcm.Samples, from, window, 0, count);
+                return new Mp3Pcm { Samples = window, Channels = pcm.Channels, SampleRate = pcm.SampleRate };
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// 試聽窗落在一段已解碼 PCM 的哪一段(交錯樣本的 [from, from+count))。純算術,和
+        /// <see cref="DecodeWindowMad"/> 共用的那半段邏輯拆出來以便測試。
+        /// 起點沿用 <see cref="SongPreviewWindow.ResolveStart"/>(負值 = 未指定 → 用
+        /// <paramref name="automaticStartRatio"/>),窗長不足時縮到剩下的長度。
+        /// 回 false = 切不出任何東西(輸入無效或長度 0)。
+        /// </summary>
+        public static bool WindowSlice(int totalSamples, int channels, int sampleRate,
+            float startSec, float lenSec, float automaticStartRatio,
+            out int from, out int count)
+        {
+            from = 0; count = 0;
+            if (totalSamples <= 0 || channels <= 0 || sampleRate <= 0) return false;
+            int frames = totalSamples / channels;
+            if (frames <= 0) return false;
+
+            double dur = frames / (double)sampleRate;
+            double win = lenSec > 0f ? lenSec : 20.0;
+            if (win > dur) win = dur;
+            double start = SongPreviewWindow.ResolveStart(startSec, dur, win, automaticStartRatio);
+
+            int startFrame = (int)(start * sampleRate);
+            if (startFrame < 0 || startFrame >= frames) startFrame = 0;
+            int winFrames = (int)(win * sampleRate);
+            if (winFrames <= 0 || startFrame + winFrames > frames) winFrames = frames - startFrame;
+            if (winFrames <= 0) return false;
+
+            from = startFrame * channels;
+            count = winFrames * channels;
+            return true;
+        }
+
         /// <summary>Build an AudioClip from decoded PCM (MAIN THREAD only). Null on empty/invalid input.</summary>
         public static AudioClip ToClip(Mp3Pcm pcm, string name)
         {
@@ -694,7 +762,8 @@ namespace Sdo.Game
 
         /// <summary>Open <paramref name="path"/> and build a looping streaming clip of a [start, start+len] window.
         /// startSec &lt; 0 (or past the end) uses <paramref name="automaticStartRatio"/>.
-        /// Null on failure. MAIN THREAD.</summary>
+        /// Null on failure — <b>including a file whose seek NLayer can't do</b>, so the caller can fall back to
+        /// <see cref="Mp3Decoder.DecodeWindowMad"/> instead of playing silence. MAIN THREAD.</summary>
         public static Mp3StreamClip Create(string path, float startSec, float lenSec, string name,
             float automaticStartRatio = SongPreviewWindow.LegacyAutomaticStartRatio)
         {
@@ -712,7 +781,10 @@ namespace Sdo.Game
                 int winFrames = Math.Max(1, (int)(win * sr));
 
                 var self = new Mp3StreamClip(mp3, ch, sr, start, winFrames);
-                self.SeekStart();
+                // 這一步是**驗證**,不只是定位:NLayer 的 seek 在 MPEG-2 / MPEG-2.5 檔上會算出界丟例外
+                // (見 Mp3Decoder.DecodeWindowMad)。以前這裡把例外吞掉照樣建 clip,結果解碼器已經壞了,
+                // OnRead 每次都爆在音訊執行緒上 → 試聽整段無聲。現在改成回 null,讓呼叫端改走 libmad。
+                if (!self.SeekStart()) { self.Dispose(); return null; }
                 // Big clip length + our own internal loop (OnRead) so Unity never wraps the position (avoids a resync
                 // seam at the loop). Streaming clips don't allocate the sample buffer, so a long length is free.
                 int clipLen = Math.Max(winFrames, sr * 600);
@@ -734,11 +806,14 @@ namespace Sdo.Game
                 int need = data.Length, off = 0, guard = 0;
                 while (off < need && guard++ < 256)
                 {
-                    if (_framesRead >= _windowFrames) SeekStart();
+                    if (_framesRead >= _windowFrames && !SeekStart()) break;
                     int framesLeft = Math.Max(1, _windowFrames - _framesRead);
                     int want = Math.Min(need - off, framesLeft * _channels);
-                    int n = _mp3.ReadSamples(data, off, want);
-                    if (n <= 0) { SeekStart(); continue; }
+                    int n;
+                    // 音訊執行緒上絕不能讓例外飛出去(NLayer 對某些檔會丟 IndexOutOfRange)—— 剩下的填靜音。
+                    try { n = _mp3.ReadSamples(data, off, want); }
+                    catch { break; }
+                    if (n <= 0) { if (!SeekStart()) break; continue; }
                     for (int k = off; k < off + n; k++) { float s = data[k]; if (s > 1f) data[k] = 1f; else if (s < -1f) data[k] = -1f; }
                     off += n; _framesRead += n / _channels;
                 }
@@ -757,11 +832,14 @@ namespace Sdo.Game
             }
         }
 
-        private void SeekStart() { _framesRead = 0; SeekTo(0); }
-        private void SeekTo(int frame)
+        /// <summary>Re-point the decoder at the window start. False = NLayer couldn't seek there (broken file/format);
+        /// the caller must stop using this decoder rather than read from its now-inconsistent state.</summary>
+        private bool SeekStart() { _framesRead = 0; return SeekTo(0); }
+        private bool SeekTo(int frame)
         {
-            if (_mp3 == null) return;
-            try { _mp3.Time = TimeSpan.FromSeconds(_startSec + frame / (double)_sampleRate); } catch { }
+            if (_mp3 == null) return false;
+            try { _mp3.Time = TimeSpan.FromSeconds(_startSec + frame / (double)_sampleRate); return true; }
+            catch { return false; }
         }
 
         public void Dispose()

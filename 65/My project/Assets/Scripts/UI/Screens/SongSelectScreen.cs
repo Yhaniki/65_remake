@@ -137,6 +137,7 @@ namespace Sdo.UI.Screens
         private bool _previewWindow;
         private float _previewWinStart, _previewWinEnd;
         private Sdo.Game.Mp3StreamClip _previewStream;   // streaming mp3 preview (fast start; disposed on stop/change)
+        private AudioClip _previewDecodedClip;           // libmad-decoded window (files NLayer can't seek) — we own it
         private OsuKeysoundPreviewPlayer _osuKeysoundPreview;
         private const float PreviewWindowSec = 20f;
         // External songs are scanned WITHOUT reading their audio (see ExternalSongScanner) so boot stays fast; their
@@ -1396,10 +1397,35 @@ namespace Sdo.UI.Screens
                 _previewStream = Sdo.Game.Mp3StreamClip.Create(
                     path, startSec, lenSec, "preview",
                     SongPreviewWindow.AutomaticStartRatio(e.chartFormat));
-                if (_previewStream == null || _previewStream.Clip == null)
-                { Debug.LogWarning("[SongSelect] mp3 preview stream fail: " + path); _previewCo = null; yield break; }
-                clip = _previewStream.Clip;
-                streamMp3 = true;
+                if (_previewStream != null && _previewStream.Clip != null)
+                {
+                    clip = _previewStream.Clip;
+                    streamMp3 = true;
+                }
+                else
+                {
+                    // NLayer seek 不到這個檔的試聽點(MPEG-2 / MPEG-2.5 的 mp3 會這樣,例如 Over the Ocean[Blue]:
+                    // 22050 Hz、每幀 576 樣本 → 內部索引算出界)。那種歌遊戲裡放得出來(整檔循序解),只有試聽
+                    // 要 seek 才爆。改用 libmad 在背景整檔解完切窗 —— 就是遊戲內播放用的同一顆解碼器。
+                    _previewStream?.Dispose();
+                    _previewStream = null;
+                    string p = path;
+                    float s0 = startSec, l0 = lenSec;
+                    float ratio = SongPreviewWindow.AutomaticStartRatio(e.chartFormat);
+                    var job = System.Threading.Tasks.Task.Run(
+                        () => Sdo.Game.Mp3Decoder.DecodeWindowMad(p, s0, l0, ratio));
+                    while (!job.IsCompleted)
+                    {
+                        if (!IsCurrentPreview(fileId, virtualChartPath)) yield break;   // superseded while decoding
+                        yield return null;
+                    }
+                    clip = Sdo.Game.Mp3Decoder.ToClip(job.Result, "preview");
+                    if (clip == null)
+                    { Debug.LogWarning("[SongSelect] mp3 preview stream fail: " + path); _previewCo = null; yield break; }
+                    Debug.Log("[SongSelect] NLayer seek 不了這個 mp3 → 試聽改用 libmad 解窗:" + Path.GetFileName(path));
+                    _previewDecodedClip = clip;   // AudioClip.Create → ours to destroy (StopPreview does it)
+                    isPreviewClip = true;         // the clip IS the window → loop the whole thing
+                }
             }
             else
             {
@@ -1515,6 +1541,7 @@ namespace Sdo.UI.Screens
             _previewWindow = false;
             if (_preview != null) { _preview.Stop(); _preview.clip = null; }   // detach BEFORE disposing so OnRead stops being called
             if (_previewStream != null) { _previewStream.Dispose(); _previewStream = null; }
+            if (_previewDecodedClip != null) { Destroy(_previewDecodedClip); _previewDecodedClip = null; }
             if (_osuKeysoundPreview != null)
             {
                 _osuKeysoundPreview.Dispose();
