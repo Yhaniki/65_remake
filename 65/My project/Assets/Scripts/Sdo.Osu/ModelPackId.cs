@@ -49,6 +49,10 @@ namespace Sdo.Osu
                 var f = files[i];
                 string rel = SafeRelPath.Normalize(f.RelPath);
                 if (rel.Length == 0) continue;
+                // 🔴 companion(physics.ini / desktop.ini)跟著傳,但**不進身分**——
+                // 進去的話,同一份模型會因為「有沒有調過布料」而變成兩個 packId,
+                // 於是「我明明有這個模型」還是被判定成沒有(見 ModelPackFilter.GeneratedFileName)。
+                if (ModelPackFilter.ClassifyPath(rel) == PackFileVerdict.Companion) continue;
                 if (string.IsNullOrEmpty(f.Sha256)) return string.Empty;   // 見上:寧可算不出來
 
                 lines.Add(rel + FieldSep + f.Length.ToString(CultureInfo.InvariantCulture)
@@ -81,7 +85,9 @@ namespace Sdo.Osu
             {
                 var f = files[i];
                 var v = ModelPackFilter.Classify(f.RelPath, f.Length);
-                if (v != PackFileVerdict.Include) { reason = v + ":" + f.RelPath; return false; }
+                // companion 是合法的隨行檔(physics.ini / desktop.ini)—— 可以在清單裡,只是不算身分。
+                if (v != PackFileVerdict.Include && v != PackFileVerdict.Companion)
+                { reason = v + ":" + f.RelPath; return false; }
                 if (ModelPackFilter.IsModelFile(f.RelPath)) hasModel = true;
                 total += f.Length;
             }
@@ -177,7 +183,9 @@ namespace Sdo.Osu
                 catch { len = -1; }
 
                 var verdict = ModelPackFilter.Classify(rel, len);
-                if (verdict != PackFileVerdict.Include) { Tally(ref stats, verdict, len); continue; }
+                // companion 要收進清單(它要跟著傳),只是 BuildManifest 不會把它算進 packId。
+                if (verdict != PackFileVerdict.Include && verdict != PackFileVerdict.Companion)
+                { Tally(ref stats, verdict, len); continue; }
 
                 files.Add(new PackFileEntry(SafeRelPath.Normalize(rel), len, SongPackId.HashFile(full)));
                 stats.IncludedFiles++;

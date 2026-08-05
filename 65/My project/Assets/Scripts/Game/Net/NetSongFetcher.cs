@@ -106,6 +106,9 @@ namespace Sdo.Game.Net
         private string _writePath = "";
         private long _recvBytes, _totalRecvBytes;
 
+        /// <summary>背景的「解壓 + 驗 sha256」。結果是錯誤訊息(null = 全部通過)。見 <see cref="FinishDownload"/>。</summary>
+        private Task<string> _verifyTask;
+
         public NetTransferState State { get; private set; } = NetTransferState.Idle;
         public string Error { get; private set; } = "";
         public string PackId => _packId;
@@ -278,7 +281,7 @@ namespace Sdo.Game.Net
             Error = "";
             Retryable = false;
             _lastAdvanceMs = Now();
-            _manifest = null; _hashTask = null; _need = null; _needCursor = 0;
+            _manifest = null; _hashTask = null; _verifyTask = null; _need = null; _needCursor = 0;
             _incoming = null; _inCursor = 0; _inReceived = 0;
             _sentBytes = _totalSendBytes = _recvBytes = _totalRecvBytes = 0;
             _writePath = "";
@@ -290,6 +293,9 @@ namespace Sdo.Game.Net
         public void Tick()
         {
             if (!IsBusy) return;
+
+            // 解壓 + 驗 sha256 在背景執行緒跑(見 FinishDownload)—— 這裡只是每幀問一次做完了沒。
+            if (State == NetTransferState.Verifying) { TickVerifying(); return; }
 
             // 驗證/匯入階段**已經離開網路**(FinishDownload 收完檔案就把連線關掉了)→ 完全不碰 link。
             if (!IsNetworkPhase) return;
@@ -718,8 +724,10 @@ namespace Sdo.Game.Net
 
             if (_inReceived < wire) return;
 
+            // 🔴 **不要在這裡解壓。**這是主執行緒(收 chunk 的路徑),而一張 4096² 的貼圖解壓要幾百毫秒 ——
+            //    一份模型十幾個檔就是十幾次卡頓,畫面整個停住(實測:遊戲在下載模型時整個卡住)。
+            //    解壓與 sha256 一起丟到背景,在 FinishDownload 那個「已經離開網路」的階段做。
             CloseStreams();
-            if (f.IsCompressed && !Inflate(f)) return;   // .z 收滿了 → 就地解壓成正式檔
             _inCursor++;
             _inReceived = 0;
             SkipEmptyIncoming();
@@ -768,34 +776,19 @@ namespace Sdo.Game.Net
             return true;
         }
 
-        /// <summary>
-        /// 剛收滿的那個 <c>.z</c> → 解壓成正式檔,然後把 <c>.z</c> 刪掉。
-        ///
-        /// 解壓失敗就是硬失敗:內容已經壞了,繼續收下去只會讓 <see cref="FinishDownload"/> 的 sha256
-        /// 比對指向這個檔,而真正的原因(壓縮流壞掉)只有這裡看得到。
-        /// </summary>
-        private bool Inflate(PackFileEntry f)
-        {
-            var rel = f.RelPath.Replace('/', Path.DirectorySeparatorChar);
-            var outPath = Path.Combine(_destFolder, rel);
-            var zPath = outPath + PackCompression.Extension;
-
-            if (!PackCompression.DecompressFile(zPath, outPath))
-            {
-                TryDeleteFile(zPath);
-                Fail("解壓失敗:" + f.RelPath);
-                return false;
-            }
-            TryDeleteFile(zPath);
-            return true;
-        }
-
         private static void TryDeleteFile(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
-        /// <summary>chunk 收完了 → 逐檔比對 SHA-256。</summary>
+        /// <summary>
+        /// chunk 收完了 → 解壓 + 逐檔比對 SHA-256。
+        ///
+        /// 🔴 <b>這兩件事都在背景執行緒做。</b>解壓一張 4096² 的貼圖要幾百毫秒、算一份 353 MB 的
+        /// sha256 是好幾秒 —— 在主執行緒做的話畫面整個停住(實測:遊戲在下載模型時整個卡住)。
+        /// 這個階段**已經離開網路**(連線就在下面關掉),所以慢慢做完全沒有代價:
+        /// 停滯逾時只看網路階段(見 <see cref="CheckStall"/>),呼叫端也只是等 <c>Importing</c>。
+        /// </summary>
         private void FinishDownload()
         {
             CloseStreams();
@@ -808,20 +801,66 @@ namespace Sdo.Game.Net
                 return;
             }
 
-            for (int i = 0; i < _incoming.Count; i++)
-            {
-                var f = _incoming[i];
-                var full = Path.Combine(_destFolder, f.RelPath.Replace('/', Path.DirectorySeparatorChar));
-                string actual = SongPackId.HashFile(full);
-                if (string.Equals(actual, (f.Sha256 ?? "").ToLowerInvariant(), StringComparison.Ordinal)) continue;
+            // 連線先關掉:後面全是本機的 CPU 工作,留著連線只會被 server 的 ping 掃描判成斷線。
+            if (_link != null) { _link.Close("done"); _link = null; }
 
-                Fail("下載的檔案內容不符:" + f.RelPath);
+            var files = _incoming;
+            var dest = _destFolder;
+            _verifyTask = Task.Run(() => InflateAndVerify(files, dest));
+        }
+
+        /// <summary>
+        /// 背景:把每個 <c>.z</c> 解壓成正式檔,然後逐檔比對 SHA-256。回傳錯誤訊息,null = 全部通過。
+        ///
+        /// 在 worker thread 上跑 → 只能碰純 <c>System.IO</c>(<see cref="PackCompression"/> 與
+        /// <see cref="SongPackId.HashFile"/> 正是那樣寫的,零 UnityEngine)。
+        ///
+        /// sha256 一律對**解壓後**的內容算 —— 壓縮完全不改變身分,所以壓縮流哪裡壞掉一定會在這裡被抓到,
+        /// 不會靜靜地寫出一個壞檔。
+        /// </summary>
+        private static string InflateAndVerify(List<PackFileEntry> files, string destFolder)
+        {
+            for (int i = 0; i < files.Count; i++)
+            {
+                var f = files[i];
+                var rel = f.RelPath.Replace('/', Path.DirectorySeparatorChar);
+                var full = Path.Combine(destFolder, rel);
+
+                if (f.IsCompressed)
+                {
+                    var zPath = full + PackCompression.Extension;
+                    bool ok = PackCompression.DecompressFile(zPath, full);
+                    TryDeleteFile(zPath);
+                    if (!ok) return "解壓失敗:" + f.RelPath;
+                }
+
+                string actual = SongPackId.HashFile(full);
+                if (!string.Equals(actual, (f.Sha256 ?? "").ToLowerInvariant(), StringComparison.Ordinal))
+                    return "下載的檔案內容不符:" + f.RelPath;
+            }
+            return null;
+        }
+
+        /// <summary>背景的解壓+驗證做完了嗎(每幀問一次,見 <see cref="Tick"/>)。</summary>
+        private void TickVerifying()
+        {
+            if (_verifyTask == null) { Fail("沒有驗證工作"); return; }
+            if (!_verifyTask.IsCompleted) return;
+
+            if (_verifyTask.IsFaulted)
+            {
+                var ex = _verifyTask.Exception;
+                _verifyTask = null;
+                Fail("解壓/驗證失敗:" + (ex != null && ex.InnerException != null ? ex.InnerException.Message : "未知"));
                 return;
             }
 
+            string err = _verifyTask.Result;
+            _verifyTask = null;
+            if (!string.IsNullOrEmpty(err)) { Fail(err); return; }
+
             Debug.Log("[net] 下載完成並驗證通過:" + _packId);
-            State = NetTransferState.Importing;      // 等呼叫端跑歌庫重新掃描
-            if (_link != null) _link.Close("done");
+            State = NetTransferState.Importing;      // 等呼叫端接手(重掃歌庫 / 裝上模型)
         }
 
         /// <summary>呼叫端(重新掃描完)通知匯入結束。</summary>

@@ -118,5 +118,62 @@ namespace Sdo.Tests
             Assert.AreEqual(3, back.BodyIndex);
             CollectionAssert.AreEqual(new[] { "hair", "coat", "shoes" }, back.Parts);
         }
+
+        /// <summary>
+        /// 🔴 <b>複製 look 一定要走 <see cref="NetAvatarLook.Clone"/>。</b>
+        ///
+        /// 手捲的複製漏掉一個欄位不會有任何編譯錯誤或警告 —— 那個值就是靜靜地不見了,
+        /// 而症狀離現場很遠:<c>NetMatchPlayerSnapshot.Capture</c> 漏了 MmdPack,結果是
+        /// <b>房間裡每個人的 MMD 都好好的,一進遊戲全部變回 SDO 穿搭</b>(那份快照就是
+        /// matchStarting 送出去的參賽者名單)。log 上唯一的線索是「registered dancer」那一行不見了。
+        /// </summary>
+        [Test]
+        public void Clone_CarriesEveryField_IncludingTheModel()
+        {
+            var src = new NetAvatarLook
+            {
+                Gender = 1,
+                BodyIndex = 4,
+                Parts = new[] { "hair", "coat" },
+                MmdPack = GoodPack(),
+                MmdName = "TestMiku",
+            };
+
+            var copy = src.Clone();
+            Assert.AreEqual(src.Gender, copy.Gender);
+            Assert.AreEqual(src.BodyIndex, copy.BodyIndex);
+            CollectionAssert.AreEqual(src.Parts, copy.Parts);
+            Assert.AreEqual(src.MmdPack, copy.MmdPack, "漏了它 → 進遊戲之後每個人的模型都變回 SDO");
+            Assert.AreEqual(src.MmdName, copy.MmdName);
+            Assert.IsTrue(src.SameAs(copy), "複製出來的必須與原件相等");
+
+            // 深拷貝:改副本的穿搭不可以動到原件。
+            copy.Parts[0] = "changed";
+            Assert.AreEqual("hair", src.Parts[0]);
+        }
+
+        /// <summary>
+        /// 上一條的**端對端**版本:走 server 真正用的那條路(座位 → 參賽者快照),
+        /// 模型的宣告要活著到參賽者名單裡。
+        /// </summary>
+        [Test]
+        public void MatchSnapshot_KeepsTheModelDeclaration()
+        {
+            string pack = GoodPack();
+            var seat = new NetSeat
+            {
+                UserId = 7,
+                Name = "穿模型的",
+                Look = new NetAvatarLook { Gender = 0, BodyIndex = 1, MmdPack = pack, MmdName = "TestMiku" },
+            };
+
+            var snap = Sdo.Net.Server.NetMatchPlayerSnapshot.Capture(seat, 2);
+            Assert.AreEqual(7, snap.UserId);
+            Assert.AreEqual(2, snap.Seat);
+            Assert.IsNotNull(snap.Look);
+            Assert.AreEqual(pack, snap.Look.MmdPack,
+                "參賽者名單掉了 packId → 進遊戲之後別人的 MMD 全部變回 SDO 穿搭");
+            Assert.AreEqual("TestMiku", snap.Look.MmdName);
+        }
     }
 }

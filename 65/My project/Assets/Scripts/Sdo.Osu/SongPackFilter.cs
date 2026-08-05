@@ -15,6 +15,15 @@ namespace Sdo.Osu
         Archive,
         /// <summary>遊戲自己生成的東西(CD 圖 / 舞蹈 / 側車檔)—— 收端會自己重生,傳了是浪費。</summary>
         Generated,
+        /// <summary>
+        /// 跟著一起傳,但**不參與 packId**。
+        ///
+        /// 給的是「這份東西的一部分,可是不構成它的身分」那一類 —— 目前只有模型資料夾裡的
+        /// <c>physics.ini</c>(布料調校)與 <c>desktop.ini</c>。收端需要它(不然頭髮的手感不一樣),
+        /// 但它一旦進了 packId,同一份模型就會因為「有沒有調過布料」而變成兩個不同的 id。
+        /// 見 <see cref="ModelPackFilter.GeneratedFileName"/> 與 <see cref="ModelPackId.BuildManifest"/>。
+        /// </summary>
+        Companion,
         /// <summary>不在白名單裡的副檔名。不認得的東西一律不傳。</summary>
         UnknownType,
         /// <summary>單檔太大。</summary>

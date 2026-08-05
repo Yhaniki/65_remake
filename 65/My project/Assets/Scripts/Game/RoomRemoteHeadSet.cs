@@ -44,6 +44,14 @@ namespace Sdo.Game
         public float zoom = 1f;             // 與 RoomHeadPortrait.zoom 同義
         public bool fitHairTop = false;     // 與 RoomHeadPortrait.fitHairTop 同義
 
+        // ---- 跟頭的濾波(只有 MMD 那條用得到,見 AimFromMmd)----------------------------------------
+        // SDO 那條的取景中心是從**臉的 mesh bounds** 算的,姿勢一變框就跟著變形 → 天然就有殘留的相對運動,
+        // 頭在框裡看得出在動。MMD 的頭框是「錨定在頭骨上的固定大小盒子」,直接追等於把擺動整個抵消掉,
+        // 所以要跟本機那顆一樣走死區(見 RoomHeadPortrait 的 aimDeadZoneFaces 那幾個)。
+        public float aimDeadZoneFaces = HeadPortraitAimFilter.DefaultDeadZoneFaces;
+        public float aimSmoothSec = HeadPortraitAimFilter.DefaultSmoothSec;
+        public float aimCreepSec = HeadPortraitAimFilter.DefaultCreepSec;
+
         private Camera _cam;
         private RoomScene3D _scene;
 
@@ -58,6 +66,9 @@ namespace Sdo.Game
             public float DistModel;       // 模型空間的相機距離 —— **只有這個凍結**(頭的大小不能忽大忽小)
             public bool MmdFramed;        // 上一幀是照 MMD 的頭取景的(見 AimFromMmd)—— 換回 SDO 時要重新凍結 dist
             public MmdAvatar Mmd;         // 抓 Rends 那一刻這隻身上掛的 MMD(換了就要重抓,見 Refresh)
+            public Vector3 MmdAim0;       // MMD 取景的基準中心(角色座標系)—— 擺動是相對它量的
+            public Vector3 MmdFollow;     // 濾波後的「跟頭」補償(死區內恆為上一幀的值,見 AimFromMmd)
+            public float MmdHeadH;        // 頭框高度(角色座標系)—— 死區的尺標
         }
 
         private readonly Dictionary<int, Slot> _slots = new Dictionary<int, Slot>();
@@ -170,7 +181,7 @@ namespace Sdo.Game
             // 🔴 這一隻正在畫 MMD 模型的話,取景一定要走 MMD 的頭(見 AimFromMmd)——
             //    SDO 那具被藏起來只是 renderer.enabled=false,mesh 還在、bounds 照樣算得出來,
             //    所以照 "FACE" 量框不會失敗,只會安靜地對準**一張看不見的臉**,而畫面上是 MMD 的頭。
-            bool mmd = AimFromMmd(av, root, out Vector3 aimLocal, out float mmdDist);
+            bool mmd = AimFromMmd(s, av, root, out Vector3 aimLocal, out float mmdDist);
             if (mmd)
             {
                 if (!s.MmdFramed) { s.MmdFramed = true; s.Framed = false; }   // 換上 MMD → SDO 那份凍結作廢
@@ -193,17 +204,23 @@ namespace Sdo.Game
             // (實測症狀:客戶端看到的房主頭貼只露到頭髮,而同一隻角色在他自己機器上是正的)。
             // 每幀從活的臉框算中心 → 頭永遠在框裡,而大小仍然穩定。
             // 成本:一幀只拍一格,對那一格的 9 個 renderer 取一次 bounds 聯集,可忽略。
-            // 相機的位置與朝向**在角色自己的座標系裡**算,再一起變換到世界 ——
-            // 幾何與本機那顆(相機固定在 -Z、轉的是 avatar)逐項相同,不必自己推「臉朝哪個世界方向」。
-            // (第一版自己推方向 → 拍到後腦:模型的臉是 +Z,而房間裡「面向鏡頭」是 yaw 180,兩個負號疊起來就反了。)
-            Vector3 camLocal = aimLocal + Quaternion.Euler(0f, portraitYaw, 0f) * new Vector3(0f, 0f, -s.DistModel);
-            _cam.transform.position = root.TransformPoint(camLocal);
-            _cam.transform.rotation = Quaternion.LookRotation(
-                root.TransformPoint(aimLocal) - root.TransformPoint(camLocal), Vector3.up);
+            // 取景中心在角色自己的座標系裡算(那樣才跟得住走路的位移),但**相機的方向固定在世界**。
+            //
+            // 🔴 這兩件事不能混。把相機也擺進角色的座標系,等於相機跟著角色一起轉 —— 相對角度永遠不變,
+            //    於是他在房間裡左轉右轉,頭貼卻**一直是同一張正面**(回報:「單機的會左轉右轉看得到它轉向,
+            //    遠端的一直朝前方」)。本機那顆的作法是「**轉分身**、相機固定在 -Z」
+            //    (RoomHeadPortrait.UpdateCam:localRotation = yaw + facing),所以轉身看得到 ——
+            //    要跟它一致,這裡的相機就必須待在世界方向上,讓角色自己的 yaw 演出轉向。
+            float rootScale = Mathf.Max(Mathf.Abs(root.lossyScale.y), 1e-4f);
+            float distWorld = s.DistModel * rootScale;
+            Vector3 aimWorld = root.TransformPoint(aimLocal);
+            Vector3 dir = Quaternion.Euler(0f, portraitYaw, 0f) * Vector3.forward;
+            _cam.transform.position = aimWorld - dir * distWorld;
+            _cam.transform.rotation = Quaternion.LookRotation(dir, Vector3.up);
             _cam.fieldOfView = fov;
             // 深度精度集中在頭上(而且是第二層「別人不入鏡」的保險)。
-            _cam.nearClipPlane = Mathf.Max(0.05f, s.DistModel - 20f);
-            _cam.farClipPlane = s.DistModel + 30f;
+            _cam.nearClipPlane = Mathf.Max(0.05f, distWorld - 20f);
+            _cam.farClipPlane = distWorld + 30f;
 
             HideOthers(s.UserId);
             try
@@ -230,7 +247,7 @@ namespace Sdo.Game
         /// <see cref="MmdAvatar.TryHeadBounds"/> 給的是**世界**座標,而這裡整段幾何都在角色自己的
         /// 座標系裡算(見呼叫端),所以要換回去 —— 距離也要除掉角色身上的縮放。
         /// </summary>
-        private bool AimFromMmd(SdoAvatar av, Transform root, out Vector3 aimLocal, out float distLocal)
+        private bool AimFromMmd(Slot s, SdoAvatar av, Transform root, out Vector3 aimLocal, out float distLocal)
         {
             aimLocal = default; distLocal = 0f;
             if (av == null || root == null) return false;
@@ -238,10 +255,30 @@ namespace Sdo.Game
             if (rig == null || !rig.TryHeadBounds(out var headWorld)) return false;
 
             MmdAvatar.FramePortrait(headWorld, zoom, 0f, out Vector3 aimWorld, out float distWorld);
-            aimLocal = root.InverseTransformPoint(aimWorld);
-            float scale = Mathf.Abs(root.lossyScale.y);
-            distLocal = distWorld / Mathf.Max(scale, 1e-4f);
-            return distLocal > 1e-4f;
+            float scale = Mathf.Max(Mathf.Abs(root.lossyScale.y), 1e-4f);
+            distLocal = distWorld / scale;
+            if (!(distLocal > 1e-4f)) return false;
+
+            Vector3 raw = root.InverseTransformPoint(aimWorld);
+            if (!s.MmdFramed)
+            {
+                s.MmdAim0 = raw;
+                s.MmdFollow = Vector3.zero;
+                s.MmdHeadH = Mathf.Max(headWorld.size.y / scale, 1e-4f);
+            }
+
+            // 🔴 **不能每幀直接追頭。**TryHeadBounds 是錨定在**活的**頭骨上的盒子,直接拿它當取景中心
+            // 等於相機把走路的上下擺動完全抵消掉 —— 頭就永遠釘在框正中央,看起來像一張靜止的圖
+            // (回報:「遠端的人在走路,上面大頭貼都沒動」)。這正是這個類別開頭那條註解說的
+            // 「擺動要在框內演出,相機跟著擺的話頭反而看起來是靜止的」,SDO 那條老早就處理過。
+            //
+            // 所以只補「持續偏同一邊」的那種(前傾滑翔會把頭一直往相機推 → 不補的話頭會爆大),
+            // 待機/走路的小擺動落在死區內 → 相機一動也不動,擺動在框內演出。
+            s.MmdFollow = HeadPortraitAimFilter.Step(s.MmdFollow, raw - s.MmdAim0,
+                                                     aimDeadZoneFaces * s.MmdHeadH,
+                                                     aimSmoothSec, aimCreepSec, Time.deltaTime);
+            aimLocal = s.MmdAim0 + s.MmdFollow;
+            return true;
         }
 
         /// <summary>從活的臉框算這一幀的取景中心(與凍結 dist 時用的是同一個純函式,只是輸入是活的)。</summary>

@@ -33,31 +33,41 @@ namespace Sdo.Tests
         }
 
         /// <summary>
-        /// physics.ini 是**遊戲自己寫進模型資料夾的**布料調校 —— 它不屬於模型的身分。
+        /// physics.ini(遊戲寫的布料調校)與 desktop.ini(Windows 放的)是 <b>companion</b>:
+        /// **跟著傳,但不進 packId**。兩件事都必須成立 ——
         ///
-        /// 沒有這條規則的話:存過布料的人與沒存過的人手上明明是同一份模型,算出的 packId 卻不同 →
-        /// 「我明明有這個模型」還是被判定成沒有,白白再下載一份幾十 MB 的重複副本
-        /// (實測踩過,兩邊的差別就只有這一個 6 KB 的檔)。
+        /// • 不進 packId:否則存過布料的人與沒存過的人手上明明是同一份模型,算出的 id 卻不同 →
+        ///   「我明明有這個模型」還是被判定成沒有,白白再下載一份幾十 MB 的重複副本
+        ///   (實測踩過,兩邊的差別就只有這一個 6 KB 的檔)。
+        /// • 要傳:它就是「這個模型的頭髮/裙擺該怎麼晃」。不傳的話收端只能從 .pmx 自己轉一份,
+        ///   同一個人在自己畫面上與在別人畫面上就是兩種手感(實測:頭髮整個被撐開)。
         /// </summary>
         [Test]
-        public void ModelFilter_Excludes_TheGamesOwnPhysicsIni_SoTuningItDoesNotChangeThePackId()
+        public void PhysicsIni_TravelsWithTheModel_ButDoesNotEnterThePackId()
         {
-            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("physics.ini", 4096));
-            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("PHYSICS.INI", 4096));
-            Assert.IsFalse(ModelPackFilter.IsTransferable("physics.ini", 4096));
-            // Windows 自己放在資料夾裡的那個,同一個理由(有的機器有、有的沒有 → 同一份模型兩個 id)。
-            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("desktop.ini", 244));
-            Assert.AreEqual(PackFileVerdict.Generated, ModelPackFilter.Classify("PMX/desktop.ini", 244));
+            Assert.AreEqual(PackFileVerdict.Companion, ModelPackFilter.Classify("physics.ini", 4096));
+            Assert.AreEqual(PackFileVerdict.Companion, ModelPackFilter.Classify("PHYSICS.INI", 4096));
+            Assert.AreEqual(PackFileVerdict.Companion, ModelPackFilter.Classify("desktop.ini", 244));
+            Assert.AreEqual(PackFileVerdict.Companion, ModelPackFilter.Classify("PMX/desktop.ini", 244));
 
-            // 帶著它的清單要被判成不合法 —— server 收檔時跑的是同一份規則,
-            // 兩邊必須同時排除,否則 client 算的 id 與 server 重算的對不上,上傳一律被拒。
+            // 🔴 要傳得過去 —— 兩端的收檔驗證都問 IsTransferable,這裡說不行的話,
+            //    送端傳了、收端拒收,而錯誤訊息會說「這個檔不該傳」。
+            Assert.IsTrue(ModelPackFilter.IsTransferable("physics.ini", 4096));
+            Assert.IsTrue(ModelPackFilter.IsTransferable("desktop.ini", 244));
+
             var bare = new List<PackFileEntry> { F("miku.pmx", 100, Sha('a')), F("textures/body.png", 50, Sha('b')) };
-            Assert.IsTrue(ModelPackId.IsValidPack(bare, out _));
+            var withIni = new List<PackFileEntry>(bare)
+            {
+                F("physics.ini", 4096, Sha('c')),
+                F("desktop.ini", 244, Sha('d')),
+            };
 
-            var withIni = new List<PackFileEntry>(bare) { F("physics.ini", 4096, Sha('c')) };
+            // 帶著它們的清單是合法的(它們要跟著走)……
             string why;
-            Assert.IsFalse(ModelPackId.IsValidPack(withIni, out why));
-            StringAssert.Contains("physics.ini", why);
+            Assert.IsTrue(ModelPackId.IsValidPack(withIni, out why), why);
+            // ……但身分完全不受影響:調過布料的那一份與沒調過的算出同一個 packId。
+            Assert.AreEqual(ModelPackId.Compute(bare), ModelPackId.Compute(withIni),
+                "companion 進了 packId 的話,調一次布料就換一個 id");
         }
 
         /// <summary>
@@ -122,6 +132,15 @@ namespace Sdo.Tests
 
                 Assert.AreEqual(before, ModelPackId.ForFolder(dir),
                     "調過布料就換一個 packId → 同房的人明明有這份模型卻還是會去下載一份重複的");
+
+                // 但它必須**在傳輸清單裡** —— 收端沒有它就只能從 .pmx 自己轉一份,
+                // 同一個人在自己畫面上與在別人畫面上就是兩種手感。
+                List<PackFileEntry> scanned;
+                PackScanStats stats;
+                Assert.IsTrue(ModelPackId.ScanFolder(dir, out scanned, out stats));
+                Assert.IsTrue(scanned.Exists(f => f.RelPath.EndsWith(ModelPackFilter.GeneratedFileName,
+                                                                     System.StringComparison.OrdinalIgnoreCase)),
+                              "physics.ini 要跟著模型一起傳出去");
             }
             finally
             {

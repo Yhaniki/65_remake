@@ -91,21 +91,23 @@ namespace Sdo.Osu
         /// **遊戲自己寫進模型資料夾的**布料調校檔(<c>MmdClothProfile.FileName</c> 的值 —— 那邊在
         /// Sdo.Game,這裡是零依賴的底層,不能引用,所以兩邊各存一份、改一邊要記得改另一邊)。
         ///
-        /// 🔴 <b>它絕對不能算進 packId。</b>packId 是模型在網路上的身分,而這個檔是**本機調校的產物**:
-        /// 存過布料的人與沒存過的人,手上明明是同一份模型,算出來的 id 卻不一樣 ——
-        /// 於是「我明明有這個模型」卻被判定成沒有,白白再下載一份幾十 MB 的重複副本,
-        /// 而且畫面上完全看不出為什麼(實測踩過:差別就只有這一個 6 KB 的檔)。
+        /// 🔴 <b>它會傳,但不算進 packId</b>(<see cref="PackFileVerdict.Companion"/>)。兩件事都必須成立:
         ///
-        /// 傳給別人也不對:布料參數是從**對方的** mmdScale / 重力 / 碰撞半徑推出來的,
-        /// 搬到別台機器上未必是作者調好的那個手感。收端沒有它就從 .pmx 自己轉換一份,
-        /// 這正是 <see cref="PackFileVerdict.Generated"/> 的語意。
+        /// • <b>不算進 packId</b> —— packId 是模型在網路上的身分,而這個檔是本機調校的產物。
+        ///   算進去的話,存過布料的人與沒存過的人手上明明是同一份模型,算出的 id 卻不一樣:
+        ///   「我明明有這個模型」被判定成沒有,白白再下載一份幾十 MB 的重複副本,
+        ///   而畫面上完全看不出為什麼(實測踩過:差別就只有這一個 6 KB 的檔)。
+        ///
+        /// • <b>要傳</b> —— 它就是「這個模型的頭髮/裙擺該怎麼晃」。不傳的話收端只能從 .pmx 自己轉一份,
+        ///   於是同一個人在自己畫面上與在別人畫面上是**兩種手感**(實測:碰撞半徑差 1.5 倍,
+        ///   頭髮整個被撐開)。作者/穿的人調好的樣子,本來就該是別人看到的樣子。
         /// </summary>
         public const string GeneratedFileName = "physics.ini";
 
         /// <summary>
-        /// 不屬於模型、但會混進資料夾裡的檔。<see cref="GeneratedFileName"/> 是遊戲寫的,
-        /// <c>desktop.ini</c> 是 Windows 自己放的(資料夾圖示/顯示設定)—— 兩者都會讓
-        /// 「同一份模型」在不同機器上算出不同的 packId,理由與 physics.ini 完全相同。
+        /// 跟著模型一起走、但**不屬於模型身分**的檔(<see cref="PackFileVerdict.Companion"/>)。
+        /// <see cref="GeneratedFileName"/> 是遊戲寫的布料調校;<c>desktop.ini</c> 是 Windows 放的
+        /// (資料夾圖示設定)—— 兩者都會讓「同一份模型」在不同機器上算出不同的 packId。
         /// (實測:下載回來的那一包裡就躺著一個 desktop.ini。)
         /// </summary>
         private static readonly string[] NotPartOfTheModel = { GeneratedFileName, "desktop.ini" };
@@ -119,7 +121,7 @@ namespace Sdo.Osu
             string name = SongPackFilter.FileNameOf(relPath);
             for (int i = 0; i < NotPartOfTheModel.Length; i++)
                 if (string.Equals(name, NotPartOfTheModel[i], StringComparison.OrdinalIgnoreCase))
-                    return PackFileVerdict.Generated;
+                    return PackFileVerdict.Companion;   // 傳,但不進 packId(見 NotPartOfTheModel)
             string ext = SongPackFilter.ExtensionOf(name);
             if (Has(Videos, ext)) return PackFileVerdict.Video;
             if (Has(Executables, ext)) return PackFileVerdict.Executable;
@@ -146,8 +148,17 @@ namespace Sdo.Osu
             return PackFileVerdict.Include;
         }
 
+        /// <summary>
+        /// 這個檔可以跨網路傳嗎。companion(physics.ini / desktop.ini)**算可以** ——
+        /// 它跟著模型走,只是不參與 packId(見 <see cref="GeneratedFileName"/>)。
+        /// 兩端的收檔驗證都問這個函式,所以這裡與 <see cref="ModelPackId.ScanFolder"/> 的判斷必須一致,
+        /// 否則送端傳了、收端拒收,而錯誤訊息會說「這個檔不該傳」。
+        /// </summary>
         public static bool IsTransferable(string relPath, long lengthBytes)
-            => Classify(relPath, lengthBytes) == PackFileVerdict.Include;
+        {
+            var v = Classify(relPath, lengthBytes);
+            return v == PackFileVerdict.Include || v == PackFileVerdict.Companion;
+        }
 
         /// <summary>這個相對路徑是模型本體嗎(＝ .pmx)。一個 pack 至少要有一個,否則它不是模型。</summary>
         public static bool IsModelFile(string relPath)

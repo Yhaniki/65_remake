@@ -151,6 +151,24 @@ namespace Sdo.Net
         }
 
         /// <summary>
+        /// 完整複製一份外觀。
+        ///
+        /// 🔴 <b>要複製 <see cref="NetAvatarLook"/> 一律走這裡,不要手捲。</b>
+        /// 手捲的複製漏掉一個欄位不會有任何編譯錯誤或警告 —— 那個值就是靜靜地不見了。
+        /// (實際踩過兩次:<c>PublishLook</c> 手捲 JSON 漏了 MmdPack → 模型上傳一律被
+        ///  「這不是你身上穿的那個模型」擋掉;<c>NetMatchPlayerSnapshot.Capture</c> 手捲複製漏了同一個欄位
+        ///  → 進遊戲之後每個人的 MMD 模型都變回 SDO 穿搭,而房間裡明明是好的。)
+        /// </summary>
+        public NetAvatarLook Clone() => new NetAvatarLook
+        {
+            Gender = Gender,
+            BodyIndex = BodyIndex,
+            Parts = Parts != null ? (string[])Parts.Clone() : null,
+            MmdPack = MmdPack ?? "",
+            MmdName = MmdName ?? "",
+        };
+
+        /// <summary>
         /// 兩份外觀一樣嗎?<c>null</c> 與空陣列視為相等(兩者都代表「用預設整套」)。
         ///
         /// 為什麼需要它:client 有兩個地方要判斷「外觀變了沒」——
