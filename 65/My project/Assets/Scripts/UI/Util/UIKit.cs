@@ -335,6 +335,17 @@ namespace Sdo.UI.Util
             field.targetGraphic = img;
             field.lineType = TMP_InputField.LineType.SingleLine;
             field.richText = false;
+            // 🔴 AddComponent 的當下 GameObject 已經是 active → TMP_InputField.OnEnable **立刻**跑過一次,
+            //    而 textComponent / textViewport 是它後面幾行才接上的。OnEnable 裡那兩件關鍵的事都寫成
+            //    `if (m_TextComponent != null)`,於是整套都沒建起來:
+            //      • 沒有 "Caret" 子物件(m_CachedInputRenderer)→ UpdateGeometry 直接 return
+            //        → 內建游標與選取反白永遠畫不出來(房間/大廳因此各自自畫了一根白線);
+            //      • 真正要命的是「字比框寬時把文字往左推」的 AdjustRectTransformRelativeToViewport
+            //        掛在同一條 caret 重建路徑上 → 打超過框寬的字整段跑到遮罩外**看不到**,
+            //        游標往回移也推不回來(使用者回報:房間/大廳/遊戲中都一樣)。
+            //    接好欄位之後把元件關再開,讓 OnEnable 用完整的欄位重跑一次即可。
+            field.enabled = false;
+            field.enabled = true;
             return field;
         }
 

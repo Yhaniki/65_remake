@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -117,6 +118,7 @@ namespace Sdo.Game
 
         private SpriteRenderer _bar, _barTail, _modeBtn, _sendBtn, _exprBtn;
         private Label3D _draftLabel;
+        private Label3D _measureLabel;   // 只拿來量字寬(不顯示):推訊息進來時先算它要折成幾列
         private SpriteRenderer _caret;
 
         private readonly List<GameplayChatLine> _lines = new List<GameplayChatLine>();
@@ -175,6 +177,10 @@ namespace Sdo.Game
 
             _draftLabel = NewLabel("ChatDraft", OrderText);
             _draftLabel.SetActive(false);
+            // 量字寬專用的隱形 label:設定與訊息列的 head 一模一樣(同字級/同字型),量出來才等於實際排出來的寬度。
+            // 不共用 _draftLabel —— 那顆的字是使用者正在打的草稿,拿去當量尺會把畫面上的草稿洗掉。
+            _measureLabel = NewLabel("ChatMeasure", OrderText);
+            _measureLabel.SetActive(false);
             _caret = NewSR("ChatCaret", WhitePixel(), OrderText);
             _caret.enabled = false;
 
@@ -222,8 +228,8 @@ namespace Sdo.Game
         /// <summary>推一行進聊天框(前端已決定顏色/名字/表情圖)。超過 <see cref="GameplayChatLayout.MaxLines"/> 就吃掉最舊的。</summary>
         public void Push(GameplayChatLine line)
         {
-            _lines.Add(line);
-            while (_lines.Count > GameplayChatLayout.MaxLines) _lines.RemoveAt(0);
+            AddWrapped(line);
+            TrimLines();
             _lastActivitySec = Time.unscaledTimeAsDouble;
             RebuildRows();
         }
@@ -234,10 +240,84 @@ namespace Sdo.Game
             _lines.Clear();
             if (lines != null)
             {
+                // 一則訊息可能折成好幾列,但至少一列 → 取最後 MaxLines 則就一定夠填滿畫面(多的由 TrimLines 砍掉)。
                 int from = Mathf.Max(0, lines.Count - GameplayChatLayout.MaxLines);
-                for (int i = from; i < lines.Count; i++) _lines.Add(lines[i]);
+                for (int i = from; i < lines.Count; i++) AddWrapped(lines[i]);
             }
+            TrimLines();
             RebuildRows();
+        }
+
+        private void TrimLines()
+        {
+            while (_lines.Count > GameplayChatLayout.MaxLines) _lines.RemoveAt(0);
+        }
+
+        /// <summary>
+        /// 把一則訊息折成 1~N 個**顯示列**再放進 <see cref="_lines"/>。
+        ///
+        /// 這條聊天列沒有自動折行(一列一顆 TextMesh),長訊息以前就是直接畫到欄寬外面去。折成好幾列之後,
+        /// 原本的排版(<c>LineTopY</c>)、淡出、14 列上限全部照舊 —— 續列就是「沒有名字的一般行」。
+        /// 名字只留在第一列(密語點擊的方框也只掛在那一列,跟房間左下角的行為一致)。
+        /// </summary>
+        private void AddWrapped(GameplayChatLine line)
+        {
+            float full = GameplayChatLayout.ListW;
+            var frames = line.ExpressionFrames;
+            bool hasEmoji = frames != null && frames.Length > 0;
+
+            if (_measureLabel == null) { _lines.Add(line); return; }   // 還沒 Build → 照舊(不折)
+
+            if (!hasEmoji)
+            {
+                string s = line.PlainText();
+                var parts = WrapToWidth(s, full, full);
+                if (parts.Count <= 1) { _lines.Add(line); return; }
+                string name = line.Name ?? "";
+                for (int i = 0; i < parts.Count; i++)
+                {
+                    // 第一列保留名字(＝密語點擊範圍);PlainText() 會把 名字 + " " + 內容 接回原樣。
+                    if (i == 0 && name.Length > 0 && parts[0].StartsWith(name, StringComparison.Ordinal))
+                        _lines.Add(new GameplayChatLine
+                        {
+                            Name = name,
+                            Body = parts[0].Substring(name.Length).TrimStart(),
+                            ColorHex = line.ColorHex,
+                            WhisperTarget = line.WhisperTarget,
+                        });
+                    else
+                        _lines.Add(new GameplayChatLine { Body = parts[i], ColorHex = line.ColorHex });
+                }
+                return;
+            }
+
+            // 有表情圖:名字 + 表情前的字 + 小圖固定留在第一列,只有表情後面那段字要折。
+            // 第一列剩下的寬 = 欄寬 − 名字/前字 − 小圖(排法見 ApplyRow)。
+            string head = line.Name ?? "";
+            string lead = line.Lead ?? "";
+            if (lead.Length > 0) head = head.Length > 0 ? head + " " + lead : lead;
+            float headW = head.Length > 0 ? MeasureWidth(head) + 3f : 0f;
+            float firstW = Mathf.Max(EmojiPx, full - headW - EmojiPx - 3f);
+
+            var tailParts = WrapToWidth((line.Body ?? "").Trim(), firstW, full);
+            var firstLine = line;                       // struct → 這是複本,原本那份不動
+            firstLine.Body = tailParts[0];
+            _lines.Add(firstLine);
+            for (int i = 1; i < tailParts.Count; i++)
+                _lines.Add(new GameplayChatLine { Body = tailParts[i], ColorHex = line.ColorHex });
+        }
+
+        /// <summary>用量尺 label 把字切成幾段(寬度單位 = design px,同 <see cref="GameplayChatLayout.ListW"/>)。</summary>
+        private List<string> WrapToWidth(string s, float firstWidth, float restWidth)
+        {
+            _measureLabel.Text = s ?? "";
+            return ChatTextWrap.Wrap(s, _measureLabel.PrefixWidth, firstWidth, restWidth);
+        }
+
+        private float MeasureWidth(string s)
+        {
+            _measureLabel.Text = s ?? "";
+            return _measureLabel.MeasuredWidth;
         }
 
         // ---- per-frame ----

@@ -300,6 +300,10 @@ namespace Sdo.UI.Screens
         //    🔴 改這兩個數字之前先把上面那條算式重算一遍,不然 ChatLineClip 會再度出現「半截字」。
         private const float ChatFontSize = 12.5f;
         private const float ChatLineH = 12.5f;
+        // VerticalLayoutGroup 的四邊內距(見 BuildBottomPanel 的 AddVerticalScroll 參數)與由它推出的排字寬 ——
+        // 長訊息就是折在這個寬度上,量折了幾行要用同一個數字(見 ChatLine)。
+        private const int ChatPad = 2;
+        private const float ChatLineWrapW = ChatW - ChatPad * 2;
 
         // ---------------- 狀態 ----------------
 
@@ -833,7 +837,7 @@ namespace Sdo.UI.Screens
             // 再貼一張 RecordChatBG 就會變成兩個框疊在一起、左右各兩條線。
 
             // 聊天記錄。背板已經畫好框了 → ScrollRect 自己不要再上底色。
-            _chatScroll = UIKit.AddVerticalScroll(Root, "ChatScroll", out _chatContent, 1f, 2, new Color(0f, 0f, 0f, 0f));
+            _chatScroll = UIKit.AddVerticalScroll(Root, "ChatScroll", out _chatContent, 1f, ChatPad, new Color(0f, 0f, 0f, 0f));
             PlaceTopLeft(_chatScroll.GetComponent<RectTransform>(), ChatX, ChatY, ChatW, ChatH);
             _chatClip = _chatScroll.gameObject.AddComponent<ChatLineClip>();   // 只露整行,不留半截字
 
@@ -1859,7 +1863,12 @@ namespace Sdo.UI.Screens
             string upTo = committed.Substring(0, caretPos) + comp;
             float w = (_chatInput.textComponent != null && upTo.Length > 0)
                 ? _chatInput.textComponent.GetPreferredValues(upTo).x : 0f;
-            _chatCaret.rectTransform.anchoredPosition = new Vector2(2f + w, 0f);
+            // 字比框寬時 TMP 會把整段文字往左推,游標要跟著那個位移走(見 InputCaretMetrics)。
+            float shift = _chatInput.textComponent != null
+                ? _chatInput.textComponent.rectTransform.anchoredPosition.x : 0f;
+            float viewW = _chatInput.textViewport != null ? _chatInput.textViewport.rect.width : 0f;
+            _chatCaret.rectTransform.anchoredPosition =
+                new Vector2(InputCaretMetrics.CaretX(2f, w, shift, viewW, _chatCaret.rectTransform.sizeDelta.x), 0f);
             if (!_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(true);
 
             // 閃爍:0.55 秒亮、0.45 秒暗(與房間同拍)。
@@ -2272,9 +2281,15 @@ namespace Sdo.UI.Screens
         /// </summary>
         private OutlinedLabel ChatLine(string name, string rich)
         {
+            // 長串英數對 TMP 是「一個單字」,塞不下會整串跳下一排、這一排卻空著 → 先給它可折點(見 ChatSoftWrap)。
+            rich = ChatSoftWrap.Apply(rich);
             var t = OutlinedLabel.CreateRich(_chatContent, name, rich, ChatFontSize, ChatEdgeCol,
                                              ChatEdgePx, ChatEdgeDirs, true, TextAlignmentOptions.TopLeft);
-            UIKit.Layout(t.gameObject, ChatLineH);
+            // 🔴 高度**不能寫死一行** —— 長訊息折到第二行時,一行的位置容不下兩行:第二行會壓在下一則訊息上,
+            //    捲到底也只捲得到第一行(房間那邊使用者回報的症狀,這裡是同一份版面)。折幾行由 TMP 量。
+            float one = t.Face != null ? t.Face.GetPreferredValues(rich).y : 0f;
+            float wrapped = t.Face != null ? t.Face.GetPreferredValues(rich, ChatLineWrapW, 0f).y : 0f;
+            UIKit.Layout(t.gameObject, ChatLineMetrics.BlockHeight(wrapped, one, ChatLineH));
             return t;
         }
 

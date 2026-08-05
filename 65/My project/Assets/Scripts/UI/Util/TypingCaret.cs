@@ -35,6 +35,10 @@ namespace Sdo.UI.Util
             var c = field.gameObject.AddComponent<TypingCaret>();
             c._field = field;
             c._x0 = x0;
+            // TMP 內建的 caret 現在真的畫得出來了(見 UIKit.AddInputField 尾端的 enabled 重跑),
+            // 這裡既然自己畫一根,就把內建那根設成全透明,免得同一格出現兩根游標。
+            field.customCaretColor = true;
+            field.caretColor = new Color(1f, 1f, 1f, 0f);
             c._caret = UIKit.AddImage(field.textViewport, "TypingCaret", color, raycast: false);
             var rt = c._caret.rectTransform;
             rt.anchorMin = rt.anchorMax = new Vector2(0f, 0.5f);
@@ -59,7 +63,12 @@ namespace Sdo.UI.Util
             string upTo = committed.Substring(0, caretPos) + (Input.compositionString ?? "");
             float w = (_field.textComponent != null && upTo.Length > 0)
                 ? _field.textComponent.GetPreferredValues(upTo).x : 0f;
-            _caret.rectTransform.anchoredPosition = new Vector2(_x0 + w, 0f);
+            // 字比框寬時 TMP 會把整段文字往左推,游標要跟著那個位移走(見 InputCaretMetrics)。
+            float shift = _field.textComponent != null
+                ? _field.textComponent.rectTransform.anchoredPosition.x : 0f;
+            float viewW = _field.textViewport != null ? _field.textViewport.rect.width : 0f;
+            _caret.rectTransform.anchoredPosition =
+                new Vector2(InputCaretMetrics.CaretX(_x0, w, shift, viewW, _caret.rectTransform.sizeDelta.x), 0f);
             if (!_caret.gameObject.activeSelf) _caret.gameObject.SetActive(true);
 
             bool on = Mathf.Repeat(Time.unscaledTime, 1f) < OnFrac;

@@ -111,6 +111,11 @@ namespace Sdo.UI.Screens
         // 動態 CJK 字型畫不出 TMP SDF 描邊，改用 OutlinedLabel 的位移複製法（和房間標題/頭上名字同一套）。
         private const float ChatEdgePx = 0.7f;   // 邊厚（design px）；13px 小字太厚會像粗體 → 0.7 細髮絲邊，字回正常字重又不糊
         private const int ChatEdgeDirs = 4;      // 正十字四向；歷史上限 200 行×每行複製份數，四向兼顧清晰與物件數
+        private const float ChatLogW = 360f;     // 訊息欄視窗寬（見 BuildRoomChatLog 的 Place）
+        private const int ChatLogPad = 3;        // VerticalLayoutGroup 的四邊內距（見 BuildRoomChatLog 的 AddVerticalScroll）
+        /// <summary>一則訊息實際可用的排字寬 —— 折行就是折在這個寬度上（content 寬 − 左右內距）。</summary>
+        private const float ChatLineWrapW = ChatLogW - ChatLogPad * 2;
+        private const float ChatLineH = 16f;     // 一列的行距
         private const string WhisperLinkId = "w|";   // TMP link id 前綴：<link="w|名字">名字</link> → 點名字密語
         // 行內 emoji（表情 + 字）：emoji 疊在使用者打的位置——前字後留一段固定寬空檔，emoji 疊上去。自己調這幾個像素數就好。
         private const float BubbleEmojiGapPx = 24f;       // <space=…> 在字裡預留的水平空檔
@@ -1049,13 +1054,13 @@ namespace Sdo.UI.Screens
         private void BuildRoomChatLog()
         {
             // 訊息欄底改成全透明（原本是灰色半透明 a=0.18）；文字直接疊在 3D 房間上。
-            _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, 3, new Color(0f, 0f, 0f, 0f));
+            _chatScroll = UIKit.AddVerticalScroll(_win3Root, "AllChatList", out _chatContent, 0f, ChatLogPad, new Color(0f, 0f, 0f, 0f));
             // 官方 DDRROOM 的 win4 是 x=14 y=445 w=360 h=104（底緣 549）。這裡**刻意往下 10px**：
             // 官方那個 TextList 的字是直接貼著視窗底緣排的，我們的 content 還有 3px 內距，最後一行的字底
             // 因此停在 546，離下面那條紫色輸入條（chatmode 鈕在 569）差了將近 20px —— 使用者回報「房間裡
             // 聊天的字跟下面的打字框間隔太遠」。往下挪之後最後一行貼在 556，剩下約半行的呼吸空間。
             // 高度不動（104 仍是 ChatLineClip 算整行裁切的依據），只是整塊下移。
-            Place(_chatScroll.GetComponent<RectTransform>(), 14, ChatLogY, 360, 104);
+            Place(_chatScroll.GetComponent<RectTransform>(), 14, ChatLogY, ChatLogW, 104);
             _chatScroll.scrollSensitivity = 18f;
             _chatLogGroup = _chatScroll.gameObject.AddComponent<CanvasGroup>();   // 收合時淡出(win3 下滑不足以完全移出訊息欄,見 ApplyCollapse)
             // 整行裁切：視窗 104px 不是行高的整數倍，捲到底時最上面那行只露下半截字且一直不走(見 ChatLineClip)。
@@ -1468,13 +1473,28 @@ namespace Sdo.UI.Screens
             UiSfx.Play(action.SoundFor(male));   // 語音房內所有人都聽得到(官方也是)
         }
 
-        // 左下聊天：一整行帶黑邊的 rich 文字（VLG block，固定行高 16）。回傳 face TMP 供掛名字點擊。
+        // 左下聊天：一整行帶黑邊的 rich 文字（VLG block，行高 16）。回傳 face TMP 供掛名字點擊。
+        // 🔴 排版高度**不能寫死 16** —— 訊息長到折行時,一行的位置容不下兩行:第二行會壓在下一則訊息上,
+        //    捲到底也只捲得到第一行(使用者回報的兩個症狀)。折了幾行由 TMP 量(見 ChatLineMetrics)。
         private TextMeshProUGUI ChatLine(string name, string rich)
         {
+            // 長串英數(888888…／一長串英文)對 TMP 是「一個單字」，塞不下就整串跳到下一排、
+            // 這一排卻空著 —— 先給它可折點(見 ChatSoftWrap)。量高度也要用同一份字串。
+            rich = ChatSoftWrap.Apply(rich);
             var ol = OutlinedLabel.CreateRich(_chatContent, name, rich, 13, Color.black, ChatEdgePx, ChatEdgeDirs,
                 true, TextAlignmentOptions.TopLeft);
-            UIKit.Layout(ol.gameObject, 16);
+            UIKit.Layout(ol.gameObject, ChatLineBlockHeight(ol.Face, rich));
             return ol.Face;
+        }
+
+        /// <summary>一則訊息在 <c>VerticalLayoutGroup</c> 裡要佔多高:不限寬量一次(＝保證不折的單行高)、
+        /// 限 <see cref="ChatLineWrapW"/> 再量一次(＝折行後的實際總高),交給 <see cref="ChatLineMetrics"/> 換算。</summary>
+        private static float ChatLineBlockHeight(TextMeshProUGUI face, string rich)
+        {
+            if (face == null) return ChatLineH;
+            float one = face.GetPreferredValues(rich).y;
+            float wrapped = face.GetPreferredValues(rich, ChatLineWrapW, 0f).y;
+            return ChatLineMetrics.BlockHeight(wrapped, one, ChatLineH);
         }
 
         // 行內 emoji 行的一格帶黑邊 rich 文字（HLG cell）：holder 依實測字寬掛 LayoutElement。回傳 face TMP。
@@ -2061,9 +2081,11 @@ namespace Sdo.UI.Screens
             bool exprInline = m.ExpressionId > 0 && (lead.Length > 0 || trail.Length > 0);   // 表情 + 前/後字
             bool pureEmoji = m.ExpressionId > 0 && !exprInline;                              // 只有表情
             // 泡大小：純表情用固定小泡；表情+字用「前字 + emoji 寬 + 後字」估寬；一般訊息照原本量文字。
+            // 🔴 量寬度用的字串要和**真正貼上去**的字串一致 —— 底下每一處 bubble.Text.text 都套了
+            //    ChatSoftWrap(長串英數給可折點),這裡沒套的話會量到一個折不開的超寬單字 → 挑到最大的泡、字還是滿出去。
             string sizeText = pureEmoji
                 ? ""
-                : (exprInline ? lead + "　　" + trail : ChatLineText(m));
+                : ChatSoftWrap.Apply(exprInline ? lead + "　　" + trail : ChatLineText(m));
             int style = pureEmoji ? 1 : RoomBubbleStyleForText(sizeText, bubble.Text);
             ApplySentBubbleStyle(bubble, style, entering: true);
             var enterFrames = RoomBubbleArt.EnterFrames(style);
@@ -2101,9 +2123,11 @@ namespace Sdo.UI.Screens
                     bubble.Expression.sprite = frames[0];
                     bubble.Text.gameObject.SetActive(true);
                     bubble.Text.alignment = TextAlignmentOptions.MidlineLeft;
+                    // 🔴 只給 trail 可折點,lead 一個字都不能動 —— 下面的 EmojiInlineLeadLen 是用 lead 的**字數**
+                    //    去 characterInfo 找 emoji 該疊在哪一格,塞了零寬空格就會整個位移。
                     bubble.Text.text = EscapeTmp(lead)
                         + "<space=" + ((int)BubbleEmojiGapPx) + ">"
-                        + EscapeTmp(trail);
+                        + ChatSoftWrap.Apply(EscapeTmp(trail));
                     // emoji 掛到 Text 底下，用 characterInfo 座標定位（跟泡內游標同套機制）；泡活化後才有 mesh，故延後擺。
                     bubble.Expression.rectTransform.SetParent(bubble.Text.rectTransform, false);
                     bubble.EmojiInlineLeadLen = lead.Length;
@@ -2115,7 +2139,7 @@ namespace Sdo.UI.Screens
                     bubble.ExpressionAnim.Frames = frames;
                     bubble.Expression.sprite = frames[0];
                     bubble.Text.gameObject.SetActive(true);
-                    bubble.Text.text = EscapeTmp(trail);
+                    bubble.Text.text = ChatSoftWrap.Apply(EscapeTmp(trail));
                     var tr = RoomBubbleArt.TextRect(bubble.Style);
                     Place(bubble.Expression.rectTransform, tr.x, tr.y + (tr.height - 24f) * 0.5f, 24, 24);
                     Place(bubble.Text.rectTransform, tr.x + 26f, tr.y, Mathf.Max(8f, tr.width - 26f), tr.height);
@@ -2130,7 +2154,7 @@ namespace Sdo.UI.Screens
                     string fb = RoomChatCommand.ExpressionDisplayText(m.ExpressionId);
                     if (lead.Length > 0) fb = lead + " " + fb;
                     if (trail.Length > 0) fb = fb + " " + trail;
-                    bubble.Text.text = EscapeTmp(fb);
+                    bubble.Text.text = ChatSoftWrap.Apply(EscapeTmp(fb));
                 }
             }
             else
@@ -2138,7 +2162,7 @@ namespace Sdo.UI.Screens
                 bubble.Expression.gameObject.SetActive(false);
                 if (bubble.ExpressionAnim != null) bubble.ExpressionAnim.Frames = null;
                 bubble.Text.gameObject.SetActive(true);
-                bubble.Text.text = EscapeTmp(ChatLineText(m));
+                bubble.Text.text = ChatSoftWrap.Apply(EscapeTmp(ChatLineText(m)));
             }
 
             _sentBubbles.Add(bubble);
@@ -2454,12 +2478,16 @@ namespace Sdo.UI.Screens
             int caret = Mathf.Clamp(_chatInput.stringPosition, 0, committed.Length);                    // 游標(移動端)
             int anchor = Mathf.Clamp(_chatInput.selectionStringAnchorPosition, 0, committed.Length);    // 選取固定端
             string body = BubbleDraftBody(committed, caret, anchor, composition);
+            // 游標字元索引 = 游標前的已上屏字數 + 組字內部游標（原生 IMM32；往回選會往回移，拿不到則落組字串尾端）。
+            int caretChar = caret + ImeCompositionCursor(composition);
+            // 長串英數要給可折點,否則泡挑不到裝得下的尺寸、字直接滿出去（見 ChatSoftWrap）。
+            // 零寬空格自己也佔一格 characterInfo → 游標索引要一起換算,不然打愈長偏愈多。
+            body = ChatSoftWrap.Apply(body, ChatSoftWrap.DefaultMinRun, caretChar, out caretChar);
             // 注意：空字時就讓 text=""（cc==0），走 UpdateBubbleCaretOverlay 的 rect 置中 fallback。
             // 不要塞空白當佔位——空白字元的 ascender/descender 近乎 0，會把游標釘在框頂(pivot=左上)。
             bool bodyChanged = body != _bubbleBodyFor;
             if (bodyChanged) { _chatBubbleText.text = body; _bubbleBodyFor = body; }
-            // 游標字元索引 = 游標前的已上屏字數 + 組字內部游標（原生 IMM32；往回選會往回移，拿不到則落組字串尾端）。
-            UpdateBubbleCaretOverlay(caret + ImeCompositionCursor(composition), bodyChanged);
+            UpdateBubbleCaretOverlay(caretChar, bodyChanged);
         }
 
         // 空 draft → ADDANI 打字小泡；有字 → TALK_N（下面有棍）依長度變寬，不要用無棍的 Base/ENTER。
@@ -2480,7 +2508,8 @@ namespace Sdo.UI.Screens
                 return;
             }
 
-            int style = RoomBubbleStyleForText(draft);
+            // 量寬度的字串要和貼上去的一致（貼上去的走了 ChatSoftWrap，見 SyncRoomBubbleTyping）。
+            int style = RoomBubbleStyleForText(ChatSoftWrap.Apply(draft));
             // _bubbleTextRectDirty：即使 style 沒變，只要剛才空字把文字框移走了，也要重跑 SizedStyle 把文字框搬回 TextRect(style)。
             if (_chatBubbleTypingArt || _bubbleTextRectDirty || style != _chatBubbleStyle)
                 ApplyRoomBubbleTypingSizedStyle(style);
@@ -2792,7 +2821,13 @@ namespace Sdo.UI.Screens
             string upTo = committed.Substring(0, caretPos) + comp.Substring(0, imeCur);
             float w = (_chatInput.textComponent != null && upTo.Length > 0)
                 ? _chatInput.textComponent.GetPreferredValues(upTo).x : 0f;
-            _chatCaret.rectTransform.anchoredPosition = new Vector2(2f + w, 0f);
+            // 字比框寬時 TMP 會把整段文字往左推(讓游標留在框內),自畫的游標要跟著那個位移走,
+            // 否則它會一路往右跑出框外、和實際看得到的字對不上(見 InputCaretMetrics)。
+            float shift = _chatInput.textComponent != null
+                ? _chatInput.textComponent.rectTransform.anchoredPosition.x : 0f;
+            float viewW = _chatInput.textViewport != null ? _chatInput.textViewport.rect.width : 0f;
+            _chatCaret.rectTransform.anchoredPosition =
+                new Vector2(InputCaretMetrics.CaretX(2f, w, shift, viewW, _chatCaret.rectTransform.sizeDelta.x), 0f);
             if (!_chatCaret.gameObject.activeSelf) _chatCaret.gameObject.SetActive(true);
             bool on = CaretBlinkOn();
             var c = _chatCaret.color; c.a = on ? 1f : 0f; _chatCaret.color = c;
