@@ -1,5 +1,6 @@
 using TMPro;
 using UnityEngine;
+using Sdo.Localization;
 
 namespace Sdo.UI.Util
 {
@@ -37,10 +38,24 @@ namespace Sdo.UI.Util
             }
         }
 
+        /// <summary>The bundled Source Han Sans (思源黑體, SIL OFL). ONE shared instance —— 每建一份就是另一張
+        /// atlas,而它同時是 <see cref="Cjk"/> 與 <see cref="Lihei"/> 的 fallback。四種語言實測 0 缺字。</summary>
+        public static TMP_FontAsset Bundled
+        {
+            get
+            {
+                if (_bundledTried) return _bundled;
+                _bundledTried = true;
+                _bundled = BuildBundled();
+                return _bundled;
+            }
+        }
+        private static TMP_FontAsset _bundled; private static bool _bundledTried;
+
         /// <summary>Resolve the CJK face: OS SimSun → bundled Source Han Sans → any OS face that survives the probe.</summary>
         private static TMP_FontAsset BuildCjk()
         {
-            var bundled = BuildBundled();
+            var bundled = Bundled;
             // Primary: OS SimSun, the official client's hardcoded face.
             var simsun = BuildOs(new[] { "SimSun", "NSimSun", "宋体" });
             if (simsun != null)
@@ -82,7 +97,7 @@ namespace Sdo.UI.Util
                 if (face != null)
                 {
                     face.name = "DFLiHei";
-                    var bundled = BuildBundled();
+                    var bundled = Bundled;
                     if (bundled != null) AddFallback(face, bundled);   // rare glyphs fall through to Source Han Sans
                     _lihei = face;
                 }
@@ -92,6 +107,63 @@ namespace Sdo.UI.Util
                 }
                 return _lihei;
             }
+        }
+
+        /// <summary>
+        /// OPTION 對話框「進階」那頁動態文字的字面 —— **依語言切**：繁中＝華康儷中黑（<see cref="Lihei"/>，
+        /// OPTIONDLG 那張圖上烘死的中文就是它），其餘語言＝bundled 思源黑體（<see cref="Bundled"/>）。
+        ///
+        /// 🔴 為什麼不能一律用儷中黑:`DFLiHei.ttc` 的 cmap 宣告 **35,981** 個碼位,其中 **11,706 個的字形是空的**
+        ///    —— 有登記、沒筆畫。簡中命中 144 字(显/语/简/弹/开/关/闭…)、**日文也命中 47 字**(変/弾/楽/戻/観…),
+        ///    繁中 0。因為 cmap 有登記,TMP 認定「這個字我有」→ **fallback 永遠不會啟動**,直接畫出一片空白;
+        ///    症狀是「字不見了」而不是豆腐字 □,所以更難發現(使用者回報:簡中「显示模式」變成「示模式」)。
+        ///    `HasCharacter()` 對這種字回 true —— 要判斷畫不畫得出來只能看 glyph metrics,見 <see cref="CanRender"/>。
+        /// </summary>
+        public static TMP_FontAsset DialogFace
+            => LocalizationManager.Current == Language.TraditionalChinese ? Lihei : (Bundled ?? Cjk);
+
+        /// <summary>
+        /// 這份字型(含它的 fallback)**真的畫得出**這串字嗎 —— 不是問「有沒有這個碼位」(那是
+        /// <c>HasCharacter</c>,對空心字會騙人,見 <see cref="DialogFace"/>),而是看 glyph 的 metrics 有沒有寬高。
+        /// 空白/控制字元跳過(它們本來就沒有墨水)。畫不出來時 <paramref name="missing"/> 回第一個出問題的字。
+        /// </summary>
+        public static bool CanRender(TMP_FontAsset fa, string text, out char missing)
+        {
+            missing = '\0';
+            if (string.IsNullOrEmpty(text)) return true;
+            if (fa == null) { missing = text[0]; return false; }
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c) || char.IsControl(c)) continue;
+                if (!HasInk(fa, c, 0)) { missing = c; return false; }
+            }
+            return true;
+        }
+
+        /// <summary>一個字在這份字型(或它的 fallback)裡有沒有實際筆畫。**主字型宣告有、但字形是空的 → 直接回 false
+        /// 而不往 fallback 找** —— 那正是 TMP 排版時會做的事(它認為主字型有,不會再問 fallback),這裡要模擬的是
+        /// 「畫出來會長什麼樣」,不是「哪裡找得到這個字」。</summary>
+        private static bool HasInk(TMP_FontAsset fa, char c, int depth)
+        {
+            if (fa == null || depth > 4) return false;              // depth:防 fallback 互指造成無限遞迴
+            bool declared;
+            try { declared = fa.HasCharacter(c, searchFallbacks: false, tryAddCharacter: true); }
+            catch { declared = false; }
+            if (declared)
+            {
+                var table = fa.characterLookupTable;
+                if (table != null && table.TryGetValue(c, out var ch) && ch != null && ch.glyph != null)
+                {
+                    var m = ch.glyph.metrics;
+                    return m.width > 0f && m.height > 0f;
+                }
+                return true;    // 加得進去但查不到 metrics → 當它畫得出來（不要誤判成缺字）
+            }
+            var fb = fa.fallbackFontAssetTable;
+            if (fb != null)
+                foreach (var f in fb)
+                    if (f != null && f != fa && HasInk(f, c, depth + 1)) return true;
+            return false;
         }
 
         // 俐方體 Cubic 11 — a SIL OFL pixel/bitmap font (bundled at Assets/Resources/Fonts/Cubic_11.ttf, redistributable

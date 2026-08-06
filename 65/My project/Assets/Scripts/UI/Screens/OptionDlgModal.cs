@@ -263,14 +263,47 @@ namespace Sdo.UI.Screens
 
         private void RefreshAdv() { foreach (var r in _advDots) r(); }
 
-        // Localized TMP in 華康儷中黑 BOLD (falls back to Cjk if the face isn't installed) — used only on the 進階 tab.
+        // Localized TMP in the 進階 tab's face (繁中＝華康儷中黑、其餘語言＝思源黑體，見 UIFont.DialogFace) BOLD.
         private TextMeshProUGUI AdvText(Transform p, string name, string key, float size, Color col, TextAlignmentOptions align)
         {
             var t = UIKit.AddLocText(p, name, key, size, col, align);
-            var f = UIFont.Lihei; if (f != null) t.font = f;
             t.fontStyle = FontStyles.Bold;
+            TrackDialogFace(t);
             return t;
         }
+
+        // ---------------------------------------------------------------- 進階頁的字面（換語言要跟著換）
+        // 這一頁的字**不能一律用華康儷中黑**：DFLiHei.ttc 有 11,706 個碼位是「有登記、沒筆畫」的空心字，
+        // 簡中中槍 144 字、日文 47 字，而且 cmap 有登記 → TMP 不會 fallback，直接畫成一片空白
+        // （使用者回報：簡中的「显示模式」變成「示模式」、「语言」變成「言」）。詳見 UIFont.DialogFace。
+        private readonly List<TextMeshProUGUI> _dialogFaceTexts = new List<TextMeshProUGUI>();
+
+        private void TrackDialogFace(TextMeshProUGUI t)
+        {
+            if (t == null) return;
+            _dialogFaceTexts.Add(t);
+            var f = UIFont.DialogFace; if (f != null) t.font = f;
+        }
+
+        private void ApplyDialogFace()
+        {
+            var f = UIFont.DialogFace;
+            if (f == null) return;
+            foreach (var t in _dialogFaceTexts) if (t != null) t.font = f;
+        }
+
+        // 語言下拉是**即時預覽**（見 BuildAdvanced 的 _langSel）→ 這一頁得跟著重新上妝。
+        // LocalizedText 只管自己那串字，字面與「build 當下就解好的選項字串」都要在這裡補。
+        private void OnLanguageChanged()
+        {
+            ApplyDialogFace();
+            // 顯示模式那三個字是 build 當下解出來的 → 不重灌的話，整頁都翻了只有它留在舊語言
+            // （使用者截圖：整頁簡中，只有這格還是「視窗」）。
+            _modeSel?.SetOptions(new[] { L("display.windowed"), L("display.fullscreen"), L("display.borderless") });
+        }
+
+        private void OnEnable() => LocalizationManager.LanguageChanged += OnLanguageChanged;
+        private void OnDisable() => LocalizationManager.LanguageChanged -= OnLanguageChanged;
 
         // ---------------------------------------------------------------- 音效 tab
         // Labels (背景音樂/遊戲音樂/遊戲音效) and MIN…MAX tracks are baked into OptVolumeBoard, so we only drop a
@@ -765,8 +798,8 @@ namespace Sdo.UI.Screens
             box.anchoredPosition = new Vector2(x, -y); box.sizeDelta = new Vector2(w, 26f);
 
             var val = UIKit.AddText(box, "Val", "", 14, ContentMagenta, TextAlignmentOptions.Center);
-            var lf = UIFont.Lihei; if (lf != null) val.font = lf;
             val.fontStyle = FontStyles.Bold;   // 紫色內容字加粗 (官方指定)
+            TrackDialogFace(val);
             UIKit.Stretch(val, 26, 0, 26, 0);
 
             var prev = ArrowButton(box, "Prev", "◀", true);
@@ -856,11 +889,19 @@ namespace Sdo.UI.Screens
         /// <summary>Tiny ◀ value ▶ selector (themed for the light board; UIKit.AddCycler is white-on-dark).</summary>
         private sealed class MiniSelect
         {
-            private readonly string[] _opts; private readonly TextMeshProUGUI _label; private readonly Action<int> _onChange;
+            private string[] _opts; private readonly TextMeshProUGUI _label; private readonly Action<int> _onChange;
             public int Index { get; private set; }
             public MiniSelect(string[] opts, TextMeshProUGUI label, Action<int> onChange)
             { _opts = opts ?? new string[0]; _label = label; _onChange = onChange; }
             public void Step(int d) => Set(Index + d, true);
+            /// <summary>換掉選項字串並重畫目前這格（**不 notify** —— 值沒有變，變的只是它叫什麼）。
+            /// 換語言時用：選項字串是 build 當下解出來的，不重灌就會整頁翻好只剩它是舊語言。</summary>
+            public void SetOptions(string[] opts)
+            {
+                if (opts == null || opts.Length == 0) return;
+                _opts = opts;
+                Set(Index, false);
+            }
             public void Set(int i, bool notify)
             {
                 if (_opts.Length == 0) return;
