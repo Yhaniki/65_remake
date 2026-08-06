@@ -133,9 +133,11 @@ namespace Sdo.Game
 
         /// <summary><paramref name="cloth"/> false builds the rig with NO hair/skirt simulation — the physics bones just
         /// hold their styled rest pose and ride the head. That is what the head portraits (room 頭貼 / 結算頭貼) use: at
-        /// that size the sway is invisible, and a cloth solver per rig is the most expensive part of a build.</summary>
+        /// that size the sway is invisible, and a cloth solver per rig is the most expensive part of a build.
+        /// <paramref name="sizeMul"/> = 對齊舞者身高之後再乘的倍率(＝本機的 <c>mmdScale</c>);**遠端角色一律 1**,
+        /// 見 <see cref="MmdTuningPolicy"/> —— 那根旋鈕是調我自己的模型的。</summary>
         public static MmdAvatar Build(SdoAvatar driver, PmxLoader pmx, string textureDir, int layer, bool cloth = true,
-                                      string searchRoot = null)
+                                      string searchRoot = null, float sizeMul = MmdTuningPolicy.NeutralSize)
         {
             if (driver == null || driver.Hrc == null || pmx == null || pmx.Bones.Count == 0 || pmx.VertexCount == 0)
                 return null;
@@ -144,12 +146,12 @@ namespace Sdo.Game
             var self = rootGo.AddComponent<MmdAvatar>();
             self.Driver = driver;
             self._mmdRoot = rootGo.transform;
-            try { self.Construct(pmx, textureDir, layer, cloth, searchRoot); }
+            try { self.Construct(pmx, textureDir, layer, cloth, searchRoot, sizeMul); }
             catch (Exception e) { Debug.LogWarning("[mmd] build fail: " + e.Message + "\n" + e.StackTrace); UnityEngine.Object.Destroy(rootGo); return null; }
             return self;
         }
 
-        private void Construct(PmxLoader pmx, string textureDir, int layer, bool cloth, string searchRoot)
+        private void Construct(PmxLoader pmx, string textureDir, int layer, bool cloth, string searchRoot, float sizeMul)
         {
             float t0 = Time.realtimeSinceStartup;
             int bc = pmx.Bones.Count;
@@ -169,10 +171,13 @@ namespace Sdo.Game
             }
             hrcHeight = Mathf.Max(hrcHeight, 1e-2f);
             // Models ship at wildly different sizes, so the base scale ALIGNS the model's height to this dancer's;
-            // config.ini's mmdScale (設定面板「模型大小」) then multiplies that when a particular model still reads as
-            // too big or too small. Everything downstream is derived from _unitScale (cloth gravity, particle radius,
-            // speed limits), so the physics follows the chosen size instead of being tuned for the automatic one.
-            _unitScale = hrcHeight / mmdHeight * Mathf.Clamp(Sdo.Settings.RoomConfig.mmdScale, 0.3f, 3f);
+            // sizeMul (本機 = 設定面板「模型縮放」/ config.ini mmdScale) then multiplies that when a particular model
+            // still reads as too big or too small. Everything downstream is derived from _unitScale (cloth gravity,
+            // particle radius, speed limits), so the physics follows the chosen size instead of the automatic one.
+            // 🔴 這個值由**呼叫端**給,這裡不讀 config.ini:那根旋鈕是「我對我那個模型的修正」,
+            //    遠端角色一律拿 1(見 MmdTuningPolicy)。以前這裡直接讀,於是別人的模型在**新建的那一刻**
+            //    被我的倍率一起放大/縮小,而改倍率時又只重建本機那幾隻 → 先載的人正常、後載的人變形。
+            _unitScale = hrcHeight / mmdHeight * Mathf.Clamp(sizeMul, 0.3f, 3f);
 
             // ---- bone hierarchy (rest) ----
             _bone = new Transform[bc]; _parent = new int[bc];

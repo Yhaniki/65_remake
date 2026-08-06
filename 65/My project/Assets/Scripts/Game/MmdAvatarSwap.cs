@@ -409,6 +409,7 @@ namespace Sdo.Game
             else if (!Mathf.Approximately(now.Scale, _applied.Scale))
             {
                 // 模型大小是「建的時候」決定的(骨架縮放 + 布料的重力/粒子半徑/速度上限全從它推),所以跟換模型一樣要重建。
+                // 只重建本機那幾隻 —— 這根旋鈕是「我對我那個模型的修正」,遠端根本不吃它(見 TuningFor)。
                 _applied = now;
                 Log($"[mmd] scale → {now.Scale:F2}×");
                 RebuildWhere(r => !r.Remote);
@@ -702,9 +703,11 @@ namespace Sdo.Game
                 else
                 {
                     // 布料是建一隻 rig 最貴的一段 → 設定關掉布料時就整組不建(不是建了再關),換場景才會明顯變快。
-                    r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics, root);
+                    // 大小走 TuningFor:遠端拿中性值(＝只對齊舞者身高),不吃我的「模型縮放」。
+                    r.Mmd = MmdAvatar.Build(r.Avatar, pmx, dir, r.Avatar.gameObject.layer, r.Cloth && RoomConfig.mmdPhysics,
+                                            root, TuningFor(r).SizeMul);
                     if (r.Mmd == null) { r.Failed = true; _lastError = "MmdAvatar.Build returned null"; Debug.LogWarning("[mmd] build failed → staying on SDO body"); pmxPath = null; }
-                    else { r.BuiltFrom = pmxPath; ApplyOptsTo(r.Mmd); }
+                    else { r.BuiltFrom = pmxPath; ApplyOptsTo(r); }
                 }
             }
 
@@ -721,11 +724,25 @@ namespace Sdo.Game
             return true;
         }
 
-        private void ApplyOpts() { foreach (var r in _regs) if (r.Mmd != null) ApplyOptsTo(r.Mmd); }
+        private void ApplyOpts() { foreach (var r in _regs) if (r.Mmd != null) ApplyOptsTo(r); }
 
-        // 把 config.ini [Mmd] 的外觀/物理旋鈕套到一隻已經建好的身體上。
-        private static void ApplyOptsTo(MmdAvatar m)
+        /// <summary>這一隻要吃哪一組大小/布料數值 —— 本機吃 config.ini 那四根旋鈕,遠端一律中性
+        /// (＝完全照他模型自己的 physics.ini / .pmx 轉換值)。見 <see cref="MmdTuningPolicy"/>。</summary>
+        private static MmdRigTuning TuningFor(Reg r)
+            => MmdTuningPolicy.For(r.Remote, RoomConfig.mmdScale, RoomConfig.mmdGravity,
+                                   RoomConfig.mmdStiffness, RoomConfig.mmdColliderScale);
+
+        // 把 config.ini [Mmd] 的旋鈕套到一隻已經建好的身體上。
+        //
+        // 上半 = **本機的顯示設定**(要不要描邊/卡通陰影/sphere、重定向怎麼做、布料跑不跑):
+        //        我畫面上的每一隻都該長一樣,所以連遠端角色也一起套。
+        // 下半 = **布料手感**(重力/剛性/碰撞半徑):那是**模型自己的**東西(physics.ini,跟著模型包傳過來;
+        //        沒有那個檔就是從 .pmx 轉的值)。拿我的旋鈕再蓋一次就等於把它作廢 —— 剛下載好別人的模型時
+        //        他的頭髮會被撐開(碰撞半徑差 1.5 倍),房間上面那格頭貼看得最清楚。所以遠端走中性值。
+        private static void ApplyOptsTo(Reg r)
         {
+            var m = r.Mmd;
+            if (m == null) return;
             m.UseAim = RoomConfig.mmdAim;
             m.DriveRootTranslation = RoomConfig.mmdRootMotion;
             m.SetSphere(RoomConfig.mmdSphere);
@@ -733,8 +750,9 @@ namespace Sdo.Game
             m.SetToon(RoomConfig.mmdToon);
             m.SetOutline(RoomConfig.mmdOutline);
             m.SetPhysics(RoomConfig.mmdPhysics);
-            m.TunePhysics(RoomConfig.mmdStiffness, 0.6f, RoomConfig.mmdGravity);
-            m.SetColliderRadius(RoomConfig.mmdColliderScale);
+            var t = TuningFor(r);
+            m.TunePhysics(t.Stiffness, 0.6f, t.Gravity);
+            m.SetColliderRadius(t.ColliderScale);
         }
 
         /// <summary>
