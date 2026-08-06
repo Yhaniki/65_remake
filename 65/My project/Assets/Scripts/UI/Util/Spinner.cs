@@ -10,7 +10,7 @@ namespace Sdo.UI.Util
     /// </summary>
     public sealed class Spinner : MonoBehaviour
     {
-        public float DegPerSec = -180f;   // half of the original 360°/s
+        public float DegPerSec = -360f;   // 360°/s
         public float PauseSec = 1f;
         public float RampSec = 2f;
 
