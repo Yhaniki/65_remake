@@ -560,7 +560,8 @@ namespace Sdo.UI.Screens
                 RoomUiArt.AnPremult("ShopDlg13"), RoomUiArt.AnSolo("LabUnCheck"), RoomUiArt.AnSolo("LabCheck"),
                 // 清單由上而下＝向上 / 向下；傾斜沒實作所以不上架（NotePanelLayout.MenuValues 是那張列序↔值對照表，
                 // 舊 config.ini 存著 2＝傾斜的話 MenuRow 會退回「向上」那一列）。
-                new[] { L("room.drop_up"), L("room.drop_down") }, null,
+                // 選項字傳 key(不是解好的字串):這塊只建一次,中途換語言才跟得上(見 SdoComboBox.Relocalize)。
+                null, null,
                 NotePanelLayout.MenuRow(Ctx.Session.DropDirection), SpeedColor, DropListColor,
                 row =>
                 {
@@ -568,7 +569,8 @@ namespace Sdo.UI.Screens
                     Ctx.Session.DropDirection = v; RoomConfig.defaultDropDirection = v; RoomConfig.Save();   // 持久化：掉落方式寫回 config.ini（進遊戲決定 note 面板上/下）
                 },
                 expandDown: true, listX: Win2.x + 70, listWidth: 38f,
-                valueOffsetY: 2f);   // 只把「向上/向下」值往上 2px，▼ 鈕位置不動
+                valueOffsetY: 2f,    // 只把「向上/向下」值往上 2px，▼ 鈕位置不動
+                optionKeys: new[] { "room.drop_up", "room.drop_down" });
             // 掉落方式 ▼ 開關鈕按下 → SE_0001（清單列本來就有；此為開關鈕本身。中間設定塊仍不掛滑過音）。
             UiSfx.AttachClick(_dropCombo.GetComponent<Button>());
 

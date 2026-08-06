@@ -2,6 +2,7 @@ using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using Sdo.Localization;
 
 namespace Sdo.UI.Util
 {
@@ -17,7 +18,9 @@ namespace Sdo.UI.Util
     {
         private RectTransform _root;
         private string[] _options;
+        private string[] _optionKeys;     // 選項字的 localization key(給了就跟著語言重解,見 Relocalize)
         private Sprite[] _valueSprites;   // optional per-option sprite (e.g. 自由模式/普通模式); null -> text
+        private bool _chineseValueSprites;// 值圖上的字是烘死的中文 → 只有中文語系用得上(見 UseSpriteValue)
         private bool _listAsText;         // dropdown rows render as text even when _valueSprites is set (collapsed value still uses the sprite)
         private int _index;
         private Sprite _listN, _listH;    // green list-row art (normal / selected)
@@ -47,14 +50,24 @@ namespace Sdo.UI.Util
         /// <summary>
         /// Build a collapsed dropdown: a value slot at (slotX,slotY,slotW,slotH) with the ▲ arrow at arrowX.
         /// <paramref name="valueSprites"/> (optional) renders each option as a sprite instead of text.
+        ///
+        /// 多語系:給 <paramref name="optionKeys"/>(這時 <paramref name="options"/> 可以傳 null)選項字就綁在 key 上,
+        /// 換語言時自己重解 —— 下拉是「建版面當下解一次」的話,從 OPTION 中途換語言它會停在舊語言(見 Relocalize)。
+        /// <paramref name="chineseValueSprites"/> 標記「值圖上的字是烘死的中文」(選歌的 LABEL_SDO 模式名):
+        /// 中文語系照用官方圖,英文/日文改畫翻譯後的文字,否則那格永遠是中文。
         /// </summary>
         public static SdoComboBox Create(RectTransform root, string name,
             float slotX, float slotY, float slotW, float slotH, float arrowX,
             Sprite arrowSprite, Sprite listN, Sprite listH,
             string[] options, Sprite[] valueSprites, int start, Color textColor, Color listTextColor, Action<int> onPick,
             bool listAsText = false, bool expandDown = false, float listWidth = 0f, float listX = 0f,
-            float valueOffsetY = 0f)
+            float valueOffsetY = 0f, string[] optionKeys = null, bool chineseValueSprites = false)
         {
+            if (optionKeys != null && (options == null || options.Length == 0))
+            {
+                options = new string[optionKeys.Length];
+                for (int i = 0; i < optionKeys.Length; i++) options[i] = LocalizationManager.Get(optionKeys[i]);
+            }
             options = options ?? new string[0];
             start = Mathf.Clamp(start, 0, Mathf.Max(0, options.Length - 1));
 
@@ -69,6 +82,7 @@ namespace Sdo.UI.Util
             combo._root = root; combo._options = options; combo._valueSprites = valueSprites; combo._index = start;
             combo._listN = listN; combo._listH = listH; combo._textColor = textColor; combo._listTextColor = listTextColor; combo._onPick = onPick;
             combo._listAsText = listAsText; combo._expandDown = expandDown;
+            combo._optionKeys = optionKeys; combo._chineseValueSprites = chineseValueSprites;
             combo._x = slotX; combo._y = slotY; combo._w = slotW; combo._h = slotH;
             combo._listW = listWidth; combo._listX = listX;
 
@@ -84,9 +98,12 @@ namespace Sdo.UI.Util
                 combo._labelImg.raycastTarget = false;
                 Place(combo._labelImg.rectTransform, slotX, labelY, slotW, slotH);
             }
-            else
+            // 文字值:沒有值圖時是唯一的值;有值圖但那些圖是烘死的中文時,英日語系改用它(兩個都建好,
+            // RefreshValue 依當下語言決定顯示哪一個 —— 換語言不必重建版面)。
+            if (valueSprites == null || chineseValueSprites)
             {
-                combo._label = UIKit.AddText(root, name + "_val", "", 14, textColor, TextAlignmentOptions.Center);
+                // 名字:純文字值沿用 _val(既有測試依這個名字找它);與值圖並存時另取 _valtxt,免得兩個物件同名。
+                combo._label = UIKit.AddText(root, name + (valueSprites != null ? "_valtxt" : "_val"), "", 14, textColor, TextAlignmentOptions.Center);
                 combo._label.fontStyle |= FontStyles.Bold;   // 收合值與清單列同步加粗
                 Place(combo._label.rectTransform, slotX, labelY, slotW, slotH);
             }
@@ -110,19 +127,53 @@ namespace Sdo.UI.Util
             return combo;
         }
 
+        /// <summary>值圖上的字是中文烘死的話,只有中文語系用得上;其餘語言退回(翻譯過的)文字值。</summary>
+        private bool UseSpriteValue =>
+            _valueSprites != null && (!_chineseValueSprites || IsChinese(LocalizationManager.Current));
+
+        private static bool IsChinese(Language l) =>
+            l == Language.TraditionalChinese || l == Language.SimplifiedChinese;
+
         private void RefreshValue()
         {
+            bool useSprite = UseSpriteValue;
             if (_labelImg != null)
             {
-                var s = (_valueSprites != null && _index < _valueSprites.Length) ? _valueSprites[_index] : null;
+                _labelImg.gameObject.SetActive(useSprite);
                 // ApplySprite:值圖(選歌的 LABEL_SDO 模式名切片)是 premult 貼圖,材質配對只發生在這裡；它同時代掉了
                 // 「null → 透明」與「sizeDelta = 原生尺寸置中」這兩件原本手寫的事。
-                UIKit.ApplySprite(_labelImg, s);
+                if (useSprite)
+                    UIKit.ApplySprite(_labelImg, (_valueSprites != null && _index < _valueSprites.Length) ? _valueSprites[_index] : null);
             }
-            else if (_label != null)
+            if (_label != null)
             {
-                _label.text = (_index >= 0 && _index < _options.Length) ? _options[_index] : "";
+                _label.gameObject.SetActive(!useSprite);
+                if (!useSprite) _label.text = (_index >= 0 && _index < _options.Length) ? _options[_index] : "";
             }
+        }
+
+        /// <summary>
+        /// 換語言:選項字重解、收合值重畫(順帶在「中文圖 ↔ 翻譯文字」之間切換)。
+        /// 清單正開著的話整份重建 —— 那些列是 Open() 當下用 _options 畫出來的。
+        /// </summary>
+        private void Relocalize()
+        {
+            if (_optionKeys != null)
+            {
+                if (_options == null || _options.Length < _optionKeys.Length) _options = new string[_optionKeys.Length];
+                for (int i = 0; i < _optionKeys.Length; i++)
+                    if (!string.IsNullOrEmpty(_optionKeys[i])) _options[i] = LocalizationManager.Get(_optionKeys[i]);
+            }
+            RefreshValue();
+            if (IsOpen) { Close(); Open(); }
+        }
+
+        private void OnEnable()
+        {
+            LocalizationManager.LanguageChanged += Relocalize;
+            // 藏著的時候換的語言收不到事件(房間那幾塊 UI 會整個 SetActive 收起來)→ 重新顯示時補解一次。
+            // AddComponent 當下 OnEnable 就會跑一遍,那時欄位都還沒設 —— Relocalize 對全 null 是安全的。
+            Relocalize();
         }
 
         private void Toggle() { if (_popup != null) Close(); else Open(); }
@@ -162,7 +213,7 @@ namespace Sdo.UI.Util
                 rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); rt.pivot = new Vector2(0f, 1f);
                 rt.sizeDelta = new Vector2(listW, rowH); rt.anchoredPosition = new Vector2(0f, -rowH * i);
 
-                if (!_listAsText && _valueSprites != null && i < _valueSprites.Length && _valueSprites[i] != null)
+                if (!_listAsText && UseSpriteValue && i < _valueSprites.Length && _valueSprites[i] != null)
                 {
                     var im = UIKit.AddImage(row.transform, "s", Color.white);
                     UIKit.ApplySprite(im, _valueSprites[i]);   // premult 值圖要配 premult 材質；尺寸交給下面的 Stretch
@@ -202,7 +253,11 @@ namespace Sdo.UI.Util
             if (_overlay != null) { Destroy(_overlay); _overlay = null; }
         }
 
-        private void OnDisable() => Close();
+        private void OnDisable()
+        {
+            LocalizationManager.LanguageChanged -= Relocalize;
+            Close();
+        }
 
         private static void Place(RectTransform rt, float x, float y, float w, float h)
         {

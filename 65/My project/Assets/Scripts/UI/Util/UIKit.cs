@@ -349,6 +349,23 @@ namespace Sdo.UI.Util
             return field;
         }
 
+        /// <summary>
+        /// 提示字(placeholder)綁 localization key 的輸入框。
+        ///
+        /// 🔴 <see cref="AddInputField"/> 收的是**已經解好的字串** —— 解的那一刻是建版面的時候,
+        ///    之後在 OPTION 裡換語言,那句提示會留在畫面上不動(其它字都跟著換,只有它沒換)。
+        ///    這裡把 placeholder 那個 TMP 掛上 <see cref="LocalizedText"/>,換語言就自己重解。
+        ///    呼叫端若會把 placeholder <c>SetActive(false)</c>(focus 時隱藏),也沒問題:
+        ///    LocalizedText 在 OnEnable 會再解一次,關著的期間換的語言在重新顯示時補上。
+        /// </summary>
+        public static TMP_InputField AddLocInputField(Transform parent, string name, string placeholderKey, float size = 16)
+        {
+            var field = AddInputField(parent, name, LocalizationManager.Get(placeholderKey), size);
+            if (field.placeholder != null)
+                field.placeholder.gameObject.AddComponent<LocalizedText>().key = placeholderKey;
+            return field;
+        }
+
         // ---------- cycler ----------
 
         public static Cycler AddCycler(Transform parent, string name, string[] options, int start, out RectTransform container)

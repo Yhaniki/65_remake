@@ -794,7 +794,9 @@ namespace Sdo.UI.Screens
 
         private void BuildSearch()
         {
-            _search = UIKit.AddInputField(Root, "SearchBox", L("songselect.search"), 13);   // issue #8 (localized)
+            // 提示字走 key(不是「建的時候解一次」):選歌畫面只 BuildUI 一次,而 OPTION 可以在遊戲
+            // 中途換語言 —— 解好的字串會留在框裡不動,整個畫面只有這句還是舊語言。
+            _search = UIKit.AddLocInputField(Root, "SearchBox", "songselect.search", 13);   // issue #8 (localized)
             Place(_search.GetComponent<RectTransform>(), 368, 427, 180, 20);
             _search.characterLimit = 32;
             // Search runs on ENTER only (not per-keystroke). onSubmit fires on Enter for a SingleLine field (and
@@ -869,11 +871,17 @@ namespace Sdo.UI.Screens
             var sdoModes = RoomDlgArt.AnFrames("LABEL_SDO.an");
             Sprite[] modeSprites = (sdoModes != null && sdoModes.Length >= 6) ? new[] { sdoModes[0], sdoModes[1], sdoModes[5] } : null;
             // keep refs so ESC can peel an expanded dropdown before closing the whole dialog (see Update()).
+            // 🔴 選項字傳 **key** 而不是解好的字串:這面板只 BuildUI 一次,而 OPTION 可以在遊戲中途換語言 ——
+            //    傳字串的話這兩個下拉會停在建版面當下的語言(見 SdoComboBox.Relocalize)。
+            //    模式的收合值是官方圖(LABEL_SDO,中文烘死)→ chineseValueSprites:中文語系照用圖,英日改畫翻譯文字。
             _modeCombo = SdoComboBox.Create(Root, "modeCombo", 289, slotY, 258, slotH, 522, arrow, listMode, listModeH,
-                new[] { L("songselect.mode_free"), L("songselect.mode_normal"), L("songselect.mode_showtime") }, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 2), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
-                listAsText: true);   // expanded list = green text rows (like formation/looker); collapsed value keeps the LABEL_SDO sprite
+                null, modeSprites, Mathf.Clamp(Ctx.Session.GameMode, 0, 2), Color.white, ColComboList, i => Ctx.Session.GameMode = i,
+                listAsText: true,   // expanded list = green text rows (like formation/looker); collapsed value keeps the LABEL_SDO sprite
+                optionKeys: new[] { "songselect.mode_free", "songselect.mode_normal", "songselect.mode_showtime" },
+                chineseValueSprites: true);
             _formCombo = SdoComboBox.Create(Root, "formCombo", 571, slotY, 56, slotH, 627, arrow, listSm, listSmH,
-                new[] { L("songselect.form_basic"), L("songselect.form_fan"), L("songselect.form_ring"), L("songselect.form_random") }, null, Mathf.Clamp(Ctx.Session.Formation, 0, 3), Color.white, ColComboList, i => Ctx.Session.Formation = i);
+                null, null, Mathf.Clamp(Ctx.Session.Formation, 0, 3), Color.white, ColComboList, i => Ctx.Session.Formation = i,
+                optionKeys: new[] { "songselect.form_basic", "songselect.form_fan", "songselect.form_ring", "songselect.form_random" });
             _lookerCombo = SdoComboBox.Create(Root, "lookerCombo", 661, slotY, 56, slotH, 717, arrow, listSm, listSmH,
                 LookerOptions(), null, Mathf.Clamp(Ctx.Session.LookerCount, 0, 10), Color.white, ColComboList, i => Ctx.Session.LookerCount = i);
         }
