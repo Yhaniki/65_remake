@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
+using Sdo.Localization;
 using Sdo.Settings;
 
 namespace Sdo.UI.Screens
@@ -31,6 +32,9 @@ namespace Sdo.UI.Screens
         public const float RowH = 18f, HelpH = 52f, Pad = 5f;
         private const float LabelW = 104f, ValueW = 54f;
         private const float ValueEntryW = 40f, UnitW = 17f;
+        /// <summary>「名稱」「體型」那兩列左邊標籤欄的寬度。兩列共用同一個值才會對齊 —— 而且要放得下
+        /// 最長的語言（中文兩個字 24px、英文 Name/Build 約 30px）。</summary>
+        private const float NameLabelW = 38f;
 
         // ---- 直向預算 ----
         // 「儲存設定」那一列**不進 GUILayout**，改用釘在面板底的固定矩形（見 Draw）：它是這塊面板唯一的落地
@@ -73,9 +77,13 @@ namespace Sdo.UI.Screens
         /// <summary>每一列右邊留給捲軸的安全邊距（見 <see cref="DrawField"/>）。</summary>
         public const float RowRightPad = 2f;
 
-        /// <summary>體型（胖瘦）index 0..4 的名稱。對應 <c>SdoBodyShape.WeightFromIndex</c>：1＝標準(×1.0)。</summary>
-        private static readonly string[] BodyShapeNames = { "瘦", "標準", "微胖", "胖", "很胖" };
-        private const string BodyShapeHelp = "角色的胖瘦（瘦…很胖）。拖動時左邊 3D 預覽立刻跟著變；按「儲存設定」才寫進這個角色的存檔。";
+        /// <summary>體型（胖瘦）index 0..4 的名稱 key。對應 <c>SdoBodyShape.WeightFromIndex</c>：1＝標準(×1.0)。</summary>
+        private static readonly string[] BodyShapeKeys =
+            { "cfg.panel.body.0", "cfg.panel.body.1", "cfg.panel.body.2", "cfg.panel.body.3", "cfg.panel.body.4" };
+
+        /// <summary>面板自己那些字（標題/鈕/狀態）。跟設定表一樣走 <c>cfg.*</c>，字在 tools/build_localization.py。
+        /// 每幀現解 —— OPTION 對話框可以在遊戲中途換語言。</summary>
+        private static string T(string key) => StartupConfigSchema.L(key);
 
         /// <summary>面板是否展開中。房間/選性別畫面用它 gate ESC 與 F2（展開時那兩顆鍵歸面板管）。</summary>
         public bool Expanded { get; private set; }
@@ -200,10 +208,11 @@ namespace Sdo.UI.Screens
         private void DrawHeader()
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label(Expanded ? "玩家設定" : "玩家名稱", _title);
+            GUILayout.Label(T(Expanded ? "cfg.panel.title" : "cfg.panel.title_collapsed"), _title);
             GUILayout.FlexibleSpace();
             // 右上角：展開 / 縮小
-            if (GUILayout.Button(Expanded ? "▲ 縮小" : "▼ 展開", GUILayout.Width(52f), GUILayout.Height(RowH)))
+            if (GUILayout.Button(T(Expanded ? "cfg.panel.collapse" : "cfg.panel.expand"),
+                                 GUILayout.Width(52f), GUILayout.Height(RowH)))
             {
                 if (Expanded) Collapse();
                 else { Expanded = true; _edit.Clear(); _status = ""; }
@@ -214,9 +223,9 @@ namespace Sdo.UI.Screens
         private void DrawNameRow()
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("名稱", _label, GUILayout.Width(30f));
+            GUILayout.Label(T("cfg.panel.name"), _label, GUILayout.Width(NameLabelW));
             NameText = GUILayout.TextField(NameText ?? "", 24, GUILayout.Height(RowH + 2f));
-            if (GUILayout.Button("儲存", GUILayout.Width(44f), GUILayout.Height(RowH + 2f)))
+            if (GUILayout.Button(T("cfg.panel.save_name"), GUILayout.Width(44f), GUILayout.Height(RowH + 2f)))
                 _status = SaveName != null ? SaveName(NameText) : "";
             GUILayout.EndHorizontal();
             if (!Expanded && !string.IsNullOrEmpty(_status)) GUILayout.Label(_status, _status_);
@@ -227,19 +236,18 @@ namespace Sdo.UI.Screens
         private void DrawBodyRow()
         {
             if (BodyShapeGet == null) return;
-            int cur = Mathf.Clamp(BodyShapeGet(), 0, BodyShapeNames.Length - 1);
+            int cur = Mathf.Clamp(BodyShapeGet(), 0, BodyShapeKeys.Length - 1);
             // 跟設定清單的列同一套排法（自己排、垂直置中）—— 這一列的滑桿以前也黏在上緣。
-            const float NameW = 30f;
             var row = NextRow();
-            GUI.Label(new Rect(row.x, row.y, NameW, row.height), "體型", _label);
-            float x = row.x + NameW + Gap;
+            GUI.Label(new Rect(row.x, row.y, NameLabelW, row.height), T("cfg.panel.body"), _label);
+            float x = row.x + NameLabelW + Gap;
             float trackW = Mathf.Max(8f, row.xMax - x - ValueW - Gap);
             int nv = Mathf.RoundToInt(GUI.HorizontalSlider(CenterV(row, x, trackW, SliderTrackH),
-                                                          cur, 0f, BodyShapeNames.Length - 1f));
+                                                          cur, 0f, BodyShapeKeys.Length - 1f));
             GUI.Label(CenterV(row, x + trackW + Gap, ValueW, RowH),
-                      BodyShapeNames[Mathf.Clamp(nv, 0, BodyShapeNames.Length - 1)], _value);
+                      T(BodyShapeKeys[Mathf.Clamp(nv, 0, BodyShapeKeys.Length - 1)]), _value);
             if (nv != cur) BodyShapeSet?.Invoke(nv);
-            Hover(BodyShapeHelp, row);
+            Hover(T("cfg.panel.body.help"), row);
         }
 
         private void DrawTabs()
@@ -249,7 +257,9 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < cats.Length; i++)
             {
                 bool on = i == _tab;
-                if (GUILayout.Toggle(on, cats[i], _tabStyle, GUILayout.Height(RowH + 2f)) && !on)
+                // cats[i] 是分頁的 key（換語言不會讓「現在在第幾頁」跑掉），畫出來的是它的譯名。
+                if (GUILayout.Toggle(on, StartupConfigSchema.CategoryText(cats[i]), _tabStyle,
+                                     GUILayout.Height(RowH + 2f)) && !on)
                 {
                     _tab = i;
                     _scroll = Vector2.zero;
@@ -279,7 +289,7 @@ namespace Sdo.UI.Screens
 
         private void DrawHelp()
         {
-            GUILayout.Label(string.IsNullOrEmpty(_hoverHelp) ? "滑鼠移到設定上會顯示說明。" : _hoverHelp,
+            GUILayout.Label(string.IsNullOrEmpty(_hoverHelp) ? T("cfg.panel.help_hint") : _hoverHelp,
                             _help, GUILayout.Height(HelpH));
         }
 
@@ -295,9 +305,10 @@ namespace Sdo.UI.Screens
         /// 上面那疊怎麼長都不會把它推出畫面外（先前就是被 BeginArea 裁掉半顆鈕）。</summary>
         private void DrawFooter(Rect r)
         {
-            const float BtnW = 64f;
+            // 84 而不是原本的 64：這顆鈕的字是翻譯過的，最長的語言（"Save settings"）在 64 px 裡會被切掉半個字。
+            const float BtnW = 84f;
             GUI.Label(new Rect(r.x, r.y, Mathf.Max(0f, r.width - BtnW - Gap), r.height), _status, _status_);
-            if (GUI.Button(new Rect(r.xMax - BtnW, r.y, BtnW, r.height), "儲存設定")) SaveConfig();
+            if (GUI.Button(new Rect(r.xMax - BtnW, r.y, BtnW, r.height), T("cfg.panel.save_config"))) SaveConfig();
         }
 
         // ---------------------------------------------------------------- 單列
@@ -361,7 +372,9 @@ namespace Sdo.UI.Screens
         private void DrawToggle(ConfigField f, Rect r)
         {
             bool on = f.GetBool();
-            bool nv = GUI.Toggle(CenterV(r, r.x, r.width, RowH), on, on ? " 開啟" : " 關閉");
+            // 開/關那兩個字是共用的（common.enabled/disabled）；前面那個空格是核取方塊與字的間距。
+            bool nv = GUI.Toggle(CenterV(r, r.x, r.width, RowH), on,
+                                 " " + LocalizationManager.Get(on ? "common.enabled" : "common.disabled"));
             if (nv != on) f.SetBool(nv);
         }
 
@@ -528,7 +541,8 @@ namespace Sdo.UI.Screens
 
         private void DrawText(ConfigField f, Rect r)
         {
-            const float RevealW = 22f;
+            // 34 而不是原本的 22：「顯/隱」是一個字，翻成 Show/Hide、表示/隠す 就要寬一點才不會被切掉。
+            const float RevealW = 34f;
             bool masked = f.Secret && !_reveal.Contains(f.Key);
             float boxW = f.Secret ? Mathf.Max(8f, r.width - RevealW - Gap) : r.width;
             string cur = _edit.TryGetValue(f.Key, out var buf) ? buf : (f.Get?.Invoke() ?? "");
@@ -539,7 +553,8 @@ namespace Sdo.UI.Screens
                 _edit[f.Key] = nv;      // 打到一半的原字串留在暫存（"" / "12a" 也留著，畫面才不會跳回舊值）
                 f.Set?.Invoke(nv);      // 解析得出來就即時套用；解析不出來 Set 自己會保留舊值
             }
-            if (f.Secret && GUI.Button(CenterV(r, r.xMax - RevealW, RevealW, RowH), masked ? "顯" : "隱"))
+            if (f.Secret && GUI.Button(CenterV(r, r.xMax - RevealW, RevealW, RowH),
+                                       T(masked ? "cfg.panel.reveal" : "cfg.panel.hide")))
             {
                 if (masked) _reveal.Add(f.Key); else _reveal.Remove(f.Key);
             }
@@ -553,12 +568,13 @@ namespace Sdo.UI.Screens
             try
             {
                 StartupConfigSchema.ApplyAndSave();
+                SaveExtra?.Invoke();   // config.ini 以外的（體型 → profile.json）—— 說明列講的就是這顆鈕
                 _edit.Clear();   // 夾正後的值重新從設定讀（例如 port 打 99999 會被夾成 65535）
-                _status = "設定已儲存";
+                _status = T("cfg.panel.saved");
             }
             catch (Exception e)
             {
-                _status = "儲存失敗：" + e.Message;
+                _status = StartupConfigSchema.L("cfg.panel.save_failed", e.Message);
                 Debug.LogWarning("[StartupConfig] save failed: " + e);
             }
         }

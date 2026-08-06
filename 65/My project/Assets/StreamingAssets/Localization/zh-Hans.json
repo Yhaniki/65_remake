@@ -1062,6 +1062,490 @@
   {
    "k": "join.notfound",
    "v": "房间不存在"
+  },
+  {
+   "k": "cfg.cat.net",
+   "v": "连接"
+  },
+  {
+   "k": "cfg.cat.play",
+   "v": "游玩"
+  },
+  {
+   "k": "cfg.cat.song",
+   "v": "歌曲"
+  },
+  {
+   "k": "cfg.cat.text",
+   "v": "显示"
+  },
+  {
+   "k": "cfg.cat.mmd",
+   "v": "MMD"
+  },
+  {
+   "k": "cfg.panel.title",
+   "v": "玩家设置"
+  },
+  {
+   "k": "cfg.panel.title_collapsed",
+   "v": "玩家名称"
+  },
+  {
+   "k": "cfg.panel.expand",
+   "v": "▼ 展开"
+  },
+  {
+   "k": "cfg.panel.collapse",
+   "v": "▲ 缩小"
+  },
+  {
+   "k": "cfg.panel.name",
+   "v": "名称"
+  },
+  {
+   "k": "cfg.panel.save_name",
+   "v": "保存"
+  },
+  {
+   "k": "cfg.panel.save_config",
+   "v": "保存设置"
+  },
+  {
+   "k": "cfg.panel.saved",
+   "v": "设置已保存"
+  },
+  {
+   "k": "cfg.panel.save_failed",
+   "v": "保存失败：{0}"
+  },
+  {
+   "k": "cfg.panel.help_hint",
+   "v": "鼠标移到设置上会显示说明。"
+  },
+  {
+   "k": "cfg.panel.reveal",
+   "v": "显"
+  },
+  {
+   "k": "cfg.panel.hide",
+   "v": "隐"
+  },
+  {
+   "k": "cfg.panel.body",
+   "v": "体型"
+  },
+  {
+   "k": "cfg.panel.body.0",
+   "v": "瘦"
+  },
+  {
+   "k": "cfg.panel.body.1",
+   "v": "标准"
+  },
+  {
+   "k": "cfg.panel.body.2",
+   "v": "微胖"
+  },
+  {
+   "k": "cfg.panel.body.3",
+   "v": "胖"
+  },
+  {
+   "k": "cfg.panel.body.4",
+   "v": "很胖"
+  },
+  {
+   "k": "cfg.panel.body.help",
+   "v": "角色的胖瘦（瘦…很胖）。拖动时左边 3D 预览立刻跟着变；按「保存设置」才写进这个角色的存档。"
+  },
+  {
+   "k": "cfg.name.empty",
+   "v": "名称不可空白"
+  },
+  {
+   "k": "cfg.name.saved",
+   "v": "已保存，进入房间后生效"
+  },
+  {
+   "k": "cfg.server_address.label",
+   "v": "服务器地址"
+  },
+  {
+   "k": "cfg.server_address.help",
+   "v": "IP 或主机名（例：192.168.1.10 / dance.example.com）。★留空＝纯单机，填了按登录才会去连。"
+  },
+  {
+   "k": "cfg.server_port.label",
+   "v": "连接端口"
+  },
+  {
+   "k": "cfg.server_port.help",
+   "v": "服务器 port（1~65535，默认 27015）。要与 server 启动时的 --port 一致。"
+  },
+  {
+   "k": "cfg.server_password.label",
+   "v": "进站密码"
+  },
+  {
+   "k": "cfg.server_password.help",
+   "v": "要与 server 的 --password 一致才连得上。留空＝连到没设密码的 server。"
+  },
+  {
+   "k": "cfg.server_token.label",
+   "v": "身份 token"
+  },
+  {
+   "k": "cfg.server_token.help",
+   "v": "公网服务器用：密码是大家共用的门，token 是「服务器认得的你」。留空＝不带。"
+  },
+  {
+   "k": "cfg.server_tls.label",
+   "v": "TLS 加密连接"
+  },
+  {
+   "k": "cfg.server_tls.help",
+   "v": "★开在公网一定要开：不开的话密码、token、聊天内容全是明文。服务器要有 --tls-cert。"
+  },
+  {
+   "k": "cfg.server_cert_fingerprint.label",
+   "v": "凭证指纹"
+  },
+  {
+   "k": "cfg.server_cert_fingerprint.help",
+   "v": "SHA-256（服务器开机会印出来，冒号可留）。★自签凭证一定要填，否则验证必定失败。留空＝走一般 CA 验证。"
+  },
+  {
+   "k": "cfg.net_auto_download.label",
+   "v": "缺歌自动下载"
+  },
+  {
+   "k": "cfg.net_auto_download.help",
+   "v": "座位玩家缺歌时自动从服务器下载（旁观者一律不自动下载）。"
+  },
+  {
+   "k": "cfg.net_max_download_mb.label",
+   "v": "下载上限 MB"
+  },
+  {
+   "k": "cfg.net_max_download_mb.help",
+   "v": "自动下载的单首歌大小上限（1~2048 MB）。超过就只显示缺歌，避免在慢速网络上卡很久。"
+  },
+  {
+   "k": "cfg.judge_level.label",
+   "v": "判定精度"
+  },
+  {
+   "k": "cfg.judge_level.help",
+   "v": "StepMania 的「精N」：数字越大越严格。精4＝Perfect ±45ms；精2 宽 1.33 倍、精8 只剩 0.33 倍。"
+  },
+  {
+   "k": "cfg.global_offset_ms.label",
+   "v": "判定 offset"
+  },
+  {
+   "k": "cfg.global_offset_ms.help",
+   "v": "正＝判定时间往后（整体打太早就往正的调）。机器的音频延迟已自动补掉，这里只留个人偏好；用编辑器 F2 打拍测试量。"
+  },
+  {
+   "k": "cfg.judge_offset_y.label",
+   "v": "判定线位移"
+  },
+  {
+   "k": "cfg.judge_offset_y.help",
+   "v": "只影响「看起来要打在哪」，不影响判定时间（那是判定 offset 的事）。0＝正中受击线。"
+  },
+  {
+   "k": "cfg.scroll_base_bpm.label",
+   "v": "速度基准 BPM"
+  },
+  {
+   "k": "cfg.scroll_base_bpm.help",
+   "v": "画面速度 = 这个值 × 速度档位 × 1.6 px/s。调大＝所有歌所有档位一起变快（默认 130）。"
+  },
+  {
+   "k": "cfg.speed_steps.label",
+   "v": "速度档位表"
+  },
+  {
+   "k": "cfg.speed_steps.help",
+   "v": "房间里「速度」可以选的档位清单，逗号分隔（默认 1,1.5,2,2.5,3,4,5,6,8）。"
+  },
+  {
+   "k": "cfg.rank_based_formation.label",
+   "v": "依名次调整站位"
+  },
+  {
+   "k": "cfg.rank_based_formation.help",
+   "v": "多人同场时：开（默认，官方行为）＝当下第一名会滑到中央前排（镜头锚定的那格）。关＝整场照房间座位顺序站，不换位。"
+  },
+  {
+   "k": "cfg.dance_ignore_miss.label",
+   "v": "失误不中断舞蹈"
+  },
+  {
+   "k": "cfg.dance_ignore_miss.help",
+   "v": "开＝跳舞完全不受 combo/miss/血量影响。关（默认）＝官方玩法，断 combo 会停舞。"
+  },
+  {
+   "k": "cfg.load_external_songs.label",
+   "v": "加载外部歌曲"
+  },
+  {
+   "k": "cfg.load_external_songs.help",
+   "v": "osu / StepMania / Malody 歌曲的总开关。关掉＝开机不扫歌文件夹、没有加载进度画面，只剩官方歌。"
+  },
+  {
+   "k": "cfg.additional_song_folders.label",
+   "v": "额外歌曲文件夹"
+  },
+  {
+   "k": "cfg.additional_song_folders.help",
+   "v": "分号分隔的绝对路径（例：D:/test;E:/songs）。每个都当一个 Songs 根：第一层＝分类，第二层＝各首歌。"
+  },
+  {
+   "k": "cfg.addon_folder.label",
+   "v": "插件(ADDON)目录"
+  },
+  {
+   "k": "cfg.addon_folder.help",
+   "v": "留空＝DATA/ADDON。想把整包插件（SONG/NOTESKIN/THEME/MODEL）放别颗硬盘就填绝对路径。"
+  },
+  {
+   "k": "cfg.difficulty_calc.label",
+   "v": "难度计算方式"
+  },
+  {
+   "k": "cfg.difficulty_calc.help",
+   "v": "只影响要自己算难度的外部谱（.gn 一律保留原难度）。选了哪套，显示数字/随机难度范围/简单普通困难分槽就全照那套。"
+  },
+  {
+   "k": "cfg.difficulty_calc.minacalc",
+   "v": "MinaCalc (MSD)"
+  },
+  {
+   "k": "cfg.difficulty_calc.osu",
+   "v": "osu! 星数"
+  },
+  {
+   "k": "cfg.song_ui_alpha.label",
+   "v": "选歌面板透明度"
+  },
+  {
+   "k": "cfg.song_ui_alpha.help",
+   "v": "选歌画面「文件夹」那个浮动分类浏览面板的整体不透明度（0=全透明、1=不透明，默认 0.6）。"
+  },
+  {
+   "k": "cfg.collapse_short_holds.label",
+   "v": "极短长条转单键"
+  },
+  {
+   "k": "cfg.collapse_short_holds.help",
+   "v": "短于 83ms 的 long note 直接收成单颗 note（头尾挤在同一个判定窗＝按不出来）。只对外部转档谱生效。"
+  },
+  {
+   "k": "cfg.combo_text_scale.label",
+   "v": "COMBO 字大小"
+  },
+  {
+   "k": "cfg.combo_text_scale.help",
+   "v": "COMBO 字样＋连段数字的整体大小比例（1.0＝官方原尺寸）。纯显示，不影响判定与分数。"
+  },
+  {
+   "k": "cfg.combo_text_alpha.label",
+   "v": "COMBO 字不透明度"
+  },
+  {
+   "k": "cfg.combo_text_alpha.help",
+   "v": "字就叠在音符板上，淡一点才不会挡住下落中的音符（默认 60%）。0＝完全看不见。"
+  },
+  {
+   "k": "cfg.combo_text_pop.label",
+   "v": "COMBO 字弹跳"
+  },
+  {
+   "k": "cfg.combo_text_pop.help",
+   "v": "打中时弹到最大那一瞬间的倍率（官方 2.0＝弹到两倍再收回，1.0＝完全不弹跳）。"
+  },
+  {
+   "k": "cfg.judge_text_scale.label",
+   "v": "判定字大小"
+  },
+  {
+   "k": "cfg.judge_text_scale.help",
+   "v": "PERFECT / COOL / BAD / MISS 判定字样的整体大小比例（1.0＝官方原尺寸）。"
+  },
+  {
+   "k": "cfg.judge_text_alpha.label",
+   "v": "判定字不透明度"
+  },
+  {
+   "k": "cfg.judge_text_alpha.help",
+   "v": "判定字不会淡出（官方是显示完直接消失），这个值就是它显示期间的亮度（默认 60%）。"
+  },
+  {
+   "k": "cfg.judge_text_pop.label",
+   "v": "判定字弹跳"
+  },
+  {
+   "k": "cfg.judge_text_pop.help",
+   "v": "同 COMBO 字弹跳，只是判定字收回的速度是官方写死的（比较慢），这里只调幅度。"
+  },
+  {
+   "k": "cfg.ui_scale.label",
+   "v": "UI 缩放"
+  },
+  {
+   "k": "cfg.ui_scale.help",
+   "v": "⚠ 目前游戏还没有任何地方读这个值（画面一律走 800×600 4:3 取景），改了不会有变化 —— 先留着对齐配置文件。"
+  },
+  {
+   "k": "cfg.mmd_model.label",
+   "v": "使用模型"
+  },
+  {
+   "k": "cfg.mmd_model.help",
+   "v": "★选了就是要用它 —— 没有另外的总开关。第一个选项「{0}」＝维持 SDO 原角色。把整个 MMD 模型文件夹（含 .pmx 与它的贴图）放进 DATA/MODEL/，开发树是 assets/MODEL/；一个文件夹＝一个模型，这里就会出现。"
+  },
+  {
+   "k": "cfg.mmd_model.auto_first",
+   "v": "(自动：第一个)"
+  },
+  {
+   "k": "cfg.mmd_model.not_found",
+   "v": "{0}(找不到)"
+  },
+  {
+   "k": "cfg.mmd_show_others.label",
+   "v": "显示他人模型"
+  },
+  {
+   "k": "cfg.mmd_show_others.help",
+   "v": "开(默认)＝同房的人穿 MMD 模型时，你也看得到（本机没有就自动跟服务器下载）。关＝别人一律照他的 SDO 穿搭显示，而且完全不下载。★这与上面「使用模型」互相独立：可以自己维持 SDO 角色却看得到别人的 MMD，也可以反过来。"
+  },
+  {
+   "k": "cfg.mmd_share_model.label",
+   "v": "分享模型"
+  },
+  {
+   "k": "cfg.mmd_share_model.help",
+   "v": "开(默认)＝把你的模型上传给服务器,同房的人也看得到你的 MMD。关＝别人看到的是你的 SDO 穿搭(你自己画面上仍然是 MMD)。★很多 MMD 模型的使用规约禁止再配布,这个开关就是为此存在的。"
+  },
+  {
+   "k": "cfg.mmd_physics.label",
+   "v": "布料物理模拟"
+  },
+  {
+   "k": "cfg.mmd_physics.help",
+   "v": "布料模拟（头发/裙摆/领带）。★嫌换场景进游戏慢就关这个 —— 布料求解是建一只 MMD 角色最贵的一段。"
+  },
+  {
+   "k": "cfg.mmd_gravity.label",
+   "v": "布料重力"
+  },
+  {
+   "k": "cfg.mmd_gravity.help",
+   "v": "布料受到的重力倍率。大＝头发裙摆被拉得更垂、甩动更沉；小＝飘。模型文件夹里的 physics.ini 先套，这个值再乘上去。"
+  },
+  {
+   "k": "cfg.mmd_stiffness.label",
+   "v": "布料刚性"
+  },
+  {
+   "k": "cfg.mmd_stiffness.help",
+   "v": "回弹到原本造型的力道。低＝软趴趴被重力拉直；高＝硬挺、甩不太动（双马尾那种被作者锁死的部位本来就接近硬的）。"
+  },
+  {
+   "k": "cfg.mmd_collider_scale.label",
+   "v": "碰撞体半径"
+  },
+  {
+   "k": "cfg.mmd_collider_scale.help",
+   "v": "布料撞身体用的碰撞体半径倍率。太小＝裙子穿过腿；太大＝裙子被撑飞。"
+  },
+  {
+   "k": "cfg.mmd_profile.label",
+   "v": "物理配置文件"
+  },
+  {
+   "k": "cfg.mmd_profile.help",
+   "v": "「存档」＝把现在跑的物理数值(转换值 × 上面那几根滑杆)写成模型文件夹里的 physics.ini,之后这个模型就照它跑,换别的模型不受影响。「还原」＝删掉那个文件,回到直接从 .pmx 转换的值。右边显示现在用的是哪一种。"
+  },
+  {
+   "k": "cfg.mmd_profile.save",
+   "v": "存档"
+  },
+  {
+   "k": "cfg.mmd_profile.reset",
+   "v": "还原"
+  },
+  {
+   "k": "cfg.mmd_scale.label",
+   "v": "模型缩放"
+  },
+  {
+   "k": "cfg.mmd_scale.help",
+   "v": "1＝自动把模型缩放到跟 SDO 舞者一样高（每个模型的原始尺寸差很多，所以默认是自动对齐）。觉得这个模型看起来偏大/偏小就在这里乘上去。"
+  },
+  {
+   "k": "cfg.mmd_lil_toon.label",
+   "v": "lilToon 着色"
+  },
+  {
+   "k": "cfg.mmd_lil_toon.help",
+   "v": "开＝用 lilToon 着色：有光照、边缘光、描边会跟着明暗变色。关(默认)＝照 MMD 原本的画法（unlit、模型自带的 toon ramp 直接贴、纯色铅笔描边）。★这是换一整套着色，不是加效果 —— 开/关会重建身体。★注意 lilToon 吃光照，开了会自动补一颗平行光（其它东西全是 unlit，不受影响）。"
+  },
+  {
+   "k": "cfg.mmd_toon.label",
+   "v": "卡通阴影"
+  },
+  {
+   "k": "cfg.mmd_toon.help",
+   "v": "明暗只分两段的卡通上色（开着 lilToon 时＝它的 cel 阴影分界）。关(默认)＝平光；舞台灯光会在脸上切出很硬的一条分界，所以默认不开。"
+  },
+  {
+   "k": "cfg.mmd_outline.label",
+   "v": "轮廓描边"
+  },
+  {
+   "k": "cfg.mmd_outline.help",
+   "v": "模型自带的铅笔描边（edge）。关＝没有黑边。"
+  },
+  {
+   "k": "cfg.judge_level.value",
+   "v": "精{0}"
+  },
+  {
+   "k": "cfg.judge_level.justice",
+   "v": "JUSTICE"
+  },
+  {
+   "k": "cfg.mmd_profile.saved",
+   "v": "物理已存成 {0}（这个模型专属）"
+  },
+  {
+   "k": "cfg.mmd_profile.save_failed",
+   "v": "存档失败"
+  },
+  {
+   "k": "cfg.mmd_profile.deleted",
+   "v": "已删掉 physics.ini → 回到 .pmx 转换值"
+  },
+  {
+   "k": "cfg.mmd_profile.nothing_to_delete",
+   "v": "本来就没有存档（现在跑的就是转换值）"
+  },
+  {
+   "k": "cfg.mmd_profile.state_file",
+   "v": "physics.ini"
+  },
+  {
+   "k": "cfg.mmd_profile.state_unapplied",
+   "v": "physics.ini (未套用)"
+  },
+  {
+   "k": "cfg.mmd_profile.state_converted",
+   "v": "转换值"
   }
  ]
 }

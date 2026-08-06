@@ -1062,6 +1062,490 @@
   {
    "k": "join.notfound",
    "v": "Room not found"
+  },
+  {
+   "k": "cfg.cat.net",
+   "v": "Net"
+  },
+  {
+   "k": "cfg.cat.play",
+   "v": "Play"
+  },
+  {
+   "k": "cfg.cat.song",
+   "v": "Songs"
+  },
+  {
+   "k": "cfg.cat.text",
+   "v": "Display"
+  },
+  {
+   "k": "cfg.cat.mmd",
+   "v": "MMD"
+  },
+  {
+   "k": "cfg.panel.title",
+   "v": "Player Settings"
+  },
+  {
+   "k": "cfg.panel.title_collapsed",
+   "v": "Player Name"
+  },
+  {
+   "k": "cfg.panel.expand",
+   "v": "▼ More"
+  },
+  {
+   "k": "cfg.panel.collapse",
+   "v": "▲ Less"
+  },
+  {
+   "k": "cfg.panel.name",
+   "v": "Name"
+  },
+  {
+   "k": "cfg.panel.save_name",
+   "v": "Save"
+  },
+  {
+   "k": "cfg.panel.save_config",
+   "v": "Save settings"
+  },
+  {
+   "k": "cfg.panel.saved",
+   "v": "Settings saved"
+  },
+  {
+   "k": "cfg.panel.save_failed",
+   "v": "Save failed: {0}"
+  },
+  {
+   "k": "cfg.panel.help_hint",
+   "v": "Hover a setting to see what it does."
+  },
+  {
+   "k": "cfg.panel.reveal",
+   "v": "Show"
+  },
+  {
+   "k": "cfg.panel.hide",
+   "v": "Hide"
+  },
+  {
+   "k": "cfg.panel.body",
+   "v": "Build"
+  },
+  {
+   "k": "cfg.panel.body.0",
+   "v": "Slim"
+  },
+  {
+   "k": "cfg.panel.body.1",
+   "v": "Normal"
+  },
+  {
+   "k": "cfg.panel.body.2",
+   "v": "Chubby"
+  },
+  {
+   "k": "cfg.panel.body.3",
+   "v": "Heavy"
+  },
+  {
+   "k": "cfg.panel.body.4",
+   "v": "Huge"
+  },
+  {
+   "k": "cfg.panel.body.help",
+   "v": "The character's build (Slim…Huge). The 3D preview follows as you drag; it is written to this character's save when you press Save settings."
+  },
+  {
+   "k": "cfg.name.empty",
+   "v": "The name cannot be empty"
+  },
+  {
+   "k": "cfg.name.saved",
+   "v": "Saved — takes effect once you enter the room"
+  },
+  {
+   "k": "cfg.server_address.label",
+   "v": "Server address"
+  },
+  {
+   "k": "cfg.server_address.help",
+   "v": "IP or hostname (e.g. 192.168.1.10 / dance.example.com). ★Empty = offline only; it is used when you press Login."
+  },
+  {
+   "k": "cfg.server_port.label",
+   "v": "Port"
+  },
+  {
+   "k": "cfg.server_port.help",
+   "v": "Server port (1-65535, default 27015). Must match the server's --port."
+  },
+  {
+   "k": "cfg.server_password.label",
+   "v": "Password"
+  },
+  {
+   "k": "cfg.server_password.help",
+   "v": "Must match the server's --password. Empty = connect to a server with no password."
+  },
+  {
+   "k": "cfg.server_token.label",
+   "v": "Identity token"
+  },
+  {
+   "k": "cfg.server_token.help",
+   "v": "For public servers: the password is the shared door, the token is how the server knows it is you. Empty = do not send one."
+  },
+  {
+   "k": "cfg.server_tls.label",
+   "v": "TLS encryption"
+  },
+  {
+   "k": "cfg.server_tls.help",
+   "v": "★Always on for a public server: without it the password, token and chat all travel in the clear. The server needs --tls-cert."
+  },
+  {
+   "k": "cfg.server_cert_fingerprint.label",
+   "v": "Cert fingerprint"
+  },
+  {
+   "k": "cfg.server_cert_fingerprint.help",
+   "v": "SHA-256 (the server prints it on start-up; colons are fine). ★Required for a self-signed certificate, otherwise validation always fails. Empty = normal CA validation."
+  },
+  {
+   "k": "cfg.net_auto_download.label",
+   "v": "Auto-download"
+  },
+  {
+   "k": "cfg.net_auto_download.help",
+   "v": "Seated players download a missing song from the server automatically (spectators never do)."
+  },
+  {
+   "k": "cfg.net_max_download_mb.label",
+   "v": "Download cap"
+  },
+  {
+   "k": "cfg.net_max_download_mb.help",
+   "v": "Size cap per song for auto-download (1-2048 MB). Anything bigger is just reported as missing, so a slow line does not stall you."
+  },
+  {
+   "k": "cfg.judge_level.label",
+   "v": "Judge level"
+  },
+  {
+   "k": "cfg.judge_level.help",
+   "v": "StepMania's timing tiers: higher = stricter. Level 4 = Perfect ±45ms; level 2 is 1.33x wider, level 8 only 0.33x."
+  },
+  {
+   "k": "cfg.global_offset_ms.label",
+   "v": "Judge offset"
+  },
+  {
+   "k": "cfg.global_offset_ms.help",
+   "v": "Positive = judgement moves later (raise it if you keep hitting early). The machine's audio latency is already compensated; this is personal taste only. Measure it with the editor's F2 tap test."
+  },
+  {
+   "k": "cfg.judge_offset_y.label",
+   "v": "Judge line Y"
+  },
+  {
+   "k": "cfg.judge_offset_y.help",
+   "v": "Only moves where the hit *looks* like it happens; it does not change judgement timing (that is Judge offset). 0 = dead on the receptor line."
+  },
+  {
+   "k": "cfg.scroll_base_bpm.label",
+   "v": "Base BPM"
+  },
+  {
+   "k": "cfg.scroll_base_bpm.help",
+   "v": "Scroll speed = this value x speed step x 1.6 px/s. Raising it speeds up every song at every step (default 130)."
+  },
+  {
+   "k": "cfg.speed_steps.label",
+   "v": "Speed steps"
+  },
+  {
+   "k": "cfg.speed_steps.help",
+   "v": "The speed values the room lets you pick, comma separated (default 1,1.5,2,2.5,3,4,5,6,8)."
+  },
+  {
+   "k": "cfg.rank_based_formation.label",
+   "v": "Rank formation"
+  },
+  {
+   "k": "cfg.rank_based_formation.help",
+   "v": "In a multiplayer round: on (default, official behaviour) = whoever leads slides to the centre-front slot the camera is anchored on. Off = everyone keeps the room's seat order all round."
+  },
+  {
+   "k": "cfg.dance_ignore_miss.label",
+   "v": "Dance on miss"
+  },
+  {
+   "k": "cfg.dance_ignore_miss.help",
+   "v": "On = dancing ignores combo, misses and HP entirely. Off (default) = official behaviour, breaking the combo stops the dance."
+  },
+  {
+   "k": "cfg.load_external_songs.label",
+   "v": "External songs"
+  },
+  {
+   "k": "cfg.load_external_songs.help",
+   "v": "Master switch for osu / StepMania / Malody songs. Off = no song-folder scan on start-up, no loading screen, official songs only."
+  },
+  {
+   "k": "cfg.additional_song_folders.label",
+   "v": "Song folders"
+  },
+  {
+   "k": "cfg.additional_song_folders.help",
+   "v": "Absolute paths separated by semicolons (e.g. D:/test;E:/songs). Each one is treated as a Songs root: first level = category, second level = one song each."
+  },
+  {
+   "k": "cfg.addon_folder.label",
+   "v": "ADDON folder"
+  },
+  {
+   "k": "cfg.addon_folder.help",
+   "v": "Empty = DATA/ADDON. Give an absolute path to keep a whole add-on pack (SONG/NOTESKIN/THEME/MODEL) on another drive."
+  },
+  {
+   "k": "cfg.difficulty_calc.label",
+   "v": "Difficulty calc"
+  },
+  {
+   "k": "cfg.difficulty_calc.help",
+   "v": "Only affects external charts whose difficulty we have to compute (.gn charts always keep their own). Whichever you pick drives the printed number, the random-difficulty ranges and the Easy/Normal/Hard slotting."
+  },
+  {
+   "k": "cfg.difficulty_calc.minacalc",
+   "v": "MinaCalc (MSD)"
+  },
+  {
+   "k": "cfg.difficulty_calc.osu",
+   "v": "osu! stars"
+  },
+  {
+   "k": "cfg.song_ui_alpha.label",
+   "v": "Browser opacity"
+  },
+  {
+   "k": "cfg.song_ui_alpha.help",
+   "v": "Overall opacity of the floating category browser behind the song-select 資料夾 tab (0 = invisible, 1 = opaque, default 0.6)."
+  },
+  {
+   "k": "cfg.collapse_short_holds.label",
+   "v": "Short holds→tap"
+  },
+  {
+   "k": "cfg.collapse_short_holds.help",
+   "v": "Long notes shorter than 83ms become a single tap (head and tail land in the same judgement window = impossible to play). External converted charts only."
+  },
+  {
+   "k": "cfg.combo_text_scale.label",
+   "v": "COMBO size"
+  },
+  {
+   "k": "cfg.combo_text_scale.help",
+   "v": "Overall size of the COMBO word plus the streak number (1.0 = official size). Cosmetic only — judgement and score are untouched."
+  },
+  {
+   "k": "cfg.combo_text_alpha.label",
+   "v": "COMBO opacity"
+  },
+  {
+   "k": "cfg.combo_text_alpha.help",
+   "v": "The text sits right on the note panel, so keeping it faint stops it covering the falling notes (default 60%). 0 = invisible."
+  },
+  {
+   "k": "cfg.combo_text_pop.label",
+   "v": "COMBO pop"
+  },
+  {
+   "k": "cfg.combo_text_pop.help",
+   "v": "How far the text springs on a hit at its peak (official 2.0 = doubles then settles back, 1.0 = no bounce at all)."
+  },
+  {
+   "k": "cfg.judge_text_scale.label",
+   "v": "Judge size"
+  },
+  {
+   "k": "cfg.judge_text_scale.help",
+   "v": "Overall size of the PERFECT / COOL / BAD / MISS judgement words (1.0 = official size)."
+  },
+  {
+   "k": "cfg.judge_text_alpha.label",
+   "v": "Judge opacity"
+  },
+  {
+   "k": "cfg.judge_text_alpha.help",
+   "v": "Judgement words do not fade out (officially they just vanish), so this is simply how bright they are while shown (default 60%)."
+  },
+  {
+   "k": "cfg.judge_text_pop.label",
+   "v": "Judge pop"
+  },
+  {
+   "k": "cfg.judge_text_pop.help",
+   "v": "Same as COMBO pop; the judgement text's settle-back speed is hard-coded by the original game (slower), so this only sets the height."
+  },
+  {
+   "k": "cfg.ui_scale.label",
+   "v": "UI scale"
+  },
+  {
+   "k": "cfg.ui_scale.help",
+   "v": "⚠ Nothing in the game reads this value yet (everything is framed at 800x600 4:3), so changing it does nothing — it is here to match the config file."
+  },
+  {
+   "k": "cfg.mmd_model.label",
+   "v": "Model"
+  },
+  {
+   "k": "cfg.mmd_model.help",
+   "v": "★Picking one *is* the switch — there is no separate on/off. The first entry \"{0}\" keeps the original SDO character. Drop a whole MMD model folder (the .pmx plus its textures) into DATA/MODEL/ — assets/MODEL/ in the dev tree; one folder = one model and it shows up here."
+  },
+  {
+   "k": "cfg.mmd_model.auto_first",
+   "v": "(auto: the first one)"
+  },
+  {
+   "k": "cfg.mmd_model.not_found",
+   "v": "{0} (not found)"
+  },
+  {
+   "k": "cfg.mmd_show_others.label",
+   "v": "Show others"
+  },
+  {
+   "k": "cfg.mmd_show_others.help",
+   "v": "On (default) = you see other people in the room wearing their MMD model (downloaded from the server if you do not have it). Off = everyone shows in their SDO outfit and nothing is downloaded. ★Independent of Model above: you can stay SDO and still see other people's MMD, or the other way round."
+  },
+  {
+   "k": "cfg.mmd_share_model.label",
+   "v": "Share model"
+  },
+  {
+   "k": "cfg.mmd_share_model.help",
+   "v": "On (default) = your model is uploaded to the server so the room can see your MMD. Off = they see your SDO outfit instead (your own screen still shows the MMD). ★Many MMD models are licensed against redistribution — that is what this switch is for."
+  },
+  {
+   "k": "cfg.mmd_physics.label",
+   "v": "Cloth physics"
+  },
+  {
+   "k": "cfg.mmd_physics.help",
+   "v": "Cloth simulation (hair / skirts / ties). ★Turn this off if loading into a stage feels slow — solving cloth is the most expensive part of building an MMD character."
+  },
+  {
+   "k": "cfg.mmd_gravity.label",
+   "v": "Cloth gravity"
+  },
+  {
+   "k": "cfg.mmd_gravity.help",
+   "v": "Gravity multiplier on the cloth. High = hair and skirts hang lower and swing heavier; low = floaty. The model folder's physics.ini applies first, then this multiplies on top."
+  },
+  {
+   "k": "cfg.mmd_stiffness.label",
+   "v": "Cloth stiffness"
+  },
+  {
+   "k": "cfg.mmd_stiffness.help",
+   "v": "How hard the cloth springs back to its authored shape. Low = limp and pulled straight by gravity; high = stiff and barely moves (twintails the author locked down are already near the stiff end)."
+  },
+  {
+   "k": "cfg.mmd_collider_scale.label",
+   "v": "Collider radius"
+  },
+  {
+   "k": "cfg.mmd_collider_scale.help",
+   "v": "Radius multiplier of the body colliders the cloth hits. Too small = the skirt goes through the legs; too large = the skirt gets pushed out."
+  },
+  {
+   "k": "cfg.mmd_profile.label",
+   "v": "Physics profile"
+  },
+  {
+   "k": "cfg.mmd_profile.help",
+   "v": "Save = write the physics currently running (converted values x the sliders above) into the model folder's physics.ini; from then on that model runs from it and other models are unaffected. Reset = delete that file and go back to the values converted straight from the .pmx. The right-hand text says which one is in use."
+  },
+  {
+   "k": "cfg.mmd_profile.save",
+   "v": "Save"
+  },
+  {
+   "k": "cfg.mmd_profile.reset",
+   "v": "Reset"
+  },
+  {
+   "k": "cfg.mmd_scale.label",
+   "v": "Model scale"
+  },
+  {
+   "k": "cfg.mmd_scale.help",
+   "v": "1 = auto-fit the model to the same height as an SDO dancer (raw model sizes vary wildly, hence auto by default). Multiply here if a model still looks too big or too small."
+  },
+  {
+   "k": "cfg.mmd_lil_toon.label",
+   "v": "lilToon shading"
+  },
+  {
+   "k": "cfg.mmd_lil_toon.help",
+   "v": "On = lilToon shading: real lighting, rim light, and an outline that takes colour from the shading. Off (default) = MMD's own look (unlit, the model's toon ramp applied as-is, flat pencil outline). ★This swaps the whole shading stack, it is not an added effect — toggling rebuilds the body. ★lilToon needs light, so turning it on adds a directional light (everything else is unlit and unaffected)."
+  },
+  {
+   "k": "cfg.mmd_toon.label",
+   "v": "Cel shading"
+  },
+  {
+   "k": "cfg.mmd_toon.help",
+   "v": "Two-step cel shading (with lilToon on, this is its cel shadow threshold). Off (default) = flat lighting; stage lights otherwise cut a very hard line across the face, which is why it is off by default."
+  },
+  {
+   "k": "cfg.mmd_outline.label",
+   "v": "Outline"
+  },
+  {
+   "k": "cfg.mmd_outline.help",
+   "v": "The model's own pencil outline (edge). Off = no black line."
+  },
+  {
+   "k": "cfg.judge_level.value",
+   "v": "Judge {0}"
+  },
+  {
+   "k": "cfg.judge_level.justice",
+   "v": "JUSTICE"
+  },
+  {
+   "k": "cfg.mmd_profile.saved",
+   "v": "Physics saved to {0} (this model only)"
+  },
+  {
+   "k": "cfg.mmd_profile.save_failed",
+   "v": "Could not save"
+  },
+  {
+   "k": "cfg.mmd_profile.deleted",
+   "v": "physics.ini deleted — back to the .pmx conversion"
+  },
+  {
+   "k": "cfg.mmd_profile.nothing_to_delete",
+   "v": "There was no saved profile (the conversion is what is running)"
+  },
+  {
+   "k": "cfg.mmd_profile.state_file",
+   "v": "physics.ini"
+  },
+  {
+   "k": "cfg.mmd_profile.state_unapplied",
+   "v": "physics.ini (not applied)"
+  },
+  {
+   "k": "cfg.mmd_profile.state_converted",
+   "v": "converted"
   }
  ]
 }

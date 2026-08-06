@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using Sdo.Localization;
 using Sdo.Settings;
 
 namespace Sdo.Tests
@@ -21,6 +22,9 @@ namespace Sdo.Tests
         [SetUp]
         public void SetUp()
         {
+            // 這個 fixture 斷言的是**繁中**的字（「精4」「osu! 星數」）。LocalizationTests 會把 manager
+            // 留在它自己那份小表上（NUnit 同一個 domain，誰先跑不一定），所以先把真的語言檔載回來。
+            LocalizationManager.Init(Language.TraditionalChinese);
             _ini = RoomConfig.Serialize();
             _hasOption = RoomConfig.hasOption;
             _hasOptUiScale = RoomConfig.hasOptUiScale;
@@ -176,8 +180,8 @@ namespace Sdo.Tests
                 }
                 Assert.IsNotNull(f.Choices, f.Key + " 沒有 Choices");
                 Assert.Greater(f.Choices.Length, 1, f.Key + " 的 Choices 少於兩個");
-                Assert.AreEqual(f.Choices.Length, f.ChoiceLabels?.Length ?? f.Choices.Length,
-                                f.Key + " 的 ChoiceLabels 數量對不上");
+                Assert.AreEqual(f.Choices.Length, f.ChoiceLabelKeys?.Length ?? f.Choices.Length,
+                                f.Key + " 的 ChoiceLabelKeys 數量對不上");
             }
         }
 

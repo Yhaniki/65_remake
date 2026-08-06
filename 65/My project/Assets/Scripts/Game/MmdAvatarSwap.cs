@@ -98,10 +98,12 @@ namespace Sdo.Game
             StartupConfigSchema.MmdProfileSave = () =>
             {
                 string p = SaveProfile();
-                return p != null ? "物理已存成 " + Path.GetFileName(p) + "（這個模型專屬）" : (_lastError.Length > 0 ? _lastError : "存檔失敗");
+                return p != null
+                     ? StartupConfigSchema.L("cfg.mmd_profile.saved", Path.GetFileName(p))
+                     : (_lastError.Length > 0 ? _lastError : StartupConfigSchema.L("cfg.mmd_profile.save_failed"));
             };
-            StartupConfigSchema.MmdProfileDelete = () =>
-                DeleteProfile() ? "已刪掉 physics.ini → 回到 .pmx 轉換值" : "本來就沒有存檔（現在跑的就是轉換值）";
+            StartupConfigSchema.MmdProfileDelete = () => StartupConfigSchema.L(
+                DeleteProfile() ? "cfg.mmd_profile.deleted" : "cfg.mmd_profile.nothing_to_delete");
             StartupConfigSchema.MmdProfileState = () => ProfileStatus();
 
             // Command line still wins for a one-off run without touching config.ini: "-mmd" forces MMD display on,
@@ -638,9 +640,12 @@ namespace Sdo.Game
         public static string ProfileStatus()
         {
             var cloth = FirstCloth();
-            if (cloth != null) return cloth.ProfilePath != null ? "physics.ini" : "轉換值";
+            if (cloth != null)
+                return StartupConfigSchema.L(cloth.ProfilePath != null
+                                           ? "cfg.mmd_profile.state_file" : "cfg.mmd_profile.state_converted");
             var e = Sel;
-            return e != null && File.Exists(MmdClothProfile.PathFor(e.Dir)) ? "physics.ini (未套用)" : "轉換值";
+            return StartupConfigSchema.L(e != null && File.Exists(MmdClothProfile.PathFor(e.Dir))
+                                       ? "cfg.mmd_profile.state_unapplied" : "cfg.mmd_profile.state_converted");
         }
 
         // 只看**本機自己**那幾隻 —— physics.ini 是寫進「我選的那個模型」的資料夾,拿別人模型的布料

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
+using Sdo.Localization;
 
 namespace Sdo.Settings
 {
@@ -23,11 +24,22 @@ namespace Sdo.Settings
     {
         /// <summary>對應 config.ini 的 key（測試用它比對「有沒有漏掉哪個沒 UI 的設定」）。</summary>
         public string Key;
-        /// <summary>分頁標題（＝<see cref="StartupConfigSchema.Categories"/> 其中之一）。</summary>
+        /// <summary>分頁標題的 localization key（＝<see cref="StartupConfigSchema.Categories"/> 其中之一）。</summary>
         public string Category;
-        public string Label;
+        /// <summary>標籤的 localization key（<c>cfg.&lt;名字&gt;.label</c>）。</summary>
+        public string LabelKey;
+        /// <summary>說明的 localization key（<c>cfg.&lt;名字&gt;.help</c>）。</summary>
+        public string HelpKey;
+        /// <summary>說明句裡 <c>{0}</c> 要帶的值（目前只有 mmdModel：第一個選項的名字）。</summary>
+        public object[] HelpArgs;
+
+        /// <summary>標籤（依現在的語言即時解出來 —— OPTION 對話框可以中途換語言）。</summary>
+        public string Label => StartupConfigSchema.L(LabelKey);
         /// <summary>面板底下那條說明列的內容（滑鼠移到該列時顯示）。</summary>
-        public string Help;
+        public string Help => HelpArgs == null
+            ? StartupConfigSchema.L(HelpKey)
+            : StartupConfigSchema.L(HelpKey, HelpArgs);
+
         public ConfigFieldKind Kind;
         public float Min, Max;
         /// <summary>Slider 專用：>0 表示吸附到這個間距（1 = 只取整數）。</summary>
@@ -41,10 +53,10 @@ namespace Sdo.Settings
         public Func<float, string> Format;
         /// <summary>Choice 專用：可選值（存進 config.ini 的原字串）。</summary>
         public string[] Choices;
-        /// <summary>Choice 專用：對應 <see cref="Choices"/> 的顯示名稱（null = 直接顯示原字串）。</summary>
-        public string[] ChoiceLabels;
+        /// <summary>Choice 專用：對應 <see cref="Choices"/> 的顯示名稱 localization key（null = 直接顯示原字串）。</summary>
+        public string[] ChoiceLabelKeys;
         /// <summary>Choice 專用：選項要到執行期才知道（例：裝了哪些 MMD 模型 —— 那是掃資料夾掃出來的）。
-        /// 有設就蓋掉 <see cref="Choices"/>；<see cref="ChoiceLabels"/> 這時不適用（顯示原字串）。</summary>
+        /// 有設就蓋掉 <see cref="Choices"/>；<see cref="ChoiceLabelKeys"/> 這時不適用（顯示原字串）。</summary>
         public Func<string[]> ChoicesProvider;
         /// <summary>Choice 專用：目前值不在選項清單裡時要顯示什麼（null＝直接顯示原字串）。
         /// 動態選項才有意義：模型被刪掉/還沒掃到時，設定檔裡的名字要照實顯示，不能默默跳成別的。</summary>
@@ -59,8 +71,19 @@ namespace Sdo.Settings
         /// <summary>密碼/token：預設遮起來顯示。</summary>
         public bool Secret;
 
-        /// <summary>Action 專用：按鈕文字（一列可以有幾顆）。</summary>
-        public string[] Actions;
+        /// <summary>Action 專用：按鈕文字的 localization key（一列可以有幾顆）。</summary>
+        public string[] ActionKeys;
+        /// <summary>Action 專用：按鈕文字（依現在的語言解出來）。</summary>
+        public string[] Actions
+        {
+            get
+            {
+                if (ActionKeys == null) return null;
+                var res = new string[ActionKeys.Length];
+                for (int i = 0; i < res.Length; i++) res[i] = StartupConfigSchema.L(ActionKeys[i]);
+                return res;
+            }
+        }
         /// <summary>Action 專用：按了第 i 顆要做的事，回傳給面板顯示的一句話（null＝不顯示）。</summary>
         public Func<int, string> Invoke;
         /// <summary>Action 專用：按鈕旁邊那格「現在的狀態」（null＝不畫）。</summary>
@@ -126,12 +149,13 @@ namespace Sdo.Settings
             Set?.Invoke(opts[i]);
         }
 
-        /// <summary>Choice：第 <paramref name="i"/> 個選項的顯示名稱（有 <see cref="ChoiceLabels"/> 就用它）。</summary>
+        /// <summary>Choice：第 <paramref name="i"/> 個選項的顯示名稱（有 <see cref="ChoiceLabelKeys"/> 就用它）。</summary>
         public string ChoiceTextAt(int i)
         {
             var opts = Options();
             if (i < 0 || i >= opts.Length) return "";
-            return ChoiceLabels != null && i < ChoiceLabels.Length ? ChoiceLabels[i] : opts[i];
+            return ChoiceLabelKeys != null && i < ChoiceLabelKeys.Length
+                 ? StartupConfigSchema.L(ChoiceLabelKeys[i]) : opts[i];
         }
 
         /// <summary>Choice：目前值的顯示名稱。</summary>
@@ -172,17 +196,44 @@ namespace Sdo.Settings
     /// 之後 config.ini 新增 key 卻忘了接 UI 就會紅。
     ///
     /// 每列都是字串進出 → 整張表不依賴 Unity UI，可單元測試。UI 在 <c>Sdo.UI.Screens.StartupConfigPanel</c>。
+    ///
+    /// **值是字串、字是 key**：標籤/說明/選項名/按鈕字全部只存 localization key（<c>cfg.*</c>），到畫的時候才解
+    /// —— OPTION 對話框可以在遊戲中途換語言，烘死的字串會留在畫面上不動。字本身在
+    /// <c>tools/build_localization.py</c>（改完要重跑那支腳本產生四份語言檔）；漏掉哪一個 key 由
+    /// <c>StartupConfigLocalizationTests</c> 擋下來。
     /// </summary>
     public static class StartupConfigSchema
     {
-        public const string CatNet = "連線";
-        public const string CatPlay = "遊玩";
-        public const string CatSong = "歌曲";
-        public const string CatText = "顯示";
-        public const string CatMmd = "MMD";
+        // 分頁的識別字**就是它的 localization key** —— 面板畫的是 CategoryText(cat)，比對分頁時用的是這個字串本身，
+        // 所以換語言不會讓「目前在第幾頁」跟著跑掉。
+        public const string CatNet = "cfg.cat.net";
+        public const string CatPlay = "cfg.cat.play";
+        public const string CatSong = "cfg.cat.song";
+        public const string CatText = "cfg.cat.text";
+        public const string CatMmd = "cfg.cat.mmd";
 
         /// <summary>分頁順序（＝面板上那排 tab 由左到右）。</summary>
         public static readonly string[] Categories = { CatNet, CatPlay, CatSong, CatText, CatMmd };
+
+        /// <summary>分頁在畫面上的名字。</summary>
+        public static string CategoryText(string category) => L(category);
+
+        /// <summary>
+        /// 這張表的每一句話都走 localization（<c>cfg.*</c>，字在 <c>tools/build_localization.py</c>）。
+        /// 這裡多做一次 <see cref="LocalizationManager.EnsureInit"/>：面板在 <c>FrontendApp</c> 之外也讀得到
+        /// （單元測試、開場那一瞬間），沒有初始化的話整張表會是一片 <c>[cfg.xxx]</c>。
+        /// </summary>
+        public static string L(string key)
+        {
+            LocalizationManager.EnsureInit();
+            return LocalizationManager.Get(key);
+        }
+
+        public static string L(string key, params object[] args)
+        {
+            LocalizationManager.EnsureInit();
+            return LocalizationManager.Get(key, args);
+        }
 
         /// <summary>
         /// 安裝了哪些 MMD 模型（資料夾名，掃 DATA/MODEL 等處得到）。開機時由 Sdo.Game 的 <c>MmdAvatarSwap</c> 接上
@@ -248,52 +299,52 @@ namespace Sdo.Settings
             // ---------------------------------------------------------------- 連線 [Net]
             f.Add(new ConfigField
             {
-                Key = "serverAddress", Category = CatNet, Label = "伺服器位址", Kind = ConfigFieldKind.Text,
-                Help = "IP 或主機名（例：192.168.1.10 / dance.example.com）。★留空＝純單機，填了按登入才會去連。",
+                Key = "serverAddress", Category = CatNet, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.server_address.label", HelpKey = "cfg.server_address.help",
                 Get = () => RoomConfig.serverAddress ?? "", Set = v => RoomConfig.serverAddress = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "serverPort", Category = CatNet, Label = "連線埠", Kind = ConfigFieldKind.Text,
-                Help = "伺服器 port（1~65535，預設 27015）。要與 server 啟動時的 --port 一致。",
+                Key = "serverPort", Category = CatNet, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.server_port.label", HelpKey = "cfg.server_port.help",
                 Get = () => RoomConfig.serverPort.ToString(CultureInfo.InvariantCulture),
                 Set = v => RoomConfig.serverPort = ParseInt(v, RoomConfig.serverPort),
             });
             f.Add(new ConfigField
             {
-                Key = "serverPassword", Category = CatNet, Label = "進站密碼", Kind = ConfigFieldKind.Text, Secret = true,
-                Help = "要與 server 的 --password 一致才連得上。留空＝連到沒設密碼的 server。",
+                Key = "serverPassword", Category = CatNet, Kind = ConfigFieldKind.Text, Secret = true,
+                LabelKey = "cfg.server_password.label", HelpKey = "cfg.server_password.help",
                 Get = () => RoomConfig.serverPassword ?? "", Set = v => RoomConfig.serverPassword = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "serverToken", Category = CatNet, Label = "身分 token", Kind = ConfigFieldKind.Text, Secret = true,
-                Help = "公網伺服器用：密碼是大家共用的門，token 是「伺服器認得的你」。留空＝不帶。",
+                Key = "serverToken", Category = CatNet, Kind = ConfigFieldKind.Text, Secret = true,
+                LabelKey = "cfg.server_token.label", HelpKey = "cfg.server_token.help",
                 Get = () => RoomConfig.serverToken ?? "", Set = v => RoomConfig.serverToken = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "serverTls", Category = CatNet, Label = "TLS 加密連線", Kind = ConfigFieldKind.Toggle,
-                Help = "★開在公網一定要開：不開的話密碼、token、聊天內容全是明文。伺服器要有 --tls-cert。",
+                Key = "serverTls", Category = CatNet, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.server_tls.label", HelpKey = "cfg.server_tls.help",
                 Get = () => B(RoomConfig.serverTls), Set = v => RoomConfig.serverTls = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "serverCertFingerprint", Category = CatNet, Label = "憑證指紋", Kind = ConfigFieldKind.Text,
-                Help = "SHA-256（伺服器開機會印出來，冒號可留）。★自簽憑證一定要填，否則驗證必定失敗。留空＝走一般 CA 驗證。",
+                Key = "serverCertFingerprint", Category = CatNet, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.server_cert_fingerprint.label", HelpKey = "cfg.server_cert_fingerprint.help",
                 Get = () => RoomConfig.serverCertFingerprint ?? "",
                 Set = v => RoomConfig.serverCertFingerprint = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "netAutoDownload", Category = CatNet, Label = "缺歌自動下載", Kind = ConfigFieldKind.Toggle,
-                Help = "座位玩家缺歌時自動從伺服器下載（旁觀者一律不自動下載）。",
+                Key = "netAutoDownload", Category = CatNet, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.net_auto_download.label", HelpKey = "cfg.net_auto_download.help",
                 Get = () => B(RoomConfig.netAutoDownload), Set = v => RoomConfig.netAutoDownload = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "netMaxDownloadMb", Category = CatNet, Label = "下載上限 MB", Kind = ConfigFieldKind.Text,
-                Help = "自動下載的單首歌大小上限（1~2048 MB）。超過就只顯示缺歌，避免在慢速網路上卡很久。",
+                Key = "netMaxDownloadMb", Category = CatNet, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.net_max_download_mb.label", HelpKey = "cfg.net_max_download_mb.help",
                 Get = () => RoomConfig.netMaxDownloadMb.ToString(CultureInfo.InvariantCulture),
                 Set = v => RoomConfig.netMaxDownloadMb = ParseInt(v, RoomConfig.netMaxDownloadMb),
             });
@@ -301,144 +352,144 @@ namespace Sdo.Settings
             // ---------------------------------------------------------------- 遊玩 [Room]
             f.Add(new ConfigField
             {
-                Key = "judgeLevel", Category = CatPlay, Label = "判定精度", Kind = ConfigFieldKind.Slider,
+                Key = "judgeLevel", Category = CatPlay, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.judge_level.label", HelpKey = "cfg.judge_level.help",
                 Min = 1f, Max = 9f, Step = 1f, Format = JudgeLevelText, NoValueEntry = true,
-                Help = "StepMania 的「精N」：數字越大越嚴格。精4＝Perfect ±45ms；精2 寬 1.33 倍、精8 只剩 0.33 倍。",
                 Get = () => RoomConfig.judgeLevel.ToString(CultureInfo.InvariantCulture),
                 Set = v => RoomConfig.judgeLevel = ParseInt(v, RoomConfig.judgeLevel),
             });
             f.Add(new ConfigField
             {
-                Key = "globalOffsetMs", Category = CatPlay, Label = "判定 offset", Kind = ConfigFieldKind.Slider,
+                Key = "globalOffsetMs", Category = CatPlay, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.global_offset_ms.label", HelpKey = "cfg.global_offset_ms.help",
                 Min = -300f, Max = 300f, Unit = "ms",
-                Help = "正＝判定時間往後（整體打太早就往正的調）。機器的音訊延遲已自動補掉，這裡只留個人偏好；用編輯器 F2 打拍測試量。",
                 Get = () => Num(RoomConfig.globalOffsetMs), Set = v => RoomConfig.globalOffsetMs = ParseFloat(v, RoomConfig.globalOffsetMs),
             });
             f.Add(new ConfigField
             {
-                Key = "judgeOffsetY", Category = CatPlay, Label = "判定線位移", Kind = ConfigFieldKind.Slider,
+                Key = "judgeOffsetY", Category = CatPlay, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.judge_offset_y.label", HelpKey = "cfg.judge_offset_y.help",
                 Min = -200f, Max = 200f, Unit = "px",
-                Help = "只影響「看起來要打在哪」，不影響判定時間（那是判定 offset 的事）。0＝正中受擊線。",
                 Get = () => Num(RoomConfig.judgeOffsetY), Set = v => RoomConfig.judgeOffsetY = ParseFloat(v, RoomConfig.judgeOffsetY),
             });
             f.Add(new ConfigField
             {
-                Key = "scrollBaseBpm", Category = CatPlay, Label = "速度基準 BPM", Kind = ConfigFieldKind.Slider,
+                Key = "scrollBaseBpm", Category = CatPlay, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.scroll_base_bpm.label", HelpKey = "cfg.scroll_base_bpm.help",
                 Min = 30f, Max = 400f, Step = 1f,
-                Help = "畫面速度 = 這個值 × 速度檔位 × 1.6 px/s。調大＝所有歌所有檔位一起變快（預設 130）。",
                 Get = () => Num(RoomConfig.scrollBaseBpm), Set = v => RoomConfig.scrollBaseBpm = ParseFloat(v, RoomConfig.scrollBaseBpm),
             });
             f.Add(new ConfigField
             {
-                Key = "speedSteps", Category = CatPlay, Label = "速度檔位表", Kind = ConfigFieldKind.Text,
-                Help = "房間裡「速度」可以選的檔位清單，逗號分隔（預設 1,1.5,2,2.5,3,4,5,6,8）。",
+                Key = "speedSteps", Category = CatPlay, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.speed_steps.label", HelpKey = "cfg.speed_steps.help",
                 Get = () => FloatList(RoomConfig.speedSteps),
                 Set = v => { var a = ParseFloatList(v); if (a.Length > 0) RoomConfig.speedSteps = a; },
             });
             f.Add(new ConfigField
             {
-                Key = "rankBasedFormation", Category = CatPlay, Label = "依名次調整站位", Kind = ConfigFieldKind.Toggle,
-                Help = "多人同場時：開（預設，官方行為）＝當下第一名會滑到中央前排（鏡頭錨定的那格）。關＝整場照房間座位順序站，不換位。",
+                Key = "rankBasedFormation", Category = CatPlay, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.rank_based_formation.label", HelpKey = "cfg.rank_based_formation.help",
                 Get = () => B(RoomConfig.rankBasedFormation), Set = v => RoomConfig.rankBasedFormation = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "opt_danceIgnoreMiss", Category = CatPlay, Label = "失誤不中斷舞蹈", Kind = ConfigFieldKind.Toggle,
-                Help = "開＝跳舞完全不受 combo/miss/血量影響。關（預設）＝官方玩法，斷 combo 會停舞。",
+                Key = "opt_danceIgnoreMiss", Category = CatPlay, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.dance_ignore_miss.label", HelpKey = "cfg.dance_ignore_miss.help",
                 Get = () => B(Gameplay().danceIgnoreMiss), Set = v => Gameplay().danceIgnoreMiss = ParseBool(v),
             });
 
             // ---------------------------------------------------------------- 歌曲 [Room]
             f.Add(new ConfigField
             {
-                Key = "LoadExternalSongs", Category = CatSong, Label = "載入外部歌曲", Kind = ConfigFieldKind.Toggle,
-                Help = "osu / StepMania / Malody 歌曲的總開關。關掉＝開機不掃歌資料夾、沒有載入進度畫面，只剩官方歌。",
+                Key = "LoadExternalSongs", Category = CatSong, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.load_external_songs.label", HelpKey = "cfg.load_external_songs.help",
                 Get = () => B(RoomConfig.loadExternalSongs), Set = v => RoomConfig.loadExternalSongs = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "AdditionalSongFolders", Category = CatSong, Label = "額外歌曲資料夾", Kind = ConfigFieldKind.Text,
-                Help = "分號分隔的絕對路徑（例：D:/test;E:/songs）。每個都當一個 Songs 根：第一層＝分類，第二層＝各首歌。",
+                Key = "AdditionalSongFolders", Category = CatSong, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.additional_song_folders.label", HelpKey = "cfg.additional_song_folders.help",
                 Get = () => StringList(RoomConfig.additionalSongFolders),
                 Set = v => RoomConfig.additionalSongFolders = ParseStringList(v),
             });
             f.Add(new ConfigField
             {
-                Key = "AddonFolder", Category = CatSong, Label = "外掛(ADDON)目錄", Kind = ConfigFieldKind.Text,
-                Help = "留空＝DATA/ADDON。想把整包外掛（SONG/NOTESKIN/THEME/MODEL）放別顆硬碟就填絕對路徑。",
+                Key = "AddonFolder", Category = CatSong, Kind = ConfigFieldKind.Text,
+                LabelKey = "cfg.addon_folder.label", HelpKey = "cfg.addon_folder.help",
                 Get = () => RoomConfig.addonFolder ?? "", Set = v => RoomConfig.addonFolder = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "DifficultyCalc", Category = CatSong, Label = "難度計算方式", Kind = ConfigFieldKind.Choice,
+                Key = "DifficultyCalc", Category = CatSong, Kind = ConfigFieldKind.Choice,
+                LabelKey = "cfg.difficulty_calc.label", HelpKey = "cfg.difficulty_calc.help",
                 Choices = new[] { "minacalc", "osu" },
-                ChoiceLabels = new[] { "MinaCalc (MSD)", "osu! 星數" },
-                Help = "只影響要自己算難度的外部譜（.gn 一律保留原難度）。選了哪套，顯示數字/隨機難度範圍/簡單普通困難分槽就全照那套。",
+                ChoiceLabelKeys = new[] { "cfg.difficulty_calc.minacalc", "cfg.difficulty_calc.osu" },
                 Get = () => RoomConfig.difficultyCalc ?? "minacalc",
                 Set = v => RoomConfig.difficultyCalc = (v ?? "").Trim().ToLowerInvariant(),
             });
             f.Add(new ConfigField
             {
-                Key = "SongUiAlpha", Category = CatSong, Label = "選歌面板透明度", Kind = ConfigFieldKind.Slider,
+                Key = "SongUiAlpha", Category = CatSong, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.song_ui_alpha.label", HelpKey = "cfg.song_ui_alpha.help",
                 Min = 0f, Max = 1f,
-                Help = "選歌畫面「資料夾」那個浮動分類瀏覽面板的整體不透明度（0=全透明、1=不透明，預設 0.6）。",
                 Get = () => Num(RoomConfig.songUiAlpha), Set = v => RoomConfig.songUiAlpha = ParseFloat(v, RoomConfig.songUiAlpha),
             });
             f.Add(new ConfigField
             {
-                Key = "opt_collapseShortHolds", Category = CatSong, Label = "極短長條轉單鍵", Kind = ConfigFieldKind.Toggle,
-                Help = "短於 83ms 的 long note 直接收成單顆 note（頭尾擠在同一個判定窗＝按不出來）。只對外部轉檔譜生效。",
+                Key = "opt_collapseShortHolds", Category = CatSong, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.collapse_short_holds.label", HelpKey = "cfg.collapse_short_holds.help",
                 Get = () => B(Gameplay().collapseShortHolds), Set = v => Gameplay().collapseShortHolds = ParseBool(v),
             });
 
             // ---------------------------------------------------------------- 顯示 [Room]/[Option]
             f.Add(new ConfigField
             {
-                Key = "comboTextScale", Category = CatText, Label = "COMBO 字大小", Kind = ConfigFieldKind.Slider,
+                Key = "comboTextScale", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.combo_text_scale.label", HelpKey = "cfg.combo_text_scale.help",
                 Min = 0.2f, Max = 3f, Unit = "×",
-                Help = "COMBO 字樣＋連段數字的整體大小比例（1.0＝官方原尺寸）。純顯示，不影響判定與分數。",
                 Get = () => Num(RoomConfig.comboTextScale), Set = v => RoomConfig.comboTextScale = ParseFloat(v, RoomConfig.comboTextScale),
             });
             f.Add(new ConfigField
             {
-                Key = "comboTextAlpha", Category = CatText, Label = "COMBO 字不透明度", Kind = ConfigFieldKind.Slider,
+                Key = "comboTextAlpha", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.combo_text_alpha.label", HelpKey = "cfg.combo_text_alpha.help",
                 Min = 0f, Max = 1f,
-                Help = "字就疊在音符板上，淡一點才不會擋住下落中的音符（預設 60%）。0＝完全看不見。",
                 Get = () => Num(RoomConfig.comboTextAlpha), Set = v => RoomConfig.comboTextAlpha = ParseFloat(v, RoomConfig.comboTextAlpha),
             });
             f.Add(new ConfigField
             {
-                Key = "comboTextPop", Category = CatText, Label = "COMBO 字彈跳", Kind = ConfigFieldKind.Slider,
+                Key = "comboTextPop", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.combo_text_pop.label", HelpKey = "cfg.combo_text_pop.help",
                 Min = 1f, Max = 4f, Unit = "×",
-                Help = "打中時彈到最大那一瞬間的倍率（官方 2.0＝彈到兩倍再收回，1.0＝完全不彈跳）。",
                 Get = () => Num(RoomConfig.comboTextPop), Set = v => RoomConfig.comboTextPop = ParseFloat(v, RoomConfig.comboTextPop),
             });
             f.Add(new ConfigField
             {
-                Key = "judgeTextScale", Category = CatText, Label = "判定字大小", Kind = ConfigFieldKind.Slider,
+                Key = "judgeTextScale", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.judge_text_scale.label", HelpKey = "cfg.judge_text_scale.help",
                 Min = 0.2f, Max = 3f, Unit = "×",
-                Help = "PERFECT / COOL / BAD / MISS 判定字樣的整體大小比例（1.0＝官方原尺寸）。",
                 Get = () => Num(RoomConfig.judgeTextScale), Set = v => RoomConfig.judgeTextScale = ParseFloat(v, RoomConfig.judgeTextScale),
             });
             f.Add(new ConfigField
             {
-                Key = "judgeTextAlpha", Category = CatText, Label = "判定字不透明度", Kind = ConfigFieldKind.Slider,
+                Key = "judgeTextAlpha", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.judge_text_alpha.label", HelpKey = "cfg.judge_text_alpha.help",
                 Min = 0f, Max = 1f,
-                Help = "判定字不會淡出（官方是顯示完直接消失），這個值就是它顯示期間的亮度（預設 60%）。",
                 Get = () => Num(RoomConfig.judgeTextAlpha), Set = v => RoomConfig.judgeTextAlpha = ParseFloat(v, RoomConfig.judgeTextAlpha),
             });
             f.Add(new ConfigField
             {
-                Key = "judgeTextPop", Category = CatText, Label = "判定字彈跳", Kind = ConfigFieldKind.Slider,
+                Key = "judgeTextPop", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.judge_text_pop.label", HelpKey = "cfg.judge_text_pop.help",
                 Min = 1f, Max = 4f, Unit = "×",
-                Help = "同 COMBO 字彈跳，只是判定字收回的速度是官方寫死的（比較慢），這裡只調幅度。",
                 Get = () => Num(RoomConfig.judgeTextPop), Set = v => RoomConfig.judgeTextPop = ParseFloat(v, RoomConfig.judgeTextPop),
             });
             f.Add(new ConfigField
             {
-                Key = "opt_uiScale", Category = CatText, Label = "UI 縮放", Kind = ConfigFieldKind.Slider,
+                Key = "opt_uiScale", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.ui_scale.label", HelpKey = "cfg.ui_scale.help",
                 Min = 0.5f, Max = 3f, Unit = "×",
-                Help = "⚠ 目前遊戲還沒有任何地方讀這個值（畫面一律走 800×600 4:3 取景），改了不會有變化 —— 先留著對齊設定檔。",
                 Get = () => Num(Display().uiScale), Set = v => Display().uiScale = ParseFloat(v, Display().uiScale),
             });
 
@@ -447,88 +498,84 @@ namespace Sdo.Settings
             // 現在整組搬進這裡 → 跟其它設定一樣寫進 config.ini，下次開遊戲還在。
             f.Add(new ConfigField
             {
-                Key = "mmdModel", Category = CatMmd, Label = "使用模型", Kind = ConfigFieldKind.Choice,
+                Key = "mmdModel", Category = CatMmd, Kind = ConfigFieldKind.Choice,
+                LabelKey = "cfg.mmd_model.label", HelpKey = "cfg.mmd_model.help",
+                // 說明句裡的「第一個選項」寫的是 mmdModelNone 的真值 —— 它是存進 config.ini 的字串，不翻譯。
+                HelpArgs = new object[] { RoomConfig.mmdModelNone },
                 ChoicesProvider = () => MmdModelsProvider?.Invoke(),
-                UnknownChoiceText = cur => cur.Length == 0 ? "(自動：第一個)" : cur + "(找不到)",
-                Help = "★選了就是要用它 —— 沒有另外的總開關。第一個選項「" + RoomConfig.mmdModelNone + "」＝維持 SDO 原角色。"
-                     + "把整個 MMD 模型資料夾（含 .pmx 與它的貼圖）放進 DATA/MODEL/，開發樹是 assets/MODEL/；一個資料夾＝一個模型，這裡就會出現。",
+                UnknownChoiceText = cur => cur.Length == 0 ? L("cfg.mmd_model.auto_first") : L("cfg.mmd_model.not_found", cur),
                 Get = () => RoomConfig.mmdModel ?? "", Set = v => RoomConfig.mmdModel = (v ?? "").Trim(),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdShowOthers", Category = CatMmd, Label = "顯示他人模型", Kind = ConfigFieldKind.Toggle,
-                Help = "開(預設)＝同房的人穿 MMD 模型時，你也看得到（本機沒有就自動跟伺服器下載）。關＝別人一律照他的 SDO 穿搭顯示，而且完全不下載。"
-                     + "★這與上面「使用模型」互相獨立：可以自己維持 SDO 角色卻看得到別人的 MMD，也可以反過來。",
+                Key = "mmdShowOthers", Category = CatMmd, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.mmd_show_others.label", HelpKey = "cfg.mmd_show_others.help",
                 Get = () => B(RoomConfig.mmdShowOthers), Set = v => RoomConfig.mmdShowOthers = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdShareModel", Category = CatMmd, Label = "分享模型", Kind = ConfigFieldKind.Toggle,
-                Help = "開(預設)＝把你的模型上傳給伺服器,同房的人也看得到你的 MMD。關＝別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。★很多 MMD 模型的使用規約禁止再配布,這個開關就是為此存在的。",
+                Key = "mmdShareModel", Category = CatMmd, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.mmd_share_model.label", HelpKey = "cfg.mmd_share_model.help",
                 Get = () => B(RoomConfig.mmdShareModel), Set = v => RoomConfig.mmdShareModel = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdPhysics", Category = CatMmd, Label = "布料物理模擬", Kind = ConfigFieldKind.Toggle,
-                Help = "布料模擬（頭髮/裙擺/領帶）。★嫌換場景進遊戲慢就關這個 —— 布料求解是建一隻 MMD 角色最貴的一段。",
+                Key = "mmdPhysics", Category = CatMmd, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.mmd_physics.label", HelpKey = "cfg.mmd_physics.help",
                 Get = () => B(RoomConfig.mmdPhysics), Set = v => RoomConfig.mmdPhysics = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdGravity", Category = CatMmd, Label = "布料重力", Kind = ConfigFieldKind.Slider,
+                Key = "mmdGravity", Category = CatMmd, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.mmd_gravity.label", HelpKey = "cfg.mmd_gravity.help",
                 Min = 0.05f, Max = 8f, Unit = "×",
-                Help = "布料受到的重力倍率。大＝頭髮裙擺被拉得更垂、甩動更沉；小＝飄。模型資料夾裡的 physics.ini 先套，這個值再乘上去。",
                 Get = () => Num(RoomConfig.mmdGravity), Set = v => RoomConfig.mmdGravity = ParseFloat(v, RoomConfig.mmdGravity),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdStiffness", Category = CatMmd, Label = "布料剛性", Kind = ConfigFieldKind.Slider,
+                Key = "mmdStiffness", Category = CatMmd, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.mmd_stiffness.label", HelpKey = "cfg.mmd_stiffness.help",
                 Min = 0.03f, Max = 0.9f, Unit = "×",
-                Help = "回彈到原本造型的力道。低＝軟趴趴被重力拉直；高＝硬挺、甩不太動（雙馬尾那種被作者鎖死的部位本來就接近硬的）。",
                 Get = () => Num(RoomConfig.mmdStiffness), Set = v => RoomConfig.mmdStiffness = ParseFloat(v, RoomConfig.mmdStiffness),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdColliderScale", Category = CatMmd, Label = "碰撞體半徑", Kind = ConfigFieldKind.Slider,
+                Key = "mmdColliderScale", Category = CatMmd, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.mmd_collider_scale.label", HelpKey = "cfg.mmd_collider_scale.help",
                 Min = 0.2f, Max = 4f, Unit = "×",
-                Help = "布料撞身體用的碰撞體半徑倍率。太小＝裙子穿過腿；太大＝裙子被撐飛。",
                 Get = () => Num(RoomConfig.mmdColliderScale), Set = v => RoomConfig.mmdColliderScale = ParseFloat(v, RoomConfig.mmdColliderScale),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdProfile", Category = CatMmd, Label = "物理設定檔", Kind = ConfigFieldKind.Action,
-                Actions = new[] { "存檔", "還原" },
-                Help = "「存檔」＝把現在跑的物理數值(轉換值 × 上面那幾根滑桿)寫成模型資料夾裡的 physics.ini,之後這個模型就照它跑,換別的模型不受影響。「還原」＝刪掉那個檔,回到直接從 .pmx 轉換的值。右邊顯示現在用的是哪一種。",
+                Key = "mmdProfile", Category = CatMmd, Kind = ConfigFieldKind.Action,
+                LabelKey = "cfg.mmd_profile.label", HelpKey = "cfg.mmd_profile.help",
+                ActionKeys = new[] { "cfg.mmd_profile.save", "cfg.mmd_profile.reset" },
                 Invoke = i => i == 0 ? MmdProfileSave?.Invoke() : MmdProfileDelete?.Invoke(),
                 StateText = () => MmdProfileState?.Invoke(),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdScale", Category = CatMmd, Label = "模型縮放", Kind = ConfigFieldKind.Slider,
+                Key = "mmdScale", Category = CatMmd, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.mmd_scale.label", HelpKey = "cfg.mmd_scale.help",
                 Min = 0.3f, Max = 3f, Unit = "×",
-                Help = "1＝自動把模型縮放到跟 SDO 舞者一樣高（每個模型的原始尺寸差很多，所以預設是自動對齊）。覺得這個模型看起來偏大/偏小就在這裡乘上去。",
                 Get = () => Num(RoomConfig.mmdScale), Set = v => RoomConfig.mmdScale = ParseFloat(v, RoomConfig.mmdScale),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdLilToon", Category = CatMmd, Label = "lilToon 著色", Kind = ConfigFieldKind.Toggle,
-                Help = "開＝用 lilToon 著色：有光照、邊緣光、描邊會跟著明暗變色。"
-                     + "關(預設)＝照 MMD 原本的畫法（unlit、模型自帶的 toon ramp 直接貼、純色鉛筆描邊）。"
-                     + "★這是換一整套著色，不是加效果 —— 開/關會重建身體。"
-                     + "★注意 lilToon 吃光照，開了會自動補一顆平行光（其它東西全是 unlit，不受影響）。",
+                Key = "mmdLilToon", Category = CatMmd, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.mmd_lil_toon.label", HelpKey = "cfg.mmd_lil_toon.help",
                 Get = () => B(RoomConfig.mmdLilToon), Set = v => RoomConfig.mmdLilToon = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdToon", Category = CatMmd, Label = "卡通陰影", Kind = ConfigFieldKind.Toggle,
-                Help = "明暗只分兩段的卡通上色（開著 lilToon 時＝它的 cel 陰影分界）。"
-                     + "關(預設)＝平光；舞台燈光會在臉上切出很硬的一條分界，所以預設不開。",
+                Key = "mmdToon", Category = CatMmd, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.mmd_toon.label", HelpKey = "cfg.mmd_toon.help",
                 Get = () => B(RoomConfig.mmdToon), Set = v => RoomConfig.mmdToon = ParseBool(v),
             });
             f.Add(new ConfigField
             {
-                Key = "mmdOutline", Category = CatMmd, Label = "輪廓描邊", Kind = ConfigFieldKind.Toggle,
-                Help = "模型自帶的鉛筆描邊（edge）。關＝沒有黑邊。",
+                Key = "mmdOutline", Category = CatMmd, Kind = ConfigFieldKind.Toggle,
+                LabelKey = "cfg.mmd_outline.label", HelpKey = "cfg.mmd_outline.help",
                 Get = () => B(RoomConfig.mmdOutline), Set = v => RoomConfig.mmdOutline = ParseBool(v),
             });
 
@@ -606,11 +653,11 @@ namespace Sdo.Settings
 
         public static string StringList(string[] a) => a == null || a.Length == 0 ? "" : string.Join(";", a);
 
-        /// <summary>判定精度 1~9 的顯示名稱（9＝JUSTICE）。純函式。</summary>
+        /// <summary>判定精度 1~9 的顯示名稱（9＝JUSTICE）。</summary>
         public static string JudgeLevelText(float v)
         {
             int n = Mathf.Clamp(Mathf.RoundToInt(v), 1, 9);
-            return n == 9 ? "JUSTICE" : "精" + n;
+            return n == 9 ? L("cfg.judge_level.justice") : L("cfg.judge_level.value", n);
         }
 
         private static string B(bool v) => v ? "1" : "0";

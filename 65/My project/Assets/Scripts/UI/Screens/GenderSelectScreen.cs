@@ -299,13 +299,13 @@ namespace Sdo.UI.Screens
         private string SaveName(string edited)
         {
             string name = (edited ?? "").Trim();
-            if (name.Length == 0) return "名稱不可空白";
+            if (name.Length == 0) return LocalizationManager.Get("cfg.name.empty");
             string id = ProfileManager.SeededIdForGender(_gender);
             ProfileManager.SetActive(id);
             ProfileManager.Active.name = name;
             ProfileManager.Save();
             if (Ctx != null && Ctx.Session != null) Ctx.Session.LocalPlayerName = name;
-            return "已儲存，進入房間後生效";
+            return LocalizationManager.Get("cfg.name.saved");
         }
 
         private void SelectGender(int g)

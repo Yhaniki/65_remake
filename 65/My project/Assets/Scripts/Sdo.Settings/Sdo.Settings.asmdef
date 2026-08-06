@@ -2,7 +2,8 @@
     "name": "Sdo.Settings",
     "rootNamespace": "Sdo.Settings",
     "references": [
-        "Sdo.Net"
+        "Sdo.Net",
+        "Sdo.Localization"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

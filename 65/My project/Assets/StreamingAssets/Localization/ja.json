@@ -269,7 +269,7 @@
   },
   {
    "k": "room.slot_block",
-   "v": "ブロックする"
+   "v": "ブロック"
   },
   {
    "k": "room.slot_unblock",
@@ -1062,6 +1062,490 @@
   {
    "k": "join.notfound",
    "v": "ルームが見つかりません"
+  },
+  {
+   "k": "cfg.cat.net",
+   "v": "接続"
+  },
+  {
+   "k": "cfg.cat.play",
+   "v": "プレイ"
+  },
+  {
+   "k": "cfg.cat.song",
+   "v": "曲"
+  },
+  {
+   "k": "cfg.cat.text",
+   "v": "表示"
+  },
+  {
+   "k": "cfg.cat.mmd",
+   "v": "MMD"
+  },
+  {
+   "k": "cfg.panel.title",
+   "v": "プレイヤー設定"
+  },
+  {
+   "k": "cfg.panel.title_collapsed",
+   "v": "プレイヤー名"
+  },
+  {
+   "k": "cfg.panel.expand",
+   "v": "▼ 開く"
+  },
+  {
+   "k": "cfg.panel.collapse",
+   "v": "▲ 閉じる"
+  },
+  {
+   "k": "cfg.panel.name",
+   "v": "名前"
+  },
+  {
+   "k": "cfg.panel.save_name",
+   "v": "保存"
+  },
+  {
+   "k": "cfg.panel.save_config",
+   "v": "設定を保存"
+  },
+  {
+   "k": "cfg.panel.saved",
+   "v": "設定を保存しました"
+  },
+  {
+   "k": "cfg.panel.save_failed",
+   "v": "保存に失敗しました：{0}"
+  },
+  {
+   "k": "cfg.panel.help_hint",
+   "v": "設定にマウスを合わせると説明が出ます。"
+  },
+  {
+   "k": "cfg.panel.reveal",
+   "v": "表示"
+  },
+  {
+   "k": "cfg.panel.hide",
+   "v": "隠す"
+  },
+  {
+   "k": "cfg.panel.body",
+   "v": "体型"
+  },
+  {
+   "k": "cfg.panel.body.0",
+   "v": "細身"
+  },
+  {
+   "k": "cfg.panel.body.1",
+   "v": "標準"
+  },
+  {
+   "k": "cfg.panel.body.2",
+   "v": "ぽっちゃり"
+  },
+  {
+   "k": "cfg.panel.body.3",
+   "v": "太め"
+  },
+  {
+   "k": "cfg.panel.body.4",
+   "v": "かなり太め"
+  },
+  {
+   "k": "cfg.panel.body.help",
+   "v": "キャラクターの体型（細身…かなり太め）。ドラッグ中は左の 3D プレビューが即座に変わり、「設定を保存」でこのキャラクターのセーブに書き込まれます。"
+  },
+  {
+   "k": "cfg.name.empty",
+   "v": "名前は空にできません"
+  },
+  {
+   "k": "cfg.name.saved",
+   "v": "保存しました。ルームに入ると反映されます"
+  },
+  {
+   "k": "cfg.server_address.label",
+   "v": "アドレス"
+  },
+  {
+   "k": "cfg.server_address.help",
+   "v": "IP またはホスト名（例：192.168.1.10 / dance.example.com）。★空欄＝オフライン専用。入力するとログイン時に接続します。"
+  },
+  {
+   "k": "cfg.server_port.label",
+   "v": "ポート"
+  },
+  {
+   "k": "cfg.server_port.help",
+   "v": "サーバーのポート（1〜65535、既定 27015）。サーバー起動時の --port と一致させてください。"
+  },
+  {
+   "k": "cfg.server_password.label",
+   "v": "パスワード"
+  },
+  {
+   "k": "cfg.server_password.help",
+   "v": "サーバーの --password と一致しないと接続できません。空欄＝パスワード無しのサーバー用。"
+  },
+  {
+   "k": "cfg.server_token.label",
+   "v": "認証トークン"
+  },
+  {
+   "k": "cfg.server_token.help",
+   "v": "公開サーバー用：パスワードは全員共通の入り口、トークンは「サーバーがあなたと分かる印」です。空欄＝送りません。"
+  },
+  {
+   "k": "cfg.server_tls.label",
+   "v": "TLS 暗号化"
+  },
+  {
+   "k": "cfg.server_tls.help",
+   "v": "★公開サーバーでは必ずオンに：切るとパスワード・トークン・チャットがすべて平文で流れます。サーバー側に --tls-cert が必要です。"
+  },
+  {
+   "k": "cfg.server_cert_fingerprint.label",
+   "v": "証明書の指紋"
+  },
+  {
+   "k": "cfg.server_cert_fingerprint.help",
+   "v": "SHA-256（サーバー起動時に表示されます。コロンはそのままで可）。★自己署名証明書では必須で、無いと検証は必ず失敗します。空欄＝通常の CA 検証。"
+  },
+  {
+   "k": "cfg.net_auto_download.label",
+   "v": "曲を自動DL"
+  },
+  {
+   "k": "cfg.net_auto_download.help",
+   "v": "席に着いているプレイヤーは、持っていない曲をサーバーから自動でダウンロードします（観戦者は常に対象外）。"
+  },
+  {
+   "k": "cfg.net_max_download_mb.label",
+   "v": "DL上限 MB"
+  },
+  {
+   "k": "cfg.net_max_download_mb.help",
+   "v": "自動ダウンロードする 1 曲あたりの上限（1〜2048 MB）。超える曲は「未所持」と表示するだけにして、遅い回線で待たされないようにします。"
+  },
+  {
+   "k": "cfg.judge_level.label",
+   "v": "判定精度"
+  },
+  {
+   "k": "cfg.judge_level.help",
+   "v": "StepMania の判定段階：数字が大きいほど厳しくなります。4＝Perfect ±45ms、2 は 1.33 倍広く、8 は 0.33 倍しかありません。"
+  },
+  {
+   "k": "cfg.global_offset_ms.label",
+   "v": "判定オフセット"
+  },
+  {
+   "k": "cfg.global_offset_ms.help",
+   "v": "プラス＝判定を後ろへずらす（全体的に早押しになるなら＋方向へ）。機器のオーディオ遅延は自動補正済みで、ここは個人の好みだけです。エディタの F2 タップテストで測れます。"
+  },
+  {
+   "k": "cfg.judge_offset_y.label",
+   "v": "判定ライン位置"
+  },
+  {
+   "k": "cfg.judge_offset_y.help",
+   "v": "「どこで打つように見えるか」だけを変え、判定タイミングは変わりません（それは判定オフセットの役目）。0＝レセプター線のちょうど上。"
+  },
+  {
+   "k": "cfg.scroll_base_bpm.label",
+   "v": "基準BPM"
+  },
+  {
+   "k": "cfg.scroll_base_bpm.help",
+   "v": "画面速度＝この値 × 速度段階 × 1.6 px/s。上げるとすべての曲・すべての段階が一緒に速くなります（既定 130）。"
+  },
+  {
+   "k": "cfg.speed_steps.label",
+   "v": "速度段階"
+  },
+  {
+   "k": "cfg.speed_steps.help",
+   "v": "ルームの「速度」で選べる段階の一覧。カンマ区切り（既定 1,1.5,2,2.5,3,4,5,6,8）。"
+  },
+  {
+   "k": "cfg.rank_based_formation.label",
+   "v": "順位で立ち位置"
+  },
+  {
+   "k": "cfg.rank_based_formation.help",
+   "v": "複数人プレイ時：オン（既定・公式挙動）＝その時点の 1 位がカメラの基準になる中央前列へ移動します。オフ＝最後までルームの席順のまま並びます。"
+  },
+  {
+   "k": "cfg.dance_ignore_miss.label",
+   "v": "ミスで中断しない"
+  },
+  {
+   "k": "cfg.dance_ignore_miss.help",
+   "v": "オン＝ダンスがコンボ・ミス・HP の影響を一切受けません。オフ（既定）＝公式どおり、コンボが切れると踊りが止まります。"
+  },
+  {
+   "k": "cfg.load_external_songs.label",
+   "v": "外部曲を読込"
+  },
+  {
+   "k": "cfg.load_external_songs.help",
+   "v": "osu / StepMania / Malody 曲の総合スイッチ。オフ＝起動時に曲フォルダを走査せず、ロード画面も出ず、公式曲だけになります。"
+  },
+  {
+   "k": "cfg.additional_song_folders.label",
+   "v": "追加曲フォルダ"
+  },
+  {
+   "k": "cfg.additional_song_folders.help",
+   "v": "セミコロン区切りの絶対パス（例：D:/test;E:/songs）。それぞれが Songs のルート扱いで、1 階層目＝カテゴリ、2 階層目＝各曲です。"
+  },
+  {
+   "k": "cfg.addon_folder.label",
+   "v": "ADDONフォルダ"
+  },
+  {
+   "k": "cfg.addon_folder.help",
+   "v": "空欄＝DATA/ADDON。アドオン一式（SONG/NOTESKIN/THEME/MODEL）を別のドライブに置きたいときは絶対パスを入れてください。"
+  },
+  {
+   "k": "cfg.difficulty_calc.label",
+   "v": "難易度計算"
+  },
+  {
+   "k": "cfg.difficulty_calc.help",
+   "v": "難易度を自前で計算する必要のある外部譜面にだけ影響します（.gn は常に元の難易度のまま）。選んだ方式が、表示される数値・ランダム難易度の範囲・かんたん/ふつう/むずかしいの振り分けすべてに使われます。"
+  },
+  {
+   "k": "cfg.difficulty_calc.minacalc",
+   "v": "MinaCalc (MSD)"
+  },
+  {
+   "k": "cfg.difficulty_calc.osu",
+   "v": "osu! スター"
+  },
+  {
+   "k": "cfg.song_ui_alpha.label",
+   "v": "選曲パネル濃度"
+  },
+  {
+   "k": "cfg.song_ui_alpha.help",
+   "v": "選曲画面の「フォルダ」カテゴリ側に浮いているブラウザパネル全体の不透明度（0＝完全に透明、1＝不透明、既定 0.6）。"
+  },
+  {
+   "k": "cfg.collapse_short_holds.label",
+   "v": "短いロング→単押"
+  },
+  {
+   "k": "cfg.collapse_short_holds.help",
+   "v": "83ms より短いロングノートを単押しに変換します（始点と終点が同じ判定窓に入る＝押し分けられないため）。外部から変換した譜面にのみ適用されます。"
+  },
+  {
+   "k": "cfg.combo_text_scale.label",
+   "v": "COMBO サイズ"
+  },
+  {
+   "k": "cfg.combo_text_scale.help",
+   "v": "COMBO の文字と連段数の全体的な大きさ（1.0＝公式と同じ）。見た目だけで、判定やスコアには影響しません。"
+  },
+  {
+   "k": "cfg.combo_text_alpha.label",
+   "v": "COMBO 不透明度"
+  },
+  {
+   "k": "cfg.combo_text_alpha.help",
+   "v": "文字はノーツパネルの上に重なるので、薄めにしておくと落ちてくるノーツを隠しません（既定 60%）。0＝まったく見えません。"
+  },
+  {
+   "k": "cfg.combo_text_pop.label",
+   "v": "COMBO 弾み"
+  },
+  {
+   "k": "cfg.combo_text_pop.help",
+   "v": "打った瞬間に文字が最大まで弾む倍率（公式は 2.0＝2 倍まで弾んで戻る、1.0＝まったく弾まない）。"
+  },
+  {
+   "k": "cfg.judge_text_scale.label",
+   "v": "判定文字サイズ"
+  },
+  {
+   "k": "cfg.judge_text_scale.help",
+   "v": "PERFECT / COOL / BAD / MISS の判定文字の全体的な大きさ（1.0＝公式と同じ）。"
+  },
+  {
+   "k": "cfg.judge_text_alpha.label",
+   "v": "判定文字の濃度"
+  },
+  {
+   "k": "cfg.judge_text_alpha.help",
+   "v": "判定文字はフェードアウトしません（公式でも表示後すぐ消えます）。この値は表示中の明るさそのものです（既定 60%）。"
+  },
+  {
+   "k": "cfg.judge_text_pop.label",
+   "v": "判定文字の弾み"
+  },
+  {
+   "k": "cfg.judge_text_pop.help",
+   "v": "COMBO の弾みと同じです。判定文字が戻る速さは公式で固定（やや遅め）なので、ここでは大きさだけを調整します。"
+  },
+  {
+   "k": "cfg.ui_scale.label",
+   "v": "UI スケール"
+  },
+  {
+   "k": "cfg.ui_scale.help",
+   "v": "⚠ 現在この値を読んでいる箇所はまだありません（画面は常に 800×600 4:3 で構成）。変更しても何も起きません —— 設定ファイルと揃えるために置いてあります。"
+  },
+  {
+   "k": "cfg.mmd_model.label",
+   "v": "使用モデル"
+  },
+  {
+   "k": "cfg.mmd_model.help",
+   "v": "★選ぶこと自体がスイッチです —— 別にオン/オフはありません。先頭の「{0}」＝SDO 本来のキャラのまま。MMD モデルのフォルダ（.pmx とそのテクスチャ一式）を DATA/MODEL/ に置いてください（開発ツリーでは assets/MODEL/）。1 フォルダ＝1 モデルとしてここに出てきます。"
+  },
+  {
+   "k": "cfg.mmd_model.auto_first",
+   "v": "(自動：最初の1つ)"
+  },
+  {
+   "k": "cfg.mmd_model.not_found",
+   "v": "{0}(見つかりません)"
+  },
+  {
+   "k": "cfg.mmd_show_others.label",
+   "v": "他人のモデル"
+  },
+  {
+   "k": "cfg.mmd_show_others.help",
+   "v": "オン（既定）＝同じルームの人が MMD モデルを使っていれば、あなたにも見えます（手元に無ければサーバーから自動ダウンロード）。オフ＝全員 SDO の服装で表示し、ダウンロードも一切しません。★上の「使用モデル」とは独立です：自分は SDO のままで他人の MMD だけ見ることも、その逆もできます。"
+  },
+  {
+   "k": "cfg.mmd_share_model.label",
+   "v": "モデル共有"
+  },
+  {
+   "k": "cfg.mmd_share_model.help",
+   "v": "オン（既定）＝自分のモデルをサーバーへアップロードし、同じルームの人にも MMD が見えます。オフ＝他人には SDO の服装で見えます（自分の画面は MMD のまま）。★多くの MMD モデルは再配布を規約で禁じています。このスイッチはそのためにあります。"
+  },
+  {
+   "k": "cfg.mmd_physics.label",
+   "v": "布の物理"
+  },
+  {
+   "k": "cfg.mmd_physics.help",
+   "v": "布のシミュレーション（髪・スカート・ネクタイなど）。★ステージ読み込みが遅いと感じたらこれを切ってください —— MMD キャラの生成で最も重いのが布の計算です。"
+  },
+  {
+   "k": "cfg.mmd_gravity.label",
+   "v": "布の重力"
+  },
+  {
+   "k": "cfg.mmd_gravity.help",
+   "v": "布にかかる重力の倍率。大きい＝髪やスカートがより垂れ、揺れも重くなります。小さい＝ふわりと浮きます。まずモデルフォルダの physics.ini が適用され、その上にこの倍率が掛かります。"
+  },
+  {
+   "k": "cfg.mmd_stiffness.label",
+   "v": "布の剛性"
+  },
+  {
+   "k": "cfg.mmd_stiffness.help",
+   "v": "元の造形へ戻ろうとする強さ。低い＝だらりと重力で伸びます。高い＝硬くてほとんど揺れません（作者が固めているツインテールなどは元から硬めです）。"
+  },
+  {
+   "k": "cfg.mmd_collider_scale.label",
+   "v": "コライダー半径"
+  },
+  {
+   "k": "cfg.mmd_collider_scale.help",
+   "v": "布が当たる身体コライダーの半径倍率。小さすぎるとスカートが脚を突き抜け、大きすぎるとスカートが押し広げられます。"
+  },
+  {
+   "k": "cfg.mmd_profile.label",
+   "v": "物理プロファイル"
+  },
+  {
+   "k": "cfg.mmd_profile.help",
+   "v": "「保存」＝いま動いている物理値（変換値 × 上のスライダー）をモデルフォルダの physics.ini に書き出します。以後そのモデルはそれに従い、他のモデルには影響しません。「戻す」＝そのファイルを削除し、.pmx から直接変換した値に戻します。右側に現在どちらを使っているか表示されます。"
+  },
+  {
+   "k": "cfg.mmd_profile.save",
+   "v": "保存"
+  },
+  {
+   "k": "cfg.mmd_profile.reset",
+   "v": "戻す"
+  },
+  {
+   "k": "cfg.mmd_scale.label",
+   "v": "モデル拡縮"
+  },
+  {
+   "k": "cfg.mmd_scale.help",
+   "v": "1＝モデルを SDO のダンサーと同じ身長へ自動で合わせます（素のサイズはモデルごとに大きく違うため、既定は自動）。それでも大きい/小さいと感じたらここで倍率を掛けてください。"
+  },
+  {
+   "k": "cfg.mmd_lil_toon.label",
+   "v": "lilToon 描画"
+  },
+  {
+   "k": "cfg.mmd_lil_toon.help",
+   "v": "オン＝lilToon で描画します：ライティングあり、リムライトあり、輪郭線も明暗に応じて色が変わります。オフ（既定）＝MMD 本来の描き方（unlit、モデル同梱の toon ランプをそのまま使用、単色の鉛筆線）。★これは描画系一式の入れ替えであり、効果の追加ではありません —— 切り替えると身体を作り直します。★lilToon はライトを必要とするため、オンにすると平行光を 1 つ追加します（他はすべて unlit なので影響なし）。"
+  },
+  {
+   "k": "cfg.mmd_toon.label",
+   "v": "トゥーン影"
+  },
+  {
+   "k": "cfg.mmd_toon.help",
+   "v": "明暗を 2 段階だけにするトゥーン塗り（lilToon がオンのときは、その cel 影の境目になります）。オフ（既定）＝フラットな明るさ。ステージ照明が顔にくっきりした境目を作ってしまうため、既定ではオフです。"
+  },
+  {
+   "k": "cfg.mmd_outline.label",
+   "v": "輪郭線"
+  },
+  {
+   "k": "cfg.mmd_outline.help",
+   "v": "モデルが持っている鉛筆線（edge）。オフ＝黒い輪郭は出ません。"
+  },
+  {
+   "k": "cfg.judge_level.value",
+   "v": "判定{0}"
+  },
+  {
+   "k": "cfg.judge_level.justice",
+   "v": "JUSTICE"
+  },
+  {
+   "k": "cfg.mmd_profile.saved",
+   "v": "物理を {0} に保存しました（このモデル専用）"
+  },
+  {
+   "k": "cfg.mmd_profile.save_failed",
+   "v": "保存に失敗しました"
+  },
+  {
+   "k": "cfg.mmd_profile.deleted",
+   "v": "physics.ini を削除しました → .pmx の変換値に戻ります"
+  },
+  {
+   "k": "cfg.mmd_profile.nothing_to_delete",
+   "v": "もともと保存はありません（いま動いているのが変換値です）"
+  },
+  {
+   "k": "cfg.mmd_profile.state_file",
+   "v": "physics.ini"
+  },
+  {
+   "k": "cfg.mmd_profile.state_unapplied",
+   "v": "physics.ini (未適用)"
+  },
+  {
+   "k": "cfg.mmd_profile.state_converted",
+   "v": "変換値"
   }
  ]
 }
