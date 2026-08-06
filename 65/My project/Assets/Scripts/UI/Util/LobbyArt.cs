@@ -79,25 +79,54 @@ namespace Sdo.UI.Util
         /// 半透明暗邊(α≈40~100 的黑)清成全透明 —— 條與條疊起來時那條暗邊就是分隔線,整張換掉的話
         /// 滑過的那一條看起來就「底跟著變了」(使用者回報:底圖不要變色,但三角形和字變黃要留著)。
         ///
-        /// 合成規則:兩張差得夠多(<see cref="HoverDiffThreshold"/>)**而且** hover 那邊不透明度 ≥ normal 才採用
-        /// hover 的像素;其餘一律保留 normal。→ 黃字/黃圖示/三角(hover 畫上去的東西)進來,
-        /// 被 hover 清掉的暗邊與任何底色微差留在 normal 那邊。
+        /// 合成規則:hover 那顆像素**本身是金黃色的**(<see cref="IsWarm"/>)、兩張差得夠多
+        /// (<see cref="HoverDiffThreshold"/>)、而且 hover 那邊不透明度 ≥ normal —— 三個都成立才採用 hover,
+        /// 其餘**一律**保留 normal。→ 只有 hover 畫上去的黃字/黃圖示/黃三角進得來;底(官方那片
+        /// 由上到下 alpha 140→40、粉紅→紫的漸層)、被 hover 清掉的暗分隔線、任何底色微差,通通留在 normal 那邊。
+        ///
+        /// 🔴 那片漸層是官方美術,**要照原樣留著**(使用者要求:滑過去只准字變色,不要另外動底層的背景色)。
+        ///    別再想「把五條的底壓成同一色」—— 試過,那是在改官方的底圖,不是在修滑過態。
         ///
         /// 任何一張載不到、尺寸對不上、或退回共用圖集(sprite 只是大圖的一小塊、像素對不起來)就直接回 normal
         /// —— 最壞情況是滑過沒有黃字,不會畫錯。
         /// </summary>
         public static Sprite AnSoloHover(string normalAn, string hoverAn)
         {
-            if (string.IsNullOrEmpty(hoverAn)) return AnSolo(normalAn);
+            if (string.IsNullOrEmpty(hoverAn)) return AnSoloRow(normalAn);
             string key = "hov:" + normalAn + "|" + hoverAn;
             if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
-            s = MergeHover(AnSolo(normalAn), AnSolo(hoverAn));
+            s = MergeHover(AnSoloRow(normalAn), AnSoloRow(hoverAn));
+            _soloCache[key] = s;
+            return s;
+        }
+
+        /// <summary>
+        /// 下拉選單那種**本來就半透明**的橫條專用的 solo crop —— 與 <see cref="AnSolo"/> 只差在
+        /// 關掉白底去背(<c>DeMatteWhite</c>)。
+        ///
+        /// 🔴 這是「滑過去底色會變」的真兇,不是 .an 圖的問題(兩張圖的底像素完全一樣):
+        ///    <c>DeMatteWhite</c> 自己偵測要不要做 —— 透明區偏亮就當成「整張在白底上合成」。normal 那張的
+        ///    透明區是 (0,0,0,α) 偵測不到;hover 那張把右緣那條暗分隔線清成 **(255,255,255,0)**(52 顆),
+        ///    於是**只有 hover 被判定要去背** → 連橫條自己那片半透明的底(α≈40~140)都被 un-composite,
+        ///    粉紫 (242,50,175) 變成深紅 (228,0,92)。滑過去底就換了顏色。
+        ///    兩態都走這條路,底才會前後一致。
+        /// </summary>
+        public static Sprite AnSoloRow(string anName)
+        {
+            if (string.IsNullOrEmpty(anName)) return null;
+            string key = "row:" + anName;
+            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
+            s = SdoExtracted.LoadAnSoloNoDemat(Dir, anName, pad: 0) ?? AnSolo(anName);
             _soloCache[key] = s;
             return s;
         }
 
         /// <summary>採用 hover 像素的門檻(R+G+B+A 四通道差的總和)。底色的取樣誤差遠低於它,黃字/三角遠高於它。</summary>
         private const int HoverDiffThreshold = 30;
+
+        /// <summary>這顆像素是不是 hover 那組金黃(官方畫的是 255,191,53)。紅夠亮、又比藍高一大截 ——
+        /// 底的粉紅/紫兩者都不成立(粉紅 249,51,168 的紅雖高,藍卻更高;紫更不用說),所以底一定進不來。</summary>
+        private static bool IsWarm(Color32 c) => c.r > 150 && c.r - c.b > 60;
 
         private static Sprite MergeHover(Sprite normal, Sprite hover)
         {
@@ -118,115 +147,10 @@ namespace Sdo.UI.Util
             {
                 Color32 a = np[i], b = hp[i];
                 int d = Mathf.Abs(a.r - b.r) + Mathf.Abs(a.g - b.g) + Mathf.Abs(a.b - b.b) + Mathf.Abs(a.a - b.a);
-                if (d > HoverDiffThreshold && b.a >= a.a) np[i] = b;
+                if (d > HoverDiffThreshold && b.a >= a.a && IsWarm(b)) np[i] = b;
             }
 
             return MakeSprite(np, nt.width, nt.height);
-        }
-
-        /// <summary>
-        /// 下拉選單條的統一底色 —— 官方那五條的底是**一整片垂直漸層**(alpha 140→40、粉紅→紫),
-        /// 五張圖只是把那片漸層切成五塊。條與條之間沒有背板,所以疊在大廳畫面上時最下面那條(「设置」)
-        /// 幾乎透光、透出背後的深色 → 看起來就像「滑過的那條底被染深了」(使用者回報:五條的底要一模一樣)。
-        ///
-        /// 「不要變暗」＝一律用最上面那條(FamilyPopMenu1)中段的底,見 <see cref="FlattenBg"/>。
-        /// </summary>
-        public static readonly Color32 PopMenuBg = new Color32(249, 51, 168, 134);
-
-        /// <summary>底色統一過的選單條(normal 態)。載不到/像素對不起來就退回 <see cref="AnSolo"/>。</summary>
-        public static Sprite AnSoloFlatBg(string anName)
-        {
-            if (string.IsNullOrEmpty(anName)) return null;
-            string key = "flat:" + anName;
-            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
-            s = FlattenBg(AnSolo(anName), PopMenuBg);
-            _soloCache[key] = s;
-            return s;
-        }
-
-        /// <summary>底色統一過的選單條(滑過態)= <see cref="AnSoloHover"/> 的黃字/黃圖示/黃三角 + 同一片底。</summary>
-        public static Sprite AnSoloHoverFlatBg(string normalAn, string hoverAn)
-        {
-            if (string.IsNullOrEmpty(hoverAn)) return AnSoloFlatBg(normalAn);
-            string key = "hovflat:" + normalAn + "|" + hoverAn;
-            if (_soloCache.TryGetValue(key, out var s) && s != null) return s;
-            s = FlattenBg(AnSoloHover(normalAn, hoverAn), PopMenuBg);
-            _soloCache[key] = s;
-            return s;
-        }
-
-        /// <summary>取樣底色的水平範圍:左邊界內側。五條的圖示最早都從 x=6 才開始有柔邊,x≤5 一定是純底。</summary>
-        private const int BgProbeX0 = 0, BgProbeX1 = 5;
-
-        /// <summary>
-        /// 把一條選單圖的底換成 <paramref name="target"/> —— 逐列先量出這一列**自己的**底色
-        /// (左邊界內側幾個像素的中位數),再把整列重新混一次。
-        ///
-        /// 逐列量而不是整張取一個值:官方那片漸層在**一條之內**也還在變(alpha 140→125),
-        /// 整張取一個值的話換不乾淨、條的上下緣會留下一圈舊色。
-        ///
-        /// 換底的算式:這些圖是美術**在底上**畫字/圖示畫出來的,所以每個像素都是「前景 × 舊底」的混色,
-        /// 混多少可以從 alpha 反推 —— k = (a − 底a) ⁄ (255 − 底a) 就是前景的覆蓋率。於是
-        ///   rgb' = rgb + (1 − k)(新底rgb − 舊底rgb)、a' = k·255 + (1 − k)·新底a
-        /// 純底(k=0)正好變成 target,字/圖示的實心部分(k=1)原封不動,抗鋸齒柔邊照覆蓋率跟著搬家。
-        /// 🔴 不要退回「只把接近底色的像素換成 target」那種寫法:柔邊會留著舊底色,深紫那幾條的字
-        ///    就整圈鑲一層紫暈(改這裡之前的樣子)。
-        ///
-        /// alpha **比底還低**的像素不動 —— 那是右緣那條半透明暗分隔線(把底挖暗,不是畫在底上),
-        /// 而且五條的分隔線本來就同色,不必也不能拿覆蓋率去推它。
-        ///
-        /// 像素對不起來(sprite 只是共用圖集的一小塊)或貼圖不可讀就原樣回傳 —— 最壞情況是底照舊漸層,不會畫錯。
-        /// </summary>
-        private static Sprite FlattenBg(Sprite src, Color32 target)
-        {
-            if (src == null) return null;
-            var t = src.texture;
-            if (t == null) return src;
-            if (src.rect.width != t.width || src.rect.height != t.height) return src;
-
-            Color32[] px;
-            try { px = t.GetPixels32(); } catch { return src; }
-
-            int w = t.width, h = t.height;
-            for (int y = 0; y < h; y++)
-            {
-                Color32 bg = RowMedian(px, w, y, BgProbeX0, BgProbeX1);
-                float span = Mathf.Max(255f - bg.a, 1f);
-                int row = y * w;
-                for (int x = 0; x < w; x++)
-                {
-                    Color32 c = px[row + x];
-                    if (c.a < bg.a) continue;   // 分隔線那種「把底挖暗」的像素,不是畫在底上的東西
-                    float k = Mathf.Clamp01((c.a - bg.a) / span);
-                    float inv = 1f - k;
-                    px[row + x] = new Color32(
-                        Mix(c.r, inv * (target.r - bg.r)),
-                        Mix(c.g, inv * (target.g - bg.g)),
-                        Mix(c.b, inv * (target.b - bg.b)),
-                        (byte)Mathf.Clamp(Mathf.RoundToInt(k * 255f + inv * target.a), 0, 255));
-                }
-            }
-            return MakeSprite(px, w, h);
-        }
-
-        private static byte Mix(byte channel, float delta)
-            => (byte)Mathf.Clamp(Mathf.RoundToInt(channel + delta), 0, 255);
-
-        /// <summary>某一列 x∈[x0,x1] 的**逐通道**中位數。中位數而不是平均:碰到一兩顆雜訊像素也不會把底色帶偏。</summary>
-        private static Color32 RowMedian(Color32[] px, int w, int y, int x0, int x1)
-        {
-            x0 = Mathf.Clamp(x0, 0, w - 1);
-            x1 = Mathf.Clamp(x1, x0, w - 1);
-            int n = x1 - x0 + 1;
-            var r = new byte[n]; var g = new byte[n]; var b = new byte[n]; var a = new byte[n];
-            for (int i = 0; i < n; i++)
-            {
-                Color32 c = px[y * w + x0 + i];
-                r[i] = c.r; g[i] = c.g; b[i] = c.b; a[i] = c.a;
-            }
-            System.Array.Sort(r); System.Array.Sort(g); System.Array.Sort(b); System.Array.Sort(a);
-            int m = n / 2;
-            return new Color32(r[m], g[m], b[m], a[m]);
         }
 
         /// <summary>把一整張 RGBA32 像素做成 1:1 的 sprite(pad 0、FullRect、可讀)—— 合成出來的圖共用這條路。</summary>

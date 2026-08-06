@@ -376,6 +376,21 @@ namespace Sdo.Game
         public static Sprite LoadAnSolo(string folder, string anName, int pad = 2)
             => LoadAnSoloImpl(folder, anName, pad, circular: false);
 
+        /// <summary>As <see cref="LoadAnSolo"/> but with the white-matte removal **switched off**.
+        ///
+        /// <see cref="DeMatteWhite"/> auto-detects its own trigger: if the crop's fully-transparent texels are light on
+        /// average it assumes the WHOLE sprite was composited over white and un-composites every mid-alpha texel. That
+        /// guess misfires on art whose transparent region is white **for a different reason** — the lobby pop-menu rows
+        /// are the case that bit us: the hover frame clears the row's right-hand divider to (255,255,255,0) (52 texels),
+        /// so hover is detected as white-matted while the otherwise identical normal frame is not. The row's own
+        /// semi-transparent background (α≈40..140) then gets un-composited on hover only → 粉紫 (242,50,175) 變深紅
+        /// (228,0,92)，畫面上就是「滑過去那一條的底色跟著變了」(使用者連續回報兩次)。
+        ///
+        /// Use this for art that is genuinely semi-transparent on purpose (a tinted panel/row), where "light transparent
+        /// texels" is not evidence of a white matte. Everything else on <see cref="LoadAnSolo"/> keeps the auto-detect.</summary>
+        public static Sprite LoadAnSoloNoDemat(string folder, string anName, int pad = 0)
+            => LoadAnSoloImpl(folder, anName, pad, circular: false, demat: false);
+
         /// <summary>As <see cref="LoadAnSolo"/> but for ROUND buttons (the shop's ♂/♀/reset/cart orbs): after de-matting,
         /// flood the orb colour across the WHOLE transparent region (not just a 1px ring) and multiply alpha by a soft
         /// inscribed-circle mask centred on the opaque disc. The orbs are authored composited on WHITE, so a ring of
@@ -427,7 +442,8 @@ namespace Sdo.Game
         /// 128 is safe: the α≥128 region of the button crops is a single stable contour (barely moves over α 110-150).</summary>
         private const byte SolidAlphaThreshold = 128;
 
-        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false, bool smoothDisc = false)
+        private static Sprite LoadAnSoloImpl(string folder, string anName, int pad, bool circular, bool mip = false,
+                                             bool smoothDisc = false, bool demat = true)
         {
             var anPath = Path.Combine(folder, anName.EndsWith(".an", System.StringComparison.OrdinalIgnoreCase) ? anName : anName + ".an");
             if (!VfsFile.Exists(anPath)) return null;
@@ -450,7 +466,9 @@ namespace Sdo.Game
             // DeMatteWhite BEFORE AlphaBleed: DeMatteWhite auto-detects a white/light matte from the still-untouched
             // transparent region (光球鈕的透明區是白/淺 → 整顆在白底上合成 → mid-alpha 邊是「帶色的白暈」). AlphaBleed 之後
             // 透明區被填成不透明色,偵測就失效了。順序:先 demat 邊,再把 (demated) 邊色 dilate 進透明 pad。
-            DeMatteWhite(outTex);    // un-composite the white matte on the crop's own AA edges (kills the light halo)
+            // demat:false = 這張圖**本來就**是半透明的（大廳下拉選單那種帶色的橫條），
+            // 「透明區偏亮」不能拿來當白底 matte 的證據 —— 見 LoadAnSoloNoDemat。
+            if (demat) DeMatteWhite(outTex);    // un-composite the white matte on the crop's own AA edges (kills the light halo)
             if (smoothDisc)
             {
                 // Big staircase disc: flood first (so the rim band never samples the matte, and the mip chain has no

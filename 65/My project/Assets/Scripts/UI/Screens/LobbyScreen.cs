@@ -470,8 +470,8 @@ namespace Sdo.UI.Screens
         /// <summary>放大鏡那顆的五個項目({normal, hover})。
         /// 滑過那張**不直接用**,是與 normal 合成的(見 <see cref="LobbyArt.AnSoloHover"/>):只取黃字/黃圖示/三角,
         /// 底不動 —— 使用者要求「底圖不要變色,但三角形和字變黃還是要有」。
-        /// 兩態的底再一起壓成同一片粉紫(<see cref="LobbyArt.AnSoloFlatBg"/>):官方五張切的是**一整片垂直漸層**,
-        /// 照原樣疊起來最後一條會透到發黑,看起來就像那條被選中染深了(見 <see cref="LobbyArt.PopMenuBg"/>)。
+        /// 🔴 官方五張切的是**一整片垂直漸層**(alpha 140→40、粉紅→紫),那是美術本來的樣子、要照原樣留著;
+        ///    「把五條的底壓成同一色」試過一次,那是在改底圖不是在修滑過態 —— 不要再走那條路。
         /// 只有「设置」接得上東西(與房間同一個 OptionDlg);其餘四項是官方有、這裡還沒做的功能 → 按了只收選單。</summary>
         private static readonly string[,] HallMenuItems =
         {
@@ -549,16 +549,15 @@ namespace Sdo.UI.Screens
         /// 官方 PopMenu 的共用建構:一疊 135×26 的項目圖,**沒有背板**(XML 寫 background="empty.an")——
         /// 畫面上那片「整片粉色選單框」其實就是這些條無縫疊起來的效果。
         ///
-        /// 🔴 走 <see cref="LobbyArt.AnSolo"/> 而**不是** AnSoloAA:AnSoloAA 會把外圈的透明/低 alpha 邊裁掉
+        /// 🔴 走 <see cref="LobbyArt.AnSoloRow"/> 而**不是** AnSoloAA:AnSoloAA 會把外圈的透明/低 alpha 邊裁掉
         ///    → 每條變窄一點,疊起來就出現一條條裂縫、整體還會位移(使用者回報「沒把官方底圖做出來」)。
-        ///    AnSolo 是 pad:0 的自貼圖裁切,尺寸與原圖完全一致 → 條與條才接得起來。
+        ///    AnSoloRow 是 pad:0 的自貼圖裁切,尺寸與原圖完全一致 → 條與條才接得起來;它同時關掉白底去背
+        ///    —— 那是「滑過去底色會變」的真兇,理由寫在 <see cref="LobbyArt.AnSoloRow"/>。
         ///
         /// 滑過態不是官方那張 hover 圖,而是 <see cref="LobbyArt.AnSoloHover"/> 合出來的
-        /// 「normal 的底 + hover 的黃字/黃圖示/三角」。pushed 也用它:滑鼠一定在項目上,按下去再閃回白字很跳。
-        ///
-        /// 兩態最後都再過一次 <see cref="LobbyArt.AnSoloFlatBg"/>:官方五張切自一整片垂直漸層(alpha 140→40、
-        /// 粉紅→紫),沒有背板擋著就會透出背後的大廳畫面 —— 最下面那條深到像是「被選中變色」。壓成同一片底之後
-        /// 五條長得一模一樣,滑過只剩字/圖示/三角變黃。
+        /// 「normal 的底 + hover 的黃字/黃圖示/三角」——**只有金黃色的像素進得來**,底(官方那片
+        /// alpha 140→40、粉紅→紫的垂直漸層)一個像素都不會被動到。pushed 也用它:滑鼠一定在項目上,
+        /// 按下去再閃回白字很跳。
         /// </summary>
         private RectTransform BuildPopMenu(string name, string[,] items, System.Action<int> onPick)
         {
@@ -569,8 +568,8 @@ namespace Sdo.UI.Screens
 
             for (int i = 0; i < rows; i++)
             {
-                var art = LobbyArt.AnSoloFlatBg(items[i, 0]);
-                var hov = LobbyArt.AnSoloHoverFlatBg(items[i, 0], items[i, 1]);
+                var art = LobbyArt.AnSoloRow(items[i, 0]);
+                var hov = LobbyArt.AnSoloHover(items[i, 0], items[i, 1]);
                 var b = UIKit.AddSpriteButton(menu, name + i, art, hov, hov,
                                               HallMenuItemX, HallMenuRow0Y + i * HallMenuRowStep);
                 UiHoverSfx.Attach(b, UiSfx.Menufloat);
