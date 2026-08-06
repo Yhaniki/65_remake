@@ -112,5 +112,16 @@ namespace Sdo.Game
         public static readonly float[] HeadSlotX = { 63f, 184f, 306f, 430f, 549f, 675f };
         public const float HeadSlotY = 56f;
         public const float HeadSlotW = 96f, HeadSlotH = 76f;
+
+        // ---- 名牌(官方 AvatarName0..5,背景是 Team.an)----
+        // 🔴 名牌跟頭貼格**不同心**:名牌是 108 寬、左緣還比頭貼格再往左 11px(第 0 格 52 vs 63)
+        //    → 中心差 5px。任何「跟名牌一起看的橫向元件」(傳檔跑條、名字)都要對名牌算,
+        //    拿 HeadSlotX/HeadSlotW 去擺就會整條往右偏,看起來像歪一邊。
+        public static readonly float[] NamePlateX = { 52f, 172f, 293f, 418f, 539f, 662f };
+        public const float NamePlateW = 108f;
+
+        /// <summary>上傳/下載跑條的左緣 x:寬 <paramref name="barW"/> 的條**置中**在該格名牌上。</summary>
+        public static float TransferBarX(int slot, float barW)
+            => NamePlateX[slot] + (NamePlateW - barW) * 0.5f;
     }
 }

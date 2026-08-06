@@ -275,8 +275,9 @@ namespace Sdo.UI.Screens
         // 這裡是**拉伸**(非等比)填滿到 30 高,不是照原尺寸畫 —— 使用者要四張的高寬完全一樣,
         // 寧可那張字被拉高 3px(約 11%),也不要一張比另三張矮一截。
         private const float BadgeW = 100f, BadgeH = 30f;
-        // 跑條夾在頭貼下緣(132)與名牌(141)之間那條縫。
+        // 跑條夾在頭貼下緣(132)與名牌(141)之間那條縫;寬度=名牌寬(跟名牌對齊成一組,見 RoomLayout.TransferBarX)。
         private const float BarY = 134f, BarH = 4f;
+        private const float BarW = RoomLayout.NamePlateW;
         // 上傳/下載用顏色區分(使用者要求不要字):上傳偏藍、下載偏綠。
         // 藍色取自官方房主徽章第四幀 b09 的外框(0,53,165)那一系 —— 同一套素材的藍。
         private static readonly Color BarUpColor = new Color(0.42f, 0.66f, 1f, 1f);
@@ -395,7 +396,7 @@ namespace Sdo.UI.Screens
             float[] sx = RoomLayout.HeadSlotX;
             // close-cover coords (DDRROOM close0..5) + name-plate coords (AvatarName0..5) + master badge (master0..5)
             float[] closeX = { 68, 188, 309, 431, 556, 678 };
-            float[] nameX = { 52, 172, 293, 418, 539, 662 };
+            float[] nameX = RoomLayout.NamePlateX;
             float[] masterX = { 54, 176, 298, 421, 544, 666 };
             float[] readyX = { 53, 175, 298, 419, 542, 665 };   // DDRROOM charready0..5（與 master 差 1px，照官方）
 
@@ -427,7 +428,7 @@ namespace Sdo.UI.Screens
                 // 🔴 欄寬要用官方 AvatarName 的 108(不是頭貼格的 96),y 也要加上 Win1.y ——
                 //    名字是**置中**排版,量錯寬度/少加一格就會偏:96 寬時字的中心在 x+48、名牌條中心在 x+53.5,
                 //    在名牌沒畫出來的年代看不出來,現在選了隊、彩色條一畫上去,白字就明顯偏左又高 1px。
-                Place(_slotName[i].rectTransform, nameX[i] + Win1.x, Win1.y + 141, 108, 18);
+                Place(_slotName[i].rectTransform, nameX[i] + Win1.x, Win1.y + 141, RoomLayout.NamePlateW, 18);
                 _slotName[i].gameObject.SetActive(false);
 
                 // 狀態徽章:與 HOST / READY **同一條**、同一個 x(readyX)—— 四張互斥,由 RenderSeatBadges
@@ -446,8 +447,11 @@ namespace Sdo.UI.Screens
 
                 // 上傳/下載的跑條:頭貼下緣與名牌之間那條縫(y=134..138)。
                 // 刻意不烘圖也不寫百分比 —— 使用者要的就是一條會跑的條。
+                // 🔴 x/寬要對**名牌**算(RoomLayout.TransferBarX),不是頭貼格:名牌比頭貼格寬 12px、
+                //    左緣又往左 11px,拿 HeadSlotX/HeadSlotW 擺的話條的中心會比名牌右 5px → 看起來歪一邊。
                 _slotBarTrack[i] = UIKit.AddImage(_win1Root, "Bar" + i, new Color(0f, 0f, 0f, 0.55f));
-                Place(_slotBarTrack[i].rectTransform, sx[i] + Win1.x, BarY, RoomLayout.HeadSlotW, BarH);
+                Place(_slotBarTrack[i].rectTransform,
+                      RoomLayout.TransferBarX(i, BarW) + Win1.x, BarY, BarW, BarH);
                 _slotBarFill[i] = UIKit.AddImage(_slotBarTrack[i].rectTransform, "Fill", Color.white);
                 var fr = _slotBarFill[i].rectTransform;
                 fr.anchorMin = new Vector2(0f, 0f);
@@ -4799,7 +4803,7 @@ namespace Sdo.UI.Screens
             if (!show) return;
             _slotBarFill[i].color = uploading ? BarUpColor : BarDownColor;
             _slotBarFill[i].rectTransform.sizeDelta =
-                new Vector2(RoomLayout.HeadSlotW * Mathf.Clamp01(frac), 0f);
+                new Vector2(BarW * Mathf.Clamp01(frac), 0f);
         }
 
         // 房間 3D 裡「其他玩家」的角色。只在 server 的 rev 變動時重建 —— 生一隻 avatar 要讀十幾個部件檔,
