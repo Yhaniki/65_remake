@@ -144,8 +144,10 @@ namespace Sdo.Osu
             if (string.Equals(fileName, SongSidecar.FileName, StringComparison.OrdinalIgnoreCase)) return true;
             if (string.Equals(fileName, SongSidecar.LegacyFileName, StringComparison.OrdinalIgnoreCase)) return true;
             string n = fileName.ToLowerInvariant();
+            // 舞蹈那一半的判定住在 SongSidecar —— 命名規則是它的 DpsFileName 定的,而「哪些 .dps 是我們生的」
+            // 也決定了 #DPS 手寫指向客製舞時不該被覆寫(見 SongSidecar.IsGeneratedDpsName)。
             return n == "cd.png" || n.StartsWith("cd_", StringComparison.Ordinal)
-                || n == "dance.dps" || n.StartsWith("dance_", StringComparison.Ordinal);
+                || SongSidecar.IsGeneratedDpsName(n);
         }
 
         // ---- 小工具(不用 System.IO.Path —— 那會跟著平台的分隔符,而我們處理的是 wire 上的路徑) ----
