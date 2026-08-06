@@ -101,9 +101,14 @@ namespace Sdo.UI.Services
         public void SetSong(string title)
         {
             // 線上選歌要送完整的 NetSongRef(packId / 譜面路徑…),不是只有標題。
-            // 這條路徑留給離線;線上請走 Ctx.Net.SetSong(NetSongRef)。
-            Debug.LogWarning("[net] OnlineRoomService.SetSong(string) 不適用於連線模式 —— " +
-                             "請用 Ctx.Net.SetSong(NetSongRef)");
+            // 這條路徑留給離線;線上請走 Ctx.Net.SetSong(NetSongRef) —— 呼叫端一律接
+            // NetSongPublisher.Publish(Ctx),那才是真正發給 server 的那一步。
+            //
+            // ⚠️ 不要把這行升回 Debug.LogWarning:選歌/進房間走的是離線線上共用的
+            // IRoomService,所以「連線時經過這裡」是正常流程而不是錯誤,而這裡分辨不出
+            // 呼叫端有沒有補 Publish —— 升成警告只會讓每次選歌都吐一行紅字的假警報。
+            Sdo.Game.SdoLog.Note("net", "OnlineRoomService.SetSong(\"" + title + "\") 在連線模式是空的 —— " +
+                                        "真正送給 server 的是 NetSongPublisher.Publish / Ctx.Net.SetSong(NetSongRef)");
         }
 
         public void SetMode(GameMode mode)
