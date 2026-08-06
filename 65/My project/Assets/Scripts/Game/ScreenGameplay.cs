@@ -2661,8 +2661,8 @@ namespace Sdo.Game
             }
             // per-lane click-flash overlays (notes_board_click{c+1}): above the board (-30), behind the receptors
             // (0) + notes (5). Native 1:1 like the board so the 67px strip sits in its 69px lane (1px margin).
-            // Clipped by the NoteClip mask like the notes: the strip art starts at the board surface (y12) which is
-            // BEHIND the HP bar (y18..29) — the glow must stop at the judge area and never light the HP bar row.
+            // Clipped by the NoteClip mask like the notes (safety net only — the band now starts at the judgment cell's
+            // top frame y36, well clear of the HP bar row at y18..29, so the mask no longer cuts into the strip).
             for (int c = 0; c < Keys; c++)
             {
                 _clickFlashStart[c] = -1f;
@@ -2671,9 +2671,9 @@ namespace Sdo.Game
                 fsr.color = new Color(1f, 1f, 1f, 0f); fsr.enabled = false;
                 fsr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
                 fsr.sharedMaterial = new Material(Shader.Find("Sprites/Default"));   // own material: masked sprites must not batch (texture cross-bleed)
-                // 向上: the strip emanates DOWN from the top board surface (y12). 向下: flipY so it emanates UP from the
-                // bottom receptors instead — an exact mirror. Either way it spans the whole play band, so the 558-tall
-                // art is stretched ~5.4% (see NotePanelLayout.ClickStripBand).
+                // 向上: the strip emanates DOWN from the judgment cell's top frame line (y36) and runs to the board bottom.
+                // 向下: flipY so it emanates UP from the bottom receptors instead — an exact mirror. 帶長 564 vs 貼圖 558
+                // → 拉伸 1.1%（見 NotePanelLayout.ClickStripBand：亮端貼框線、淡端補到板底）。
                 float stripW = fsr.sprite != null ? fsr.sprite.bounds.size.x : 0f;
                 _panelLayout.ClickStripBand(out float stripTop, out float stripBottom);
                 fsr.flipY = _scrollSign < 0;

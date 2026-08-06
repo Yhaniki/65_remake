@@ -46,9 +46,15 @@ namespace Sdo.Game
         /// <summary>Hidden strip (design px) at the receptor/frame end of the play band: notes are masked out here so
         /// they slip behind the chamfered board frame + HP bar rather than poking past the top of the board.</summary>
         public const float ClipMargin = 30f;
-        /// <summary>Board-surface start (design px) for the lane click-flash strip: notes_board1's texture rows 0..11 are
-        /// the transparent chamfer above the play surface, so the official 向上 art starts the glow at y12.</summary>
-        public const float ClickStripTopMargin = 12f;
+        /// <summary>受擊端邊界(design px)給軌條光用：**判定區格子的上邊框那條線**。NOTES_BOARD1 的板面雖然從 y12
+        /// 起(0..11 是缺角)，但 y12..34 那一段是血條佔的黑帶，判定區的四個圓角格子是從 y36 才開始
+        /// （量測：36..38 有一條橫框線，下邊框在 y99；格子中心 67 ≈ judgeLineY 70）。
+        /// 光條從 y12 起會讓它的上緣**凸在判定格上框之上**——而且 NoteClip 帶([30,600])會把它硬切在 y30，
+        /// 那 6px 是滿亮的一條硬邊橫跨在框線外，實機一眼就看得出沒對齊。改成 36 = 貼齊判定區上邊緣。</summary>
+        public const float ClickStripTopMargin = 36f;
+        /// <summary>NOTES_BOARD_CLICK{1..4}.PNG 原生高(design px)。帶子是 600−36 = 564，所以呼叫端把它拉伸
+        /// 1.1%（舊的 12 起點要拉 5.4%）—— 落在一條平滑漸層上，看不出來。</summary>
+        public const float ClickStripArtHeight = 558f;
 
         /// <summary>Design-px added to EVERY panel-relative X (board / receptors / notes / HP bar / score / combo).
         /// 0 = 屏幕左邊, +242.5 = 屏幕中央.</summary>
@@ -81,15 +87,17 @@ namespace Sdo.Game
 
         /// <summary>Vertical band (design-Y) covered by the per-lane click-flash glow strip (NOTES_BOARD_CLICK{1..4},
         /// 67×558) and the track-wide MISS wash that reuses the same art. The strip's BRIGHT end is the one at the
-        /// receptors; the art fades out toward the far end. The band runs from the board SURFACE (the chamfered frame
-        /// end, <see cref="ClickStripTopMargin"/>) to the opposite board edge, so the glow always spans the full play
-        /// band and 向上/向下 are exact mirrors of each other: 向上 [12, 600] ↔ 向下 [0, 588].
-        /// <para>The shipped art is 558 tall — 30px short of that band — so the caller stretches it ~5.4% vertically.
-        /// Drawing it 1:1 instead (the official 向上 placement, [12, 570]) leaves 30px of unlit board at the far end:
-        /// harmless 向上 (it lands at the very bottom of the screen behind the frame + LV/時間 row) but glaring 向下,
-        /// where mirroring puts that gap at the TOP of the board, right where the notes come in. The stretch is applied
-        /// to BOTH directions so they stay mirrors; it falls on a smooth gradient whose far end is already at alpha
-        /// 27/255, so it is invisible.</para></summary>
+        /// receptors; the art fades out toward the far end. 兩端各自釘在該釘的地方：
+        /// <list type="bullet">
+        ///   <item><b>亮端</b>貼齊**判定區格子的邊框線** (<see cref="ClickStripTopMargin"/> = 36)。從板面起點 12 起會
+        ///         凸在判定框之外，而且 NoteClip 帶([30,600])會把它硬切成一條滿亮的橫邊 —— 使用者實機回報的
+        ///         「打擊時綠色/粉紅的軌道線比判定區的線高、凸出來」就是這個。</item>
+        ///   <item><b>淡端</b>補到板子的另一頭，不留一段沒有光的板面。</item>
+        /// </list>
+        /// 向上 [36, 600] ↔ 向下 [0, 564]，兩個方向是彼此的鏡射(繞 y300)。
+        /// <para>帶長 564 比貼圖的 <see cref="ClickStripArtHeight"/> 558 多 6px，呼叫端據此拉伸 1.1%
+        /// （舊的 12 起點要拉 5.4%）。兩個方向拉一樣多，所以漸層看起來一致；而且它落在一條平滑漸層、
+        /// 遠端 alpha 只剩 27/255 的尾巴上，看不出來。</para></summary>
         /// <param name="topY">Top edge (smaller design-Y) of the band.</param>
         /// <param name="bottomY">Bottom edge (larger design-Y) of the band.</param>
         public void ClickStripBand(out float topY, out float bottomY)

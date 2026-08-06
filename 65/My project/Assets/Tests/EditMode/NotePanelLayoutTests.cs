@@ -80,58 +80,61 @@ namespace Sdo.Tests
         private const float ShippedStripH = 558f;   // notes_board_click{1..4}.png native height
 
         [Test]
-        public void ClickStrip_Up_Spans_Board_Surface_To_Board_Bottom()   // 向上: [12, 600]
+        public void ClickStrip_Runs_From_The_Judgment_Cell_Frame_To_The_Board_Bottom()   // 向上: [36, 600]
         {
             NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true)
                            .ClickStripBand(out float top, out float bottom);
-            Assert.AreEqual(NotePanelLayout.ClickStripTopMargin, top, 1e-4f);   // 亮端＝板面起點 12(缺角以下)
-            Assert.AreEqual(NotePanelLayout.BoardHeight, bottom, 1e-4f);        // 淡端補到板底，不留空白
+            Assert.AreEqual(NotePanelLayout.ClickStripTopMargin, top, 1e-4f);   // 亮端＝判定區格子的上邊框 36
+            Assert.AreEqual(NotePanelLayout.BoardHeight, bottom, 1e-4f);        // 淡端補到板底，不留一段沒有光的板面
         }
 
         [Test]
-        public void ClickStrip_Down_Is_The_Exact_Mirror_Of_Up()   // 向下: [0, 588]
+        public void ClickStrip_Down_Is_The_Exact_Mirror_Of_Up()   // 向下: [0, 564]
         {
             NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true).ClickStripBand(out float ut, out float ub);
             NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: false).ClickStripBand(out float dt, out float db);
             Assert.AreEqual(NotePanelLayout.BoardHeight - ub, dt, 1e-4f);   // 600−600 = 0：淡端貼齊板頂
-            Assert.AreEqual(NotePanelLayout.BoardHeight - ut, db, 1e-4f);   // 600−12 = 588：亮端跟著受擊線翻到板底
+            Assert.AreEqual(NotePanelLayout.BoardHeight - ut, db, 1e-4f);   // 600−36 = 564：亮端跟著受擊線翻到板底
             Assert.AreEqual(ub - ut, db - dt, 1e-4f);                       // 長度相同 → 兩邊拉伸量一致
         }
 
         [Test]
-        public void ClickStrip_Covers_The_Whole_Play_Band_In_Both_Directions()
+        public void ClickStrip_Stretch_Is_Tiny_And_Equal_In_Both_Directions()
         {
-            // 這是這次修的重點：貼圖只有 558，比板矮 30px。1:1 畫會在遠端留一段沒有光的板面
-            // ——向上時它在板底(螢幕最下緣、被框跟 LV/時間吃掉，看不見)，向下鏡射過來就正對音符進場處。
-            // 兩個方向都補滿，呼叫端據此把貼圖拉伸。
-            foreach (var drop in new[] { NoteDropDirection.Up, NoteDropDirection.Down })
-            {
-                NotePanelLayout.Resolve(drop, panelLeft: true).ClickStripBand(out float top, out float bottom);
-                Assert.Greater(bottom - top, ShippedStripH, drop + "：帶子要比貼圖長(才需要拉伸補滿)");
-                Assert.AreEqual(NotePanelLayout.BoardHeight - NotePanelLayout.ClickStripTopMargin, bottom - top, 1e-4f, drop.ToString());
-            }
-        }
-
-        [Test]
-        public void ClickStrip_Stretch_Is_Small_And_Equal_In_Both_Directions()
-        {
+            // 帶子(564)比貼圖(558)長 6px，呼叫端拉伸 1.1% 去補滿板子。舊版從板面 12 起算要拉 5.4%，
+            // 亮端還因此凸到判定格上框之外(被 NoteClip 帶硬切出一條亮邊)——實機一眼看得出沒對齊。
             NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true).ClickStripBand(out float ut, out float ub);
             NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true).ClickStripBand(out float dt, out float db);
             float upStretch = (ub - ut) / ShippedStripH, downStretch = (db - dt) / ShippedStripH;
             Assert.AreEqual(upStretch, downStretch, 1e-4f, "兩邊拉伸量必須一樣，否則向上/向下的漸層看起來不同");
-            Assert.Less(upStretch, 1.10f, "拉伸幅度要小(≈5%)，否則漸層會看得出被抻開");
-            Assert.Greater(upStretch, 1f);
+            Assert.Greater(upStretch, 1f, "帶子要比貼圖長(才補得滿板底)");
+            Assert.Less(upStretch, 1.02f, "拉伸幅度要 ≤2%(舊的 12 起點是 5.4%)");
         }
 
         [Test]
-        public void ClickStrip_Bright_End_Sits_Beyond_The_Judge_Line_By_The_Same_Margin()
+        public void ClickStrip_Bright_End_Aligns_With_The_Judgment_Cell_Frame_In_Both_Directions()
         {
-            // 兩個方向的亮端都超出受擊線同樣距離(58px)，被血條蓋住——這是「有沒有跟著顛倒」的判準。
+            // 亮端到受擊線的距離，兩個方向必須一樣(＝有跟著顛倒)；而且那個距離就是判定格上框到格心的 34px，
+            // 也就是「光條上緣貼齊判定區的線」這件事的數值版。
             var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
             var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
             up.ClickStripBand(out float ut, out _);
             down.ClickStripBand(out _, out float db);
             Assert.AreEqual(up.JudgeLineY - ut, db - down.JudgeLineY, 1e-4f);
+            Assert.AreEqual(up.JudgeLineY - NotePanelLayout.ClickStripTopMargin, up.JudgeLineY - ut, 1e-4f);
+        }
+
+        [Test]
+        public void ClickStrip_Bright_End_Clears_The_Note_Clip_Band()
+        {
+            // NoteClip 帶([30,600] / [0,570])不能切到軌條光——被切到就會在判定框外留一條滿亮的硬邊。
+            foreach (var drop in new[] { NoteDropDirection.Up, NoteDropDirection.Down, NoteDropDirection.Tilt })
+            {
+                var l = NotePanelLayout.Resolve(drop, panelLeft: true);
+                l.ClickStripBand(out float top, out float bottom);
+                Assert.GreaterOrEqual(top, l.ClipTopY, drop + "：亮/淡端不可落在 clip 帶之外");
+                Assert.LessOrEqual(bottom, l.ClipBottomY, drop.ToString());
+            }
         }
 
         [Test]
