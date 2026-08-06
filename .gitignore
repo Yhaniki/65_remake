@@ -222,3 +222,7 @@ tools/sd*/*.exp
 tools/sd*/*.lib
 tools/sd*/*.exe
 tools/sd*/*.pdb
+
+# Frida hook 錄官方頭貼取景/mot 的逐次紀錄(每跑一次一組,不進版控)
+/avtshow_online_log_*.jsonl
+/avtshow_online_log_*.txt
