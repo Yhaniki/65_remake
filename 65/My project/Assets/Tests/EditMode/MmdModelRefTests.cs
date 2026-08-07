@@ -58,6 +58,71 @@ namespace Sdo.Tests
             Assert.IsFalse(Pack.Contains("|"));
         }
 
+        // ---------------------------------------------------------------- 第三段:他把模型調到多大
+        [Test]
+        public void Scale_RoundTrips_AsTheThirdSegment()
+        {
+            // 大小推不出來,只能由穿的人宣告 —— 少了它,他在別人畫面上是另一個尺寸,而且別人那邊
+            // 他頭上的名字會插進他頭裡(名字高度是照畫出來的身高算的,見 MmdHeadroom)。
+            string r = MmdModelRef.Join(Pack, "miku.pmx", 1.4f);
+            Assert.AreEqual(Pack, MmdModelRef.PackOf(r));
+            Assert.AreEqual("miku.pmx", MmdModelRef.FileOf(r), "第三段不可以被吃進檔名那一段");
+            Assert.AreEqual(1.4f, MmdModelRef.ScaleOf(r), 1e-3f);
+        }
+
+        [Test]
+        public void Scale_SurvivesEvenWithoutAFileName()
+        {
+            // 一包只有一個模型(不必說是哪一個)但有調大小 —— 中段留空,'|' 的位置才對得上。
+            string r = MmdModelRef.Join(Pack, "", 0.75f);
+            Assert.AreEqual(Pack, MmdModelRef.PackOf(r));
+            Assert.AreEqual("", MmdModelRef.FileOf(r));
+            Assert.AreEqual(0.75f, MmdModelRef.ScaleOf(r), 1e-3f);
+        }
+
+        [Test]
+        public void OneX_IsNotWrittenOut_SoTheOldTwoPartFormatIsByteForByteTheSame()
+        {
+            // 絕大多數人沒調過大小。多寫一段 = 每個人的外觀字串都變了 → 「他的外觀變了嗎」全場誤判成變了
+            // (每個收端重建一次角色,要讀十幾個部件檔)。
+            Assert.AreEqual(MmdModelRef.Join(Pack, "miku.pmx"), MmdModelRef.Join(Pack, "miku.pmx", 1f));
+            Assert.AreEqual(Pack + "|miku.pmx", MmdModelRef.Join(Pack, "miku.pmx", 1f));
+            Assert.AreEqual(Pack, MmdModelRef.Join(Pack, "", 1f));
+        }
+
+        [Test]
+        public void AnOldRefWithoutAScale_MeansNoScaling()
+        {
+            // 舊 client 只送 packId(|檔名)。那不是壞資料,是「他沒說」→ 只做自動對齊身高。
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(Pack), 1e-6f);
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(Pack + "|miku.pmx"), 1e-6f);
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(""), 1e-6f);
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(null), 1e-6f);
+        }
+
+        [Test]
+        public void AHostileScale_IsClampedNotObeyed()
+        {
+            // 別人送來的數字。0/負數/看不懂 = 「他沒說」→ 1×;太大太小夾回可用範圍
+            // (夾成下限的話,一個亂填的 0 會讓他在每個人畫面上縮成一個點)。
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(Pack + "|m.pmx|0"), 1e-6f);
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(Pack + "|m.pmx|-4"), 1e-6f);
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(Pack + "|m.pmx|NaN"), 1e-6f);
+            Assert.AreEqual(1f, MmdModelRef.ScaleOf(Pack + "|m.pmx|big"), 1e-6f);
+            Assert.AreEqual(MmdModelRef.MaxScale, MmdModelRef.ScaleOf(Pack + "|m.pmx|9999"), 1e-6f);
+            Assert.AreEqual(MmdModelRef.MinScale, MmdModelRef.ScaleOf(Pack + "|m.pmx|0.001"), 1e-6f);
+            // 送出端也一樣夾:自己的 config.ini 被手改成離譜的值時,別人看到的仍然是個人。
+            Assert.AreEqual(MmdModelRef.MaxScale, MmdModelRef.ScaleOf(MmdModelRef.Join(Pack, "m.pmx", 500f)), 1e-3f);
+        }
+
+        [Test]
+        public void ScaleIsWrittenCultureInvariantly()
+        {
+            // 小數點在某些地區設定下會變成 ',' —— 那個字串到了對面就解不出來(而且不會有任何錯誤訊息,
+            // 只是每個人的模型都回到 1×)。
+            StringAssert.Contains("1.25", MmdModelRef.Join(Pack, "m.pmx", 1.25f));
+        }
+
         // ---------------------------------------------------------------- 收端會拿它去 Combine 真實路徑
         [Test]
         public void IsSafeFile_RefusesPathTraversal()

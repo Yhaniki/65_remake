@@ -274,7 +274,10 @@ namespace Sdo.Game
             Vector3 hm = _avatar.BoneModelPos("Bip01_Head");
             if (hm == Vector3.zero) hm = _avatar.BoneModelPos("Bip01_Neck");
             if (hm == Vector3.zero) return false;
-            Vector3 hw = _avatarRoot.TransformPoint(hm) + new Vector3(0f, headMarkerRise, 0f);
+            // MMD 模型放大時,畫面上的頭比 SDO 的頭骨高一截 → 名字牌(與疊在它上面的家族列)要跟著讓,
+            // 否則就被壓在放大後的頭裡面(見 MmdHeadroom;模型比較矮時不往下掉)。
+            Vector3 hw = MmdAvatarSwap.RaiseHeadAnchor(_avatar, _avatarRoot.TransformPoint(hm))
+                       + new Vector3(0f, headMarkerRise, 0f);
             Vector3 v = _cam.WorldToViewportPoint(hw);
             if (v.z <= 0f) return false;   // behind the camera
             vp = new Vector2(v.x, v.y);
@@ -307,7 +310,8 @@ namespace Sdo.Game
             if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine1");
             if (bp == Vector3.zero) bp = _avatar.BoneModelPos("Bip01_Spine");
             if (bp == Vector3.zero) return false;
-            world = _avatarRoot.TransformPoint(bp);
+            // 泡與名字牌吃同一份「模型被放大了多少」—— 只讓名字往上、泡留在原處的話,泡會壓在名字上。
+            world = MmdAvatarSwap.RaiseHeadAnchor(_avatar, _avatarRoot.TransformPoint(bp));
             return true;
         }
 
@@ -752,8 +756,10 @@ namespace Sdo.Game
             {
                 Vector3 hm = _avatar.BoneModelPos("Bip01_Head");
                 if (hm == Vector3.zero) hm = _avatar.BoneModelPos("Bip01_Neck");
+                // 框的上緣要是**畫面上**那顆頭 —— MMD 模型放大時 SDO 的頭骨只到他胸口,
+                // 框就短了一截(點他的頭點不到人)。見 MmdHeadroom。
                 if (hm != Vector3.zero
-                    && HitsBody(_avatarRoot.TransformPoint(hm), vp, out float z) && z < bestZ)
+                    && HitsBody(MmdAvatarSwap.RaiseHeadAnchor(_avatar, _avatarRoot.TransformPoint(hm)), vp, out float z) && z < bestZ)
                 {
                     bestZ = z; userId = 0; hit = true;
                 }
@@ -766,7 +772,8 @@ namespace Sdo.Game
                 Vector3 bm = r.Av.BoneModelPos("Bip01_Head");
                 if (bm == Vector3.zero) bm = r.Av.BoneModelPos("Bip01_Neck");
                 if (bm == Vector3.zero) continue;
-                if (!HitsBody(r.Go.transform.TransformPoint(bm), vp, out float z) || z >= bestZ) continue;
+                if (!HitsBody(MmdAvatarSwap.RaiseHeadAnchor(r.Av, r.Go.transform.TransformPoint(bm)), vp, out float z)
+                    || z >= bestZ) continue;
                 bestZ = z; userId = kv.Key; hit = true;
             }
             return hit;
@@ -817,7 +824,9 @@ namespace Sdo.Game
             Vector3 bm = r.Av.BoneModelPos(bone);
             if (bm == Vector3.zero) bm = r.Av.BoneModelPos(fallbackBone);
             if (bm == Vector3.zero) return false;
-            world = r.Go.transform.TransformPoint(bm) + new Vector3(0f, rise, 0f);
+            // 他的 MMD 模型放大了 → 他頭上的名字/家族列/泡全部跟著往上(大小是他自己宣告的)。
+            world = MmdAvatarSwap.RaiseHeadAnchor(r.Av, r.Go.transform.TransformPoint(bm))
+                  + new Vector3(0f, rise, 0f);
             return true;
         }
 

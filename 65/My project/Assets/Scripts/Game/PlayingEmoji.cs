@@ -23,6 +23,10 @@ namespace Sdo.Game
         public System.Func<Vector3> SlotGetter;      // current formation-slot world position (dance-spot) to anchor to
         public System.Func<Camera> CamGetter;        // the camera to face (gameplay 3D scene cam)
 
+        /// <summary>頭上讓多少 —— <see cref="yOff"/> 是照 SDO 舞者的頭高訂的,而 MMD 模型放大之後
+        /// 畫面上的頭比它高一截(見 <c>MmdHeadroom</c>),表情就會落在胸口。null / 0 = 照原本的高度。</summary>
+        public System.Func<float> RiseGetter;
+
         // tunables (public, F-panel-friendly). Offset is in WORLD axes relative to the slot world coordinate.
         public float xOff = 14.4f;      // world X
         public float yOff = 59.3f;      // world Y (up from the slot floor — ~head height)
@@ -65,7 +69,8 @@ namespace Sdo.Game
 
             // target = current slot world coordinate + world-axis offset; smoothly follow it (snap on the first frame).
             Vector3 slot = SlotGetter != null ? SlotGetter() : Vector3.zero;
-            Vector3 target = slot + new Vector3(xOff, yOff, zOff);
+            float rise = RiseGetter != null ? RiseGetter() : 0f;
+            Vector3 target = slot + new Vector3(xOff, yOff + rise, zOff);
             if (!_haveDisplay) { _displayPos = target; _haveDisplay = true; }
             else _displayPos = Vector3.Lerp(_displayPos, target, 1f - Mathf.Exp(-followLerp * Time.deltaTime));
             transform.position = _displayPos;

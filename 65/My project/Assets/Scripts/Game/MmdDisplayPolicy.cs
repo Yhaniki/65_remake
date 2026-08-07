@@ -53,19 +53,22 @@ namespace Sdo.Game
 
     /// <summary>
     /// 這一具身體該吃誰的數值 —— 與 <see cref="MmdDisplayPolicy"/> 同一條界線的另一半:
-    /// <b>那四根旋鈕是「我調我自己的模型」用的,不是拿去調別人的模型。</b>
+    /// <b>本機那幾根旋鈕是「我調我自己的模型」用的,不是拿去調別人的模型。</b>
     ///
     /// 別人的模型自帶它自己的參數:模型資料夾裡的 <c>physics.ini</c>(<see cref="MmdClothProfile"/>),
     /// 沒有那個檔就是從他的 .pmx 剛體/關節轉出來的值。那份檔案是**跟著模型包一起傳過來的**
     /// (見 <c>ModelPackFilter</c> 的 companion:跟著走,但不進 packId),用意就是「別人看到的
     /// 就是你調好的樣子」。建完卻馬上用本機 config.ini 的旋鈕再蓋一次,等於把那份檔案作廢 ——
     /// 症狀:剛下載好別人的模型,房間上面那格頭貼裡他的頭髮被撐得膨起來(碰撞半徑差 1.5 倍),
-    /// 而同一具模型在他自己畫面上是正常的。大小(<see cref="MmdRigTuning.SizeMul"/>)同一件事:
-    /// 「這個模型看起來偏大/偏小」是**我對我那個模型**的修正,套到別人的模型上只是把他變形
-    /// (而且 <c>mmdScale</c> 改動時本來就只重建本機那幾隻 —— 遠端卻會在**下一次新建**時吃到,
-    ///  於是先載的人正常、後載的人變形,同一個房間裡兩種大小)。
+    /// 而同一具模型在他自己畫面上是正常的。所以布料那三根對遠端一律是中性值。
     ///
-    /// 所以遠端一律是中性值:自動對齊身高、布料完全照他模型自己的參數跑。
+    /// <b>大小(<see cref="MmdRigTuning.SizeMul"/>)是唯一會跟著人走的那一個</b> —— 但走的是
+    /// **他宣告的值**(<c>NetAvatarLook.MmdScale</c>,隨外觀廣播),不是我這台的旋鈕:
+    ///   • 拿我的旋鈕去乘別人的模型 = 把他變形,而且 <c>mmdScale</c> 改動時只重建本機那幾隻、
+    ///     遠端卻會在**下一次新建**時吃到 → 先載的人正常、後載的人變形,同一個房間兩種大小。
+    ///   • 完全不傳(舊版的做法)= 他在自己畫面上與在我畫面上是兩個大小,而且頭上的名字牌高度是
+    ///     照畫出來的身高算的(<see cref="MmdHeadroom"/>),於是我這邊還會看到名字插進他頭裡。
+    /// 他沒宣告(舊 client / 他沒調過)就是 <see cref="NeutralSize"/> ＝ 只做自動對齊身高。
     /// </summary>
     public static class MmdTuningPolicy
     {
@@ -87,9 +90,16 @@ namespace Sdo.Game
         /// <param name="gravity">config.ini <c>mmdGravity</c>。</param>
         /// <param name="stiffness">config.ini <c>mmdStiffness</c>。</param>
         /// <param name="colliderScale">config.ini <c>mmdColliderScale</c>。</param>
-        public static MmdRigTuning For(bool remote, float sizeMul, float gravity, float stiffness, float colliderScale)
+        /// <param name="declaredSize">**遠端專用**:他自己宣告的大小倍率(<c>NetAvatarLook.MmdScale</c>)。
+        /// 本機那一隻不看這個值。</param>
+        public static MmdRigTuning For(bool remote, float sizeMul, float gravity, float stiffness, float colliderScale,
+                                       float declaredSize = NeutralSize)
             => remote
-             ? Neutral
+             ? new MmdRigTuning
+               {
+                   SizeMul = Sdo.Osu.MmdModelRef.ClampScale(declaredSize),   // 他調的大小要跟著他
+                   Gravity = NeutralGravity, Stiffness = NeutralStiffness, ColliderScale = NeutralCollider,
+               }
              : new MmdRigTuning { SizeMul = sizeMul, Gravity = gravity, Stiffness = stiffness, ColliderScale = colliderScale };
     }
 }

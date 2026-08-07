@@ -440,8 +440,9 @@ namespace Sdo.Game
             hm.SetTeamColor(team);  // 組隊局:名字染成他那一隊的顏色(與腳下星環同一個色)
             Transform a = anchor;
             Transform r = root;
-            hm.AnchorGetter = () => a != null ? a.position
-                : ((r != null ? r.position : Vector3.zero) + new Vector3(0f, 59f, 0f));
+            // 他的模型放大了 → 他頭上的名字也要跟著往上(大小是他自己宣告的,見 NetAvatarLook.MmdScale)。
+            hm.AnchorGetter = () => MmdAvatarSwap.RaiseHeadAnchor(av,
+                a != null ? a.position : ((r != null ? r.position : Vector3.zero) + new Vector3(0f, 59f, 0f)));
             hm.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
         }
 

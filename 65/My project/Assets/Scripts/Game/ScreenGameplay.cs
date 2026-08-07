@@ -5139,6 +5139,8 @@ namespace Sdo.Game
             em.sr = sr;
             // current slot world coordinate: the dancer's root (placed on its dance-spot; future formations move it).
             em.SlotGetter = () => _avatarRoot != null ? _avatarRoot.position : _danceSpot;
+            // yOff 是照 SDO 舞者的頭高訂的 → MMD 模型放大時要跟著讓,不然表情落在胸口(見 MmdHeadroom)。
+            em.RiseGetter = () => MmdAvatarSwap.HeadroomFor(avatar);
             em.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
             _emoji = em;
         }

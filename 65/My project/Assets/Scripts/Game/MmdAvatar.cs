@@ -131,6 +131,27 @@ namespace Sdo.Game
         /// fallback). The debug panel asks for it to save the current tuning into the model's physics.ini.</summary>
         public MmdMagicaCloth Cloth => _magica;
 
+        /// <summary>這具身體比它的 SDO 驅動器高出多少(driver 的本地單位;沒有比較高就是 0)。
+        /// 建的時候算一次就固定了 —— 縮放是建構期決定的,改倍率會整隻重建。</summary>
+        private float _headroomLocal;
+
+        /// <summary>
+        /// 頭上的名字/家族列/聊天泡/表情要往上讓多少(**世界單位**)。
+        ///
+        /// 那些東西全都釘在 SDO 骨架上,而 SDO 骨架不會跟著 <c>mmdScale</c> 變大 —— 見
+        /// <see cref="MmdHeadroom"/>。取 driver 的 lossyScale 是因為呼叫端拿到的錨點是世界座標。
+        /// </summary>
+        public float Headroom
+        {
+            get
+            {
+                if (!(_headroomLocal > 0f) || _mmdRoot == null) return 0f;
+                Transform parent = _mmdRoot.parent;
+                float s = parent != null ? parent.lossyScale.y : 1f;
+                return _headroomLocal * (s > 0f ? s : 1f);
+            }
+        }
+
         /// <summary><paramref name="cloth"/> false builds the rig with NO hair/skirt simulation — the physics bones just
         /// hold their styled rest pose and ride the head. That is what the head portraits (room 頭貼 / 結算頭貼) use: at
         /// that size the sway is invisible, and a cloth solver per rig is the most expensive part of a build.
@@ -178,6 +199,8 @@ namespace Sdo.Game
             //    遠端角色一律拿 1(見 MmdTuningPolicy)。以前這裡直接讀,於是別人的模型在**新建的那一刻**
             //    被我的倍率一起放大/縮小,而改倍率時又只重建本機那幾隻 → 先載的人正常、後載的人變形。
             _unitScale = hrcHeight / mmdHeight * Mathf.Clamp(sizeMul, 0.3f, 3f);
+            // 放大之後畫面上的頭比 SDO 那顆高多少 —— 頭上的名字牌/表情要照這個往上讓(見 MmdHeadroom)。
+            _headroomLocal = MmdHeadroom.Rise(hrcHeight, mmdHeight * _unitScale);
 
             // ---- bone hierarchy (rest) ----
             _bone = new Transform[bc]; _parent = new int[bc];

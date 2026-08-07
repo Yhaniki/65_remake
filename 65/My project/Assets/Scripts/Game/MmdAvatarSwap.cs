@@ -54,6 +54,9 @@ namespace Sdo.Game
             public string PackFile = ""; // 那一包裡他穿的是哪一個 .pmx(相對包根;空 = 他沒講,收端自己猜)
                                          // 🔴 一包可以有好幾個 .pmx,packId 是整包的指紋 —— 少了它會顯示成
                                          // 同一包裡的另一個東西(實測:一支黑色的槍在跳舞)。見 MmdModelRef。
+            public float PackScale = Sdo.Osu.MmdModelRef.DefaultScale;
+                                         // 他把模型調到多大(遠端才有意義;本機吃 config.ini 那根旋鈕)。
+                                         // 少了它 = 他在我畫面上是另一個大小,連頭上名字的高度都會對不上。
             public string BuiltFrom;     // 現在畫出來的這具身體是從哪個 .pmx 建的(換模型時比對用)
                                          // 🔴 是 .pmx 路徑不是資料夾:一個資料夾可以裝好幾個模型(見 MmdModelCatalog)
             public bool Shown;           // 上一次套用的結果是「畫 MMD」嗎(只有變了才寫 log)
@@ -217,11 +220,13 @@ namespace Sdo.Game
         /// invisible at that size and the cloth solver is the most expensive part of a rig).</summary>
         public static void Register(SdoAvatar avatar, bool cloth = true) => Register(avatar, false, "", cloth);
 
-        /// <summary>把一隻已登記的角色改成別的模型時,先看看有沒有變 —— 只有真的變了才重建。</summary>
-        private static bool SameModel(Reg r, bool remote, string pack, string file)
+        /// <summary>把一隻已登記的角色改成別的模型時,先看看有沒有變 —— 只有真的變了才重建。
+        /// 大小也算「變了」:縮放是**建構期**決定的(骨架縮放 + 布料全從它推),他把倍率調了就得重建。</summary>
+        private static bool SameModel(Reg r, bool remote, string pack, string file, float scale)
             => r.Remote == remote
             && string.Equals(r.Pack, pack, StringComparison.Ordinal)
-            && string.Equals(r.PackFile, file, StringComparison.Ordinal);
+            && string.Equals(r.PackFile, file, StringComparison.Ordinal)
+            && Sdo.Osu.MmdModelRef.SameScale(r.PackScale, scale);
 
         /// <summary>
         /// 登記一隻**遠端**玩家的角色,連同他外觀宣告的模型 <paramref name="packId"/>。
@@ -231,9 +236,10 @@ namespace Sdo.Game
         /// 正確畫面天生就是他的穿搭,沒有空白、沒有替身。模型到了之後 <see cref="OnPackInstalled"/>
         /// 直接把身體換掉,**不重建**這隻角色(位置、朝向、正在播的動作全都留著)。
         /// </summary>
-        /// <param name="modelRef">他外觀宣告的模型 —— <c>packId</c>,或 <c>packId|包內路徑</c>
-        /// (<see cref="Sdo.Osu.MmdModelRef"/>;一個資料夾可以有好幾個 .pmx,少了後半段會顯示成
-        /// 同一包裡的另一個東西)。專案內部把這兩個值當成一個不可分割的字串往下搬,見 <c>NetAvatarLook.MmdRef</c>。</param>
+        /// <param name="modelRef">他外觀宣告的模型 —— <c>packId</c>、<c>packId|包內路徑</c>,或
+        /// <c>packId|包內路徑|大小</c>(<see cref="Sdo.Osu.MmdModelRef"/>;一個資料夾可以有好幾個 .pmx,
+        /// 少了中段會顯示成同一包裡的另一個東西,少了大小則是「他在我畫面上是另一個尺寸」)。
+        /// 專案內部把這幾個值當成一個不可分割的字串往下搬,見 <c>NetAvatarLook.MmdRef</c>。</param>
         public static void RegisterRemote(SdoAvatar avatar, string modelRef, bool cloth = true)
             => Register(avatar, true, modelRef ?? "", cloth);
 
@@ -242,19 +248,22 @@ namespace Sdo.Game
             if (avatar == null) return;
             string packId = Sdo.Osu.MmdModelRef.PackOf(modelRef);
             string packFile = Sdo.Osu.MmdModelRef.FileOf(modelRef);
+            float packScale = Sdo.Osu.MmdModelRef.ScaleOf(modelRef);
             var inst = Ensure();
             inst._regs.RemoveAll(r => r.Avatar == null);   // drop destroyed dancers (scene changes / rebuilds)
             var existing = inst._regs.Find(r => r.Avatar == avatar);
             if (existing != null)
             {
-                if (SameModel(existing, remote, packId, packFile)) return;
+                if (SameModel(existing, remote, packId, packFile, packScale)) return;
                 existing.Remote = remote;
                 existing.Pack = packId;      // 同一隻改穿別的模型 → 重建它的身體(不動 SDO 驅動器)
                 existing.PackFile = packFile;
+                existing.PackScale = packScale;
                 existing.Failed = false;
                 inst.DropBody(existing);
             }
-            else inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth, Remote = remote, Pack = packId, PackFile = packFile });
+            else inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth, Remote = remote,
+                                          Pack = packId, PackFile = packFile, PackScale = packScale });
 
             var reg = existing ?? inst._regs[inst._regs.Count - 1];
             // 這一隻根本不會用到 MMD(我沒選模型 / 他沒穿 / 我不看別人的)→ 什麼都別做,連 log 都不寫。
@@ -333,6 +342,29 @@ namespace Sdo.Game
             foreach (var r in _inst._regs)
                 if (r.Avatar == avatar) return (r.Mmd != null && r.Mmd.Visible) ? r.Mmd : null;
             return null;
+        }
+
+        /// <summary>
+        /// 這一隻角色頭上的東西(名字牌 / 家族列 / 聊天泡 / combo 表情)要往上讓多少(世界單位)。
+        ///
+        /// 那些東西全都釘在 <b>SDO</b> 骨架的頭骨或腳下的站位上,而 SDO 骨架不會跟著「模型縮放」變大 ——
+        /// 所以模型一放大,名字就被留在放大後的頭裡面(使用者回報)。沒在畫 MMD、或那具模型沒比 SDO 高
+        /// (縮小)就回 0:<b>只往上讓,不往下掉</b>(見 <see cref="MmdHeadroom"/>)。
+        ///
+        /// 每幀問一次即可(一次字典大小的線性搜尋 + 一個乘法),不必快取。
+        /// </summary>
+        public static float HeadroomFor(SdoAvatar avatar)
+        {
+            var m = ActiveFor(avatar);
+            return m != null ? m.Headroom : 0f;
+        }
+
+        /// <summary>把一個「頭上」的世界錨點照 <see cref="HeadroomFor"/> 往上推。呼叫端只要包這一層,
+        /// 就不會出現「名字調了、家族列沒調」這種只對了一半的畫面。</summary>
+        public static Vector3 RaiseHeadAnchor(SdoAvatar avatar, Vector3 world)
+        {
+            float rise = HeadroomFor(avatar);
+            return rise > 0f ? new Vector3(world.x, world.y + rise, world.z) : world;
         }
 
         /// <summary>
@@ -641,6 +673,21 @@ namespace Sdo.Game
             }
         }
 
+        /// <summary>
+        /// 「我把模型調到多大」—— <c>setLook</c> 跟著 <see cref="LocalPackId"/> 一起送出去的值
+        /// (＝ config.ini 的 <c>mmdScale</c>);沒穿 / 不分享 → 1(＝只做自動對齊身高)。
+        ///
+        /// 🔴 <b>大小一定要跟著人走</b>:別人沒有任何辦法推得出我把模型調成多大,少了它同一個人在自己
+        /// 畫面上與在別人畫面上就是兩個尺寸,而且頭上名字牌的高度是照畫出來的身高算的
+        /// (<see cref="MmdHeadroom"/>)—— 於是別人那邊還會看到名字插在他頭裡。
+        /// 布料那三根旋鈕**刻意不送**:那是模型自己的東西(physics.ini 跟著模型包走),見
+        /// <see cref="MmdTuningPolicy"/>。
+        /// </summary>
+        public static float LocalScale
+            => (!UseLocalMmd || !RoomConfig.mmdShareModel)
+             ? Sdo.Osu.MmdModelRef.DefaultScale
+             : Sdo.Osu.MmdModelRef.ClampScale(RoomConfig.mmdScale);
+
         /// <summary>The installed models, in panel order.</summary>
         public static IReadOnlyList<MmdModelCatalog.Entry> Models => _models;
 
@@ -770,11 +817,12 @@ namespace Sdo.Game
 
         private void ApplyOpts() { foreach (var r in _regs) if (r.Mmd != null) ApplyOptsTo(r); }
 
-        /// <summary>這一隻要吃哪一組大小/布料數值 —— 本機吃 config.ini 那四根旋鈕,遠端一律中性
-        /// (＝完全照他模型自己的 physics.ini / .pmx 轉換值)。見 <see cref="MmdTuningPolicy"/>。</summary>
+        /// <summary>這一隻要吃哪一組大小/布料數值 —— 本機吃 config.ini 那四根旋鈕;遠端的布料一律中性
+        /// (＝完全照他模型自己的 physics.ini / .pmx 轉換值),**大小則照他自己宣告的那個倍率**。
+        /// 見 <see cref="MmdTuningPolicy"/>。</summary>
         private static MmdRigTuning TuningFor(Reg r)
             => MmdTuningPolicy.For(r.Remote, RoomConfig.mmdScale, RoomConfig.mmdGravity,
-                                   RoomConfig.mmdStiffness, RoomConfig.mmdColliderScale);
+                                   RoomConfig.mmdStiffness, RoomConfig.mmdColliderScale, r.PackScale);
 
         // 把 config.ini [Mmd] 的旋鈕套到一隻已經建好的身體上。
         //

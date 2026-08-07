@@ -109,13 +109,28 @@ namespace Sdo.Net
         public string MmdName = "";
 
         /// <summary>
-        /// 「他穿的是哪一個模型」的完整答案(packId ＋ 包內路徑),打包成單一字串。
+        /// 他把模型調到多大(自動對齊舞者身高之後再乘的倍率,＝他那台的 config.ini <c>mmdScale</c>)。
+        /// 1 ＝ 只做自動對齊。
+        ///
+        /// 🔴 <b>大小要跟著人走。</b>「這個模型看起來偏大/偏小」是**穿的人**對他自己那個模型的修正,
+        /// 收端沒有任何辦法自己推得出來 —— 少了這個欄位,同一個人在自己畫面上與在別人畫面上就是兩個
+        /// 大小。而且頭上名字牌的高度是照畫出來的身高算的(見 <c>MmdHeadroom</c>),所以症狀不只是
+        /// 「他矮了一點」,還會是「別人畫面上他的名字插在他頭裡」。
+        ///
+        /// 它與布料那三根旋鈕(重力/剛性/碰撞半徑)不同 —— 那三根**不上網**:那些是模型自己的東西
+        /// (跟著模型包傳過來的 physics.ini),見 <c>MmdTuningPolicy</c>。
+        /// </summary>
+        public float MmdScale = Sdo.Osu.MmdModelRef.DefaultScale;
+
+        /// <summary>
+        /// 「他穿的是哪一個模型、多大」的完整答案(packId ＋ 包內路徑 ＋ 大小),打包成單一字串。
         ///
         /// 專案內部把它當成一個不可分割的值往下搬(房間快照 → 遠端角色 → 頭貼)——
-        /// 兩個欄位分開搬的話,漏搬其中一個不會有任何編譯錯誤,而漏掉 <see cref="MmdFile"/> 的症狀
-        /// 是「顯示成同一包裡的另一個模型」,看起來像模型壞掉而不像少傳了一個欄位。
+        /// 欄位分開搬的話,漏搬其中一個不會有任何編譯錯誤,而漏掉 <see cref="MmdFile"/> 的症狀
+        /// 是「顯示成同一包裡的另一個模型」,漏掉 <see cref="MmdScale"/> 的症狀是「他在別人畫面上
+        /// 是另一個大小」—— 兩者都看起來像模型壞掉,而不像少傳了一個欄位。
         /// </summary>
-        public string MmdRef() => Sdo.Osu.MmdModelRef.Join(MmdPack, MmdFile);
+        public string MmdRef() => Sdo.Osu.MmdModelRef.Join(MmdPack, MmdFile, MmdScale);
 
         /// <summary>模型名稱的長度上限(它會被畫在 UI 上,而且是別人送來的字串)。</summary>
         public const int MaxMmdNameLength = 48;
@@ -128,6 +143,9 @@ namespace Sdo.Net
             if (!string.IsNullOrEmpty(MmdPack)) o.Str("mmd", MmdPack);
             if (!string.IsNullOrEmpty(MmdPack) && !string.IsNullOrEmpty(MmdFile)) o.Str("mmdFile", MmdFile);
             if (!string.IsNullOrEmpty(MmdName)) o.Str("mmdName", MmdName);
+            // 沒穿模型 / 沒調大小的人(絕大多數)不該因為這個功能而在每份房間快照裡多帶一個欄位。
+            if (!string.IsNullOrEmpty(MmdPack) && !Sdo.Osu.MmdModelRef.IsDefaultScale(MmdScale))
+                o.Num("mmdScale", MmdScale);
             var arr = JArr.New();
             if (Parts != null)
             {
@@ -159,6 +177,10 @@ namespace Sdo.Net
             // 不合格 → 當成「他沒指定」(收端自己挑),而不是把整個模型丟掉 —— 舊 client 本來就不送這個欄位。
             string mmdFile = Sdo.Osu.SafeRelPath.Normalize(NetJson.Str(node, "mmdFile"));
             look.MmdFile = look.MmdPack.Length != 0 && Sdo.Osu.MmdModelRef.IsSafeFile(mmdFile) ? mmdFile : "";
+            // 大小:別人送來的數字一律夾成能用的值(0 / 負數 / 沒帶 → 1×,＝只做自動對齊身高)。
+            look.MmdScale = look.MmdPack.Length == 0
+                          ? Sdo.Osu.MmdModelRef.DefaultScale
+                          : Sdo.Osu.MmdModelRef.ClampScale((float)NetJson.Num(node, "mmdScale"));
 
             int body = NetJson.Int(node, "bodyIndex");
             look.BodyIndex = body < 0 ? 0 : (body > 4 ? 4 : body);
@@ -195,6 +217,7 @@ namespace Sdo.Net
             MmdPack = MmdPack ?? "",
             MmdFile = MmdFile ?? "",
             MmdName = MmdName ?? "",
+            MmdScale = MmdScale,
         };
 
         /// <summary>
@@ -213,6 +236,9 @@ namespace Sdo.Net
             if (!string.Equals(MmdPack ?? "", o.MmdPack ?? "", System.StringComparison.Ordinal)) return false;
             // 同一包裡換另一個模型 → packId 一個字都不會變,只有這裡看得出來(不比的話「換了沒人看得到」)。
             if (!string.Equals(MmdFile ?? "", o.MmdFile ?? "", System.StringComparison.Ordinal)) return false;
+            // 大小同理:改倍率時 packId 與檔名都不會變,不比的話 setLook 會判定「外觀沒變」而不送出,
+            // 於是別人畫面上他永遠是舊的大小。
+            if (!Sdo.Osu.MmdModelRef.SameScale(MmdScale, o.MmdScale)) return false;
             int a = Parts != null ? Parts.Length : 0;
             int b = o.Parts != null ? o.Parts.Length : 0;
             if (a != b) return false;
@@ -229,9 +255,9 @@ namespace Sdo.Net
         {
             var sb = new System.Text.StringBuilder(64);
             sb.Append(Gender).Append('/').Append(BodyIndex);
-            // MMD 模型換了也要讓遠端重建 —— packId 與**包內是哪一個 .pmx** 兩個都進鍵(同一包裡換一個模型
-            // packId 不會變,少了後者畫面上就不會跟著換);名字不進(名字是顯示用的,它變了畫面上什麼都不會
-            // 不同,卻會白白重建一隻角色)。
+            // MMD 模型換了也要讓遠端重建 —— packId、**包內是哪一個 .pmx**、**多大**三個都進鍵
+            // (同一包裡換一個模型 / 只改大小,packId 都不會變,少了後兩者畫面上就不會跟著換);
+            // 名字不進(名字是顯示用的,它變了畫面上什麼都不會不同,卻會白白重建一隻角色)。
             if (!string.IsNullOrEmpty(MmdPack)) sb.Append('#').Append(MmdRef());
             if (Parts != null)
                 for (int i = 0; i < Parts.Length; i++) sb.Append('|').Append(Parts[i] ?? "");

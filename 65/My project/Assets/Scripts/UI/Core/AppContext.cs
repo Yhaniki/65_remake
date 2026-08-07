@@ -186,6 +186,9 @@ namespace Sdo.UI.Core
                 // 🔴 packId 是**整包**的指紋,而一包可以有好幾個 .pmx(角色 ＋ 武器 ＋ 影子)。
                 // 少了這一行,別人只能從資料夾反推是哪一個 —— 反推挑錯的畫面是「他變成同一包裡的另一個東西」。
                 look.MmdFile = MmdAvatarSwap.LocalPackFile;
+                // 🔴 大小同理:別人推不出我把模型調成多大。少了這一行,我在別人畫面上是另一個尺寸,
+                // 而且他們那邊我頭上的名字會插進我的頭裡(名字高度是照畫出來的身高算的)。
+                look.MmdScale = MmdAvatarSwap.LocalScale;
             }
             return look;
         }

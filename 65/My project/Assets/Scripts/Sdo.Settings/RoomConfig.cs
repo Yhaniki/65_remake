@@ -157,6 +157,11 @@ namespace Sdo.Settings
         public static float mmdStiffness = 0.12f;   // 布料硬度（低＝被重力拉直垂下）
         public static float mmdColliderScale = 1f;  // 身體碰撞體半徑倍率
         public static float mmdScale = 1f;          // 模型大小倍率（1＝自動對齊 SDO 舞者身高）
+                                                    // ⚠️ 這一根**會跟著外觀傳給同房的人**（NetAvatarLook.MmdScale）：
+                                                    //    大小推不出來，不傳的話你在別人畫面上是另一個尺寸，而且他們那邊
+                                                    //    你頭上的名字會插進你頭裡（名字高度照畫出來的身高算，見 MmdHeadroom）。
+                                                    //    布料那三根（重力/硬度/碰撞半徑）刻意**不**傳 —— 那是模型自己的
+                                                    //    physics.ini 的事，見 MmdTuningPolicy。
         // 多人連線:把自己身上的模型上傳給 server,讓同房的人也看得到(1=分享,預設)。
         // 關掉 → 別人看到的是你的 SDO 穿搭(你自己畫面上仍然是 MMD)。
         // ⚠️ 網路上流通的 MMD 模型多半帶使用規約,有些明確禁止再配布 —— 這個開關就是為此存在的。

@@ -269,8 +269,11 @@ namespace Sdo.Game
             hm.Init(_arrowFrames, localPlayerName);
             hm.SetTeamColor(TeamOf(LocalDancerSlotIndex));   // 組隊局:自己的名字也是自己那一隊的顏色
             Transform a = anchor;
-            hm.AnchorGetter = () => a != null ? a.position
-                : ((_avatarRoot != null ? _avatarRoot.position : _danceSpot) + new Vector3(0f, 59f, 0f));
+            // MMD 顯示開著、而且模型被放大時,畫面上的頭比 SDO 的頭骨高一截 —— 名字要跟著往上讓,
+            // 否則就插在放大後的頭裡(見 MmdHeadroom;縮小時不動)。
+            hm.AnchorGetter = () => MmdAvatarSwap.RaiseHeadAnchor(avatar,
+                a != null ? a.position
+                          : ((_avatarRoot != null ? _avatarRoot.position : _danceSpot) + new Vector3(0f, 59f, 0f)));
             hm.CamGetter = () => _sceneCam != null ? _sceneCam : _cam;
             _headMarker = hm;
         }

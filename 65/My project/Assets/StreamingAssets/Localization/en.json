@@ -1493,7 +1493,7 @@
   },
   {
    "k": "cfg.mmd_scale.help",
-   "v": "1 = auto-fit the model to the same height as an SDO dancer (raw model sizes vary wildly, hence auto by default). Multiply here if a model still looks too big or too small."
+   "v": "1 = auto-fit the model to the same height as an SDO dancer (raw model sizes vary wildly, hence auto by default). Multiply here if a model still looks too big or too small. ★This one travels with your look: everyone in the room sees you at the size you set here, and the name above your head follows it."
   },
   {
    "k": "cfg.mmd_lil_toon.label",

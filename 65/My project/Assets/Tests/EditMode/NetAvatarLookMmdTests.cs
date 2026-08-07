@@ -116,6 +116,60 @@ namespace Sdo.Tests
             Assert.IsTrue(b.SameAs(b.Clone()));
         }
 
+        // ---------------------------------------------------------------- 他把模型調到多大
+        [Test]
+        public void MmdScale_RoundTrips_SoHeIsTheSameSizeOnEveryScreen()
+        {
+            // 大小是**穿的人**對他自己那個模型的修正,收端推不出來。少了它:他在別人畫面上是另一個尺寸,
+            // 而且頭上的名字牌高度是照畫出來的身高算的 → 別人那邊他的名字會插在他頭裡。
+            var look = new NetAvatarLook { MmdPack = GoodPack(), MmdFile = "miku.pmx", MmdScale = 1.4f };
+            var back = NetAvatarLook.Decode(Node(look.Encode().Json()));
+
+            Assert.AreEqual(1.4f, back.MmdScale, 1e-3f);
+            Assert.AreEqual(look.MmdRef(), back.MmdRef());
+            Assert.AreEqual(1.4f, MmdModelRef.ScaleOf(back.MmdRef()), 1e-3f);
+        }
+
+        [Test]
+        public void ResizingTheModel_IsAVisibleChange()
+        {
+            // 只改大小 → packId 與檔名一個字都不會變。這裡不比的話:
+            //   ① setLook 判定「外觀沒變」不送出 → 我調了大小,別人完全不知道;
+            //   ② 遠端角色的比較鍵一樣 → 就算送到了也不重建(而縮放是建構期決定的,見 MmdAvatar.Construct)。
+            string pack = GoodPack();
+            var a = new NetAvatarLook { MmdPack = pack, MmdFile = "miku.pmx", MmdScale = 1f };
+            var b = new NetAvatarLook { MmdPack = pack, MmdFile = "miku.pmx", MmdScale = 1.4f };
+
+            Assert.AreNotEqual(a.Key(), b.Key());
+            Assert.IsFalse(a.SameAs(b));
+            Assert.IsTrue(b.SameAs(b.Clone()));
+            Assert.AreEqual(1.4f, b.Clone().MmdScale, 1e-6f, "漏了它 → 進遊戲之後他變回另一個大小");
+        }
+
+        [Test]
+        public void NoScaling_CostsNothingOnTheWire_AndOldClientsStillWork()
+        {
+            // 沒調過大小的人(絕大多數)不該因為這個功能而在每份房間快照裡多帶一個欄位。
+            var look = new NetAvatarLook { MmdPack = GoodPack(), MmdFile = "miku.pmx" };
+            StringAssert.DoesNotContain("mmdScale", look.Encode().Json());
+
+            // 舊 client 不送這個欄位 = 「他沒調過」→ 1×,而不是縮成 0。
+            var old = NetAvatarLook.Decode(Node("{\"mmd\":\"" + GoodPack() + "\",\"mmdFile\":\"miku.pmx\"}"));
+            Assert.AreEqual(1f, old.MmdScale, 1e-6f);
+            Assert.IsTrue(old.SameAs(look));
+        }
+
+        [Test]
+        public void HostileMmdScale_IsClamped_NotObeyed()
+        {
+            foreach (var kv in new[] { new[] { "0", "1" }, new[] { "-5", "1" }, new[] { "9999", "3" }, new[] { "0.0001", "0.3" } })
+            {
+                var look = NetAvatarLook.Decode(Node("{\"mmd\":\"" + GoodPack() + "\",\"mmdScale\":" + kv[0] + "}"));
+                Assert.AreEqual(float.Parse(kv[1], System.Globalization.CultureInfo.InvariantCulture), look.MmdScale, 1e-3f,
+                                "沒夾住的大小:" + kv[0]);
+            }
+        }
+
         [Test]
         public void HostileMmdName_IsClipped()
         {
@@ -191,6 +245,7 @@ namespace Sdo.Tests
                 MmdPack = GoodPack(),
                 MmdFile = "pmx/miku.pmx",
                 MmdName = "TestMiku",
+                MmdScale = 1.4f,
             };
 
             var copy = src.Clone();
@@ -199,6 +254,7 @@ namespace Sdo.Tests
             CollectionAssert.AreEqual(src.Parts, copy.Parts);
             Assert.AreEqual(src.MmdPack, copy.MmdPack, "漏了它 → 進遊戲之後每個人的模型都變回 SDO");
             Assert.AreEqual(src.MmdFile, copy.MmdFile, "漏了它 → 進遊戲之後變成同一包裡的另一個模型");
+            Assert.AreEqual(src.MmdScale, copy.MmdScale, 1e-6f, "漏了它 → 進遊戲之後他變回另一個大小");
             Assert.AreEqual(src.MmdName, copy.MmdName);
             Assert.IsTrue(src.SameAs(copy), "複製出來的必須與原件相等");
 
@@ -219,7 +275,8 @@ namespace Sdo.Tests
             {
                 UserId = 7,
                 Name = "穿模型的",
-                Look = new NetAvatarLook { Gender = 0, BodyIndex = 1, MmdPack = pack, MmdFile = "miku.pmx", MmdName = "TestMiku" },
+                Look = new NetAvatarLook { Gender = 0, BodyIndex = 1, MmdPack = pack, MmdFile = "miku.pmx",
+                                           MmdName = "TestMiku", MmdScale = 1.4f },
             };
 
             var snap = Sdo.Net.Server.NetMatchPlayerSnapshot.Capture(seat, 2);
@@ -230,6 +287,8 @@ namespace Sdo.Tests
                 "參賽者名單掉了 packId → 進遊戲之後別人的 MMD 全部變回 SDO 穿搭");
             Assert.AreEqual("miku.pmx", snap.Look.MmdFile,
                 "參賽者名單掉了包內路徑 → 進遊戲之後別人變成同一包裡的另一個模型");
+            Assert.AreEqual(1.4f, snap.Look.MmdScale, 1e-6f,
+                "參賽者名單掉了大小 → 房間裡好好的,一進遊戲他就變回另一個尺寸(名字也會插進他頭裡)");
             Assert.AreEqual("TestMiku", snap.Look.MmdName);
         }
     }

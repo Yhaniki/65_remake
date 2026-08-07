@@ -1,9 +1,10 @@
 using System;
+using System.Globalization;
 
 namespace Sdo.Osu
 {
     /// <summary>
-    /// 「別人身上穿的是哪一個模型」的完整答案 ＝ <b>packId ＋ 這一包裡的哪一個 .pmx</b>。
+    /// 「別人身上穿的是哪一個模型、多大」的完整答案 ＝ <b>packId ＋ 這一包裡的哪一個 .pmx ＋ 大小倍率</b>。
     ///
     /// 🔴 <b>為什麼 packId 一個人不夠。</b>packId 是**整個資料夾**的內容指紋(見 <see cref="ModelPackId"/>),
     /// 而一個資料夾裡可以有好幾個 .pmx —— 角色本體、他的武器、他的影子、同一個作者的三個角色。
@@ -21,10 +22,18 @@ namespace Sdo.Osu
     /// 中間那幾層一律搬 <see cref="Join"/> 出來的**單一字串**:漏搬會整個模型不見(看得出來),
     /// 而不是安靜地換成另一個模型(看不出來)。
     ///
+    /// 🔴 <b>第三段是大小倍率(<c>mmdScale</c>)。</b>模型自動對齊舞者身高之後,使用者還會再乘一個倍率把
+    /// 「這個模型看起來偏大/偏小」修掉 —— 那個修正**必須跟著人走**,否則同一個人在自己畫面上與在別人
+    /// 畫面上是兩個大小(而且頭上名字牌的高度是照身高算的,見 <c>MmdHeadroom</c>,於是別人那邊的名字
+    /// 還會插進他的頭裡)。倍率剛好是 1(絕大多數人)時**不寫進字串**,舊 client 的兩段格式原封不動。
+    ///
     /// 純字串邏輯,零 IO、零 UnityEngine —— server 與遊戲編同一份。
     /// </summary>
     public static class MmdModelRef
     {
+        /// <summary>大小倍率的合理範圍與預設值。與 config.ini <c>mmdScale</c> 的夾值同一組
+        /// (<c>RoomConfig.Clamp</c>);別人送來的數字一律夾在這裡面才往下傳。</summary>
+        public const float MinScale = 0.3f, MaxScale = 3f, DefaultScale = 1f;
         /// <summary>packId 與包內路徑的分隔符。
         ///
         /// 挑 <c>'|'</c> 的理由:<see cref="SafeRelPath.IsSafe"/> 明確擋掉路徑裡的 <c>'|'</c>
@@ -32,13 +41,20 @@ namespace Sdo.Osu
         /// 含有它,所以切開來永遠不會有歧義。</summary>
         public const char Sep = '|';
 
-        /// <summary>packId ＋ 包內路徑 → 一個字串。沒有 packId 一律回空字串(＝這個人沒穿模型);
-        /// 沒有指定檔案就只有 packId(＝舊 client / 一包只有一個模型,收端自己挑)。</summary>
-        public static string Join(string packId, string file)
+        /// <summary>packId ＋ 包內路徑 → 一個字串(大小用預設的 1×)。</summary>
+        public static string Join(string packId, string file) => Join(packId, file, DefaultScale);
+
+        /// <summary>packId ＋ 包內路徑 ＋ 大小倍率 → 一個字串。沒有 packId 一律回空字串(＝這個人沒穿模型);
+        /// 沒有指定檔案就只有 packId(＝舊 client / 一包只有一個模型,收端自己挑);倍率 1× 不寫出來
+        /// (＝與舊格式逐字相同,不會讓「他的外觀變了嗎」誤判成變了)。</summary>
+        public static string Join(string packId, string file, float scale)
         {
             if (string.IsNullOrEmpty(packId)) return "";
             string f = SafeRelPath.Normalize(file ?? "");
-            return f.Length == 0 ? packId : packId + Sep + f;
+            float s = ClampScale(scale);
+            if (IsDefaultScale(s)) return f.Length == 0 ? packId : packId + Sep + f;
+            // 倍率在第三段 → 檔名那一段就算是空的也要留著,不然 '|' 的位置會對不上。
+            return packId + Sep + f + Sep + s.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
         /// <summary>取出 packId(＝ blob 傳輸與「本機有沒有這一份」用的身分)。</summary>
@@ -54,8 +70,39 @@ namespace Sdo.Osu
         {
             if (string.IsNullOrEmpty(modelRef)) return "";
             int i = modelRef.IndexOf(Sep);
-            return i < 0 ? "" : modelRef.Substring(i + 1);
+            if (i < 0) return "";
+            int j = modelRef.IndexOf(Sep, i + 1);
+            return j < 0 ? modelRef.Substring(i + 1) : modelRef.Substring(i + 1, j - i - 1);
         }
+
+        /// <summary>取出大小倍率。沒帶 / 帶了看不懂的東西 → <see cref="DefaultScale"/>(＝只做自動對齊身高),
+        /// 而不是拒絕整個模型:大小錯了頂多人偏大偏小,不值得讓他整具身體消失。</summary>
+        public static float ScaleOf(string modelRef)
+        {
+            if (string.IsNullOrEmpty(modelRef)) return DefaultScale;
+            int i = modelRef.IndexOf(Sep);
+            if (i < 0) return DefaultScale;
+            int j = modelRef.IndexOf(Sep, i + 1);
+            if (j < 0) return DefaultScale;
+            float s;
+            if (!float.TryParse(modelRef.Substring(j + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out s))
+                return DefaultScale;
+            return ClampScale(s);
+        }
+
+        /// <summary>把別人送來的倍率夾成能用的值。0 / 負數 / NaN ＝「他沒說」→ 預設 1×
+        /// (夾成 <see cref="MinScale"/> 的話,一個亂填的 0 會讓他在別人畫面上縮成一個小點)。</summary>
+        public static float ClampScale(float scale)
+        {
+            if (float.IsNaN(scale) || !(scale > 0f)) return DefaultScale;
+            return scale < MinScale ? MinScale : (scale > MaxScale ? MaxScale : scale);
+        }
+
+        /// <summary>這個倍率等於「不調整」嗎(浮點比較留一點容差:值會經過字串來回一趟)。</summary>
+        public static bool IsDefaultScale(float scale) => Math.Abs(scale - DefaultScale) < 1e-3f;
+
+        /// <summary>兩個倍率視為同一個嗎(＝外觀沒變 / 不必重建身體)。</summary>
+        public static bool SameScale(float a, float b) => Math.Abs(a - b) < 1e-3f;
 
         /// <summary>
         /// 這個包內路徑可以收嗎?
