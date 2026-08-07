@@ -1496,6 +1496,74 @@ namespace Sdo.Tests
         }
 
         /// <summary>
+        /// ShowTime 釋放(按 SPACE 開視窗)的端到端轉發。
+        ///
+        /// 為什麼要有這則事件:遠端舞者的一切都從 5 Hz 分數流推導,但「他正在自動全 PERFECT 的視窗中」
+        /// 在分數流裡與「他打得很好」長得一模一樣;而且重現他的畫面需要**他那一台自己骰的** breaking 變體。
+        /// 少了它,場上其他人看不到他的光環與街舞。
+        /// </summary>
+        [Test]
+        public void Showtime_Release_Is_Relayed_To_Other_Players_And_Validated()
+        {
+            TestClient a, b;
+            long matchId = StartTwoPlayerMatch(out a, out b);
+
+            var playing = WaitForState(a, s => s.Status == RoomStatus.Playing, "比賽已開始");
+            int roomCode = playing.Code;
+            var outsider = Connect("別房玩家");
+            CreateRoom(outsider, "別房");
+
+            // 不合法的欄位一律靜靜丟掉(不回錯、不轉發)。壞掉的 windowMs 會讓對方的舞者卡住整首歌。
+            a.Send(ShowtimeMsg(matchId, level: 9, variant: 4, windowMs: 12000.0));
+            a.Send(ShowtimeMsg(matchId, level: 1, variant: 0, windowMs: 12000.0));
+            a.Send(ShowtimeMsg(matchId, level: 0, variant: 7, windowMs: 12000.0));   // E 只有 BREAKING_E_1..6
+            a.Send(ShowtimeMsg(matchId, level: 1, variant: 4, windowMs: 0.0));
+            a.Send(ShowtimeMsg(matchId, level: 1, variant: 4, windowMs: 999999.0));
+            Assert.IsNull(b.WaitFor(NetProto.ShowtimeRelease, 300), "不合法的欄位不可轉發");
+
+            // 非參與者(旁觀者)不可以在別人場上偽造特效。
+            var spectator = Connect("未參與者");
+            spectator.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2200)
+                .Int("code", roomCode));
+            WaitForState(spectator, s => s.SpectatorIndexOf(spectator.UserId) >= 0, "未參與者進入同房旁觀");
+            spectator.Send(ShowtimeMsg(matchId, level: 0, variant: 1, windowMs: 9000.0));
+            Assert.IsNull(a.WaitFor(NetProto.ShowtimeRelease, 300), "非參與者不可偽造 ShowTime 特效");
+            Assert.IsNull(b.WaitFor(NetProto.ShowtimeRelease, 300), "非參與者不可偽造 ShowTime 特效");
+
+            // 別場的 matchId 也不行(上一場路上還在飛的事件不可以套到下一場的舞者身上)。
+            a.Send(ShowtimeMsg(matchId + 1, level: 1, variant: 4, windowMs: 12000.0));
+            Assert.IsNull(b.WaitFor(NetProto.ShowtimeRelease, 300), "別場的事件不可轉發");
+
+            // 合法的一則:原封不動送到房裡其他人手上(旁觀者也要收得到 —— 那正是他要看的東西)。
+            a.Send(ShowtimeMsg(matchId, level: 1, variant: 4, windowMs: 12000.0));
+            var relay = b.WaitFor(NetProto.ShowtimeRelease, 3000);
+            Assert.IsNotNull(relay);
+            Assert.AreEqual(matchId, NetJson.Long(relay, "matchId"));
+            Assert.AreEqual(a.UserId, NetJson.Int(relay, "userId"));
+            Assert.AreEqual(1, NetJson.Int(relay, "level"));
+            Assert.AreEqual(4, NetJson.Int(relay, "variant"));
+            Assert.AreEqual(12000.0, NetJson.Num(relay, "windowMs"), 0.001);
+            Assert.IsNotNull(spectator.WaitFor(NetProto.ShowtimeRelease, 3000), "旁觀者也要看得到");
+
+            Assert.IsNull(a.WaitFor(NetProto.ShowtimeRelease, 300), "sender 的視窗已在本機開了,不可 echo");
+            Assert.IsNull(outsider.WaitFor(NetProto.ShowtimeRelease, 300), "事件不可洩漏到別房");
+
+            // 防洪:視窗本身就 8 秒以上,同一個人不可能在幾毫秒內再放一次。
+            a.Send(ShowtimeMsg(matchId, level: 2, variant: 7, windowMs: 18000.0));
+            Assert.IsNull(b.WaitFor(NetProto.ShowtimeRelease, 300), "同一個人的連發要被擋掉");
+        }
+
+        private static JObj ShowtimeMsg(long matchId, int level, int variant, double windowMs)
+            => JObj.New()
+                .Str(NetProto.FieldType, NetProto.ShowtimeRelease)
+                .Long("matchId", matchId)
+                .Int("level", level)
+                .Int("variant", variant)
+                .Num("windowMs", windowMs);
+
+        /// <summary>
         /// 端到端釘住 frames 的 <c>leaderUserId</c>:它是「所有人在同一個歌曲時刻的分數」比出來的,
         /// 再加上換人節流 —— 不是比最後收到的那筆(見 <see cref="LiveLeaderTracker"/> 的說明)。
         ///

@@ -155,6 +155,9 @@ namespace Sdo.Game.Net
         /// <summary>Reliable one-shot 50-combo visual event from a remote player.</summary>
         public event Action<NetComboMilestone> ComboMilestoneReceived;
 
+        /// <summary>遠端玩家按 SPACE 放出 ShowTime 視窗(舞者光環 + 街舞)。分數流推導不出來,見 NetProto.ShowtimeRelease。</summary>
+        public event Action<NetShowtimeRelease> ShowtimeReleaseReceived;
+
         /// <summary>
         /// 這一場的開場資料(matchStarting 收到的那份)。null = 現在不在一場裡。
         ///
@@ -490,6 +493,16 @@ namespace Sdo.Game.Net
                         var milestone = NetComboMilestone.Decode(node);
                         if (Match != null && milestone.MatchId == Match.MatchId)
                             Raise(ComboMilestoneReceived, milestone);
+                        break;
+                    }
+
+                case NetProto.ShowtimeRelease:
+                    {
+                        var release = NetShowtimeRelease.Decode(node);
+                        // matchId 的閘門與 comboMilestone 同一個理由:上一場路上還在飛的事件不可以
+                        // 套到下一場的舞者身上(那會在新歌的開頭莫名跳一段街舞)。
+                        if (Match != null && release.MatchId == Match.MatchId)
+                            Raise(ShowtimeReleaseReceived, release);
                         break;
                     }
 
@@ -1018,6 +1031,18 @@ namespace Sdo.Game.Net
                 .Str(NetProto.FieldType, NetProto.ComboMilestone)
                 .Long("matchId", matchId)
                 .Int("combo", combo));
+
+        /// <summary>
+        /// 回報「我按了 SPACE、ShowTime 視窗開了」。場上其他人要靠它才看得到我的光環與街舞
+        /// (檔位與 breaking 變體是本機骰的亂數,別台推不出來)。
+        /// </summary>
+        public void SendShowtimeRelease(long matchId, int level, int variant, double windowMs)
+            => Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.ShowtimeRelease)
+                .Long("matchId", matchId)
+                .Int("level", level)
+                .Int("variant", variant)
+                .Num("windowMs", windowMs));
 
         /// <summary>
         /// 回報自己在房間裡的位置與朝向。**只在走動時送**(見 <see cref="NetLimits.ClientMoveIntervalMs"/>),

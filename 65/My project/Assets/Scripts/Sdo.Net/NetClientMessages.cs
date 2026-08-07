@@ -208,6 +208,35 @@ namespace Sdo.Net
         }
     }
 
+    /// <summary>
+    /// 一位遠端玩家按 SPACE 放出 ShowTime 視窗。收端照這三個值就能把他的表演完整重現:
+    /// 舞者光環 + 那一支 breaking(<c>Level</c> 決定 E/N/H、<c>Variant</c> 決定第幾支)、演出 <c>WindowMs</c> 這麼久。
+    /// 欄位的合法範圍見 <see cref="ShowtimeReleaseRules"/>。
+    /// </summary>
+    public struct NetShowtimeRelease
+    {
+        public long MatchId;
+        public int UserId;
+        /// <summary>釋放檔位 0/1/2 → breaking_E / _N / _H。</summary>
+        public int Level;
+        /// <summary>那個檔位的變體編號(釋放者在歌曲載入時骰的,別台算不出來)。</summary>
+        public int Variant;
+        /// <summary>視窗長度(ms)。收端用自己的譜面時鐘從收到的那一刻起算。</summary>
+        public double WindowMs;
+
+        public static NetShowtimeRelease Decode(object node)
+        {
+            return new NetShowtimeRelease
+            {
+                MatchId = NetJson.Long(node, "matchId"),
+                UserId = NetJson.Int(node, "userId"),
+                Level = NetJson.Int(node, "level"),
+                Variant = NetJson.Int(node, "variant"),
+                WindowMs = NetJson.Num(node, "windowMs"),
+            };
+        }
+    }
+
     /// <summary>A chat message mapped to the client chat service.</summary>
     public struct NetChatMessage
     {

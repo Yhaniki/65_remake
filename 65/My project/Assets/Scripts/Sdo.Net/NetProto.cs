@@ -251,6 +251,16 @@
         /// </summary>
         public const string ComboMilestone = "comboMilestone";
 
+        /// <summary>
+        /// C→S→C 的 ShowTime 釋放:`{matchId, level, variant, windowMs}`(server 轉發時補上 `userId`)。
+        ///
+        /// 與 <see cref="ComboMilestone"/> 同一個理由要獨立成一則事件 —— 5 Hz 的分數快照裡,
+        /// 「他正在 ShowTime 視窗中」與「他打得很好」完全分不出來,而且視窗要用的檔位與 breaking 變體
+        /// 是釋放者那一台自己骰的亂數(見 <see cref="ShowtimeReleaseRules"/>)。
+        /// 沒有這則,場上其他人看不到釋放者的舞者光環與街舞動作。
+        /// </summary>
+        public const string ShowtimeRelease = "showtimeRelease";
+
 
         // ---- 旁觀 ----
 

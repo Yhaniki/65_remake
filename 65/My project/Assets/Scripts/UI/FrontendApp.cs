@@ -1044,6 +1044,7 @@ namespace Sdo.UI
             net.FramesReceived += OnNetFrames;
             net.ResultsReady += OnNetResults;
             net.ComboMilestoneReceived += OnNetComboMilestone;
+            net.ShowtimeReleaseReceived += OnNetShowtimeRelease;
             // 右側名單/名次:讀 server 推來的最新一筆。**不做插值/推測** —— 分數是別人的權威資料,
             // 猜出來的數字會讓名次在兩台上不一樣。
             game.NetOpponents = () =>
@@ -1074,6 +1075,9 @@ namespace Sdo.UI
             // 送 playFinished、拆遊戲、轉場回房間)。連線才需要 —— 一個人掛在結算畫面,整間房都開不了下一局。
             game.resultAutoConfirmSec = NetResultAutoConfirmSec;
             game.LocalComboMilestone = combo => net.SendComboMilestone(_netMatchId, combo);
+            // ShowTime 釋放:場上其他人要靠這則才看得到我的光環與街舞(分數流推導不出來)。
+            game.LocalShowtimeRelease = (level, variant, windowMs)
+                => net.SendShowtimeRelease(_netMatchId, level, variant, windowMs);
         }
 
         // ---- 分數流:收 / 送 ------------------------------------------------------------------------------------
@@ -1358,6 +1362,7 @@ namespace Sdo.UI
             net.FramesReceived -= OnNetFrames;
             net.ResultsReady -= OnNetResults;
             net.ComboMilestoneReceived -= OnNetComboMilestone;
+            net.ShowtimeReleaseReceived -= OnNetShowtimeRelease;
         }
 
         // 遊戲中按換鏡頭鍵（預設 F2）→ 存進 OPTION 遊戲頁的「遊戲視角」：切到固定鏡頭就記住是第幾台且標籤變「固定」，

@@ -5589,6 +5589,10 @@ namespace Sdo.Game
             // The meter itself stays Active (only its own Tick clears that) — nothing reads it past `_ended`, and the
             // result panel still needs its Bonus.
             if (showtimeMode) { if (_showtime.Active) OnShowtimeEnd(); else ClearShowtimeWindowFx(); }
+            // 同一個理由要收掉**別人**還開著的視窗:背景回放會把每位舞者的 DanceTimeSec 重指到迴圈時鐘,
+            // 留著的視窗會在回放開始後把它蓋回 breaking 的時鐘(那位舞者整段回放就跳錯了),而且光環會
+            // 一路亮到結算畫面上。
+            ClearRemoteShowtimeFx();
             // SetTrackVisible(false) also hid the ranking — but it must STAY up through the win/lose pose (final
             // standings). Re-show it here with the final order; only HideHudForPanel (result panel) hides it.
             if (_rosterName != null) { UpdateRosterList(); UpdateRankDisplay(); SetRankingVisible(true); }
@@ -6443,6 +6447,10 @@ namespace Sdo.Game
             SwapToBreakdance();                                           // dancer → breaking_{E|N|H}_{n}.dps for the window
             SpawnShowtimeAura();                                          // star-glow aura on the dancer (online effect 0x2c = body_star)
             SpawnBoardBurst();                                            // board flash (0x2d BOOM centre + 0x27 EDGE4 lightning columns ×2)
+            // 連線:告訴房裡其他人「我開視窗了」。**檔位與變體都要送** —— 別台的 _breakRolls 是它自己骰的,
+            // 少了這兩個值他們就算知道我在 ShowTime 也跳不出同一支街舞(見 ScreenGameplay.OnlineShowtime)。
+            int lvl = Mathf.Clamp(_showtime.ReleasedLevel, 0, 2);
+            LocalShowtimeRelease?.Invoke(lvl, _breakRolls[lvl], _showtime.WindowMs);
             Debug.Log($"[showtime] release lv{_showtime.ReleasedLevel} → {_showtime.WindowMs:0}ms window, bonus ×{_showtime.BonusMultiplier}");
         }
 
@@ -6474,10 +6482,15 @@ namespace Sdo.Game
         // 2→H ×8 — NOT the song difficulty); the variant number was rand-rolled ONCE at song load (_breakRolls) and
         // repeats for every release in the song. Break lengths (E≈10s/N≈14s/H≈19s) match the pas-sized windows.
         private DpsLoader PickBreakDps(int level)
+            => LoadBreakDps(level, _breakRolls[Mathf.Clamp(level, 0, 2)]);
+
+        /// <summary>指定檔位 + 變體的 breaking。遠端玩家的 ShowTime 走這一條 —— 他的變體是**他那一台**
+        /// 骰的,不能用本機的 <c>_breakRolls</c>(見 ScreenGameplay.OnlineShowtime)。</summary>
+        private DpsLoader LoadBreakDps(int level, int variant)
         {
             level = Mathf.Clamp(level, 0, 2);
             string tier = level == 0 ? "E" : level == 1 ? "N" : "H";
-            int n = _breakRolls[level] > 0 ? _breakRolls[level] : 1;
+            int n = variant > 0 ? variant : 1;
             var bd = LoadAsset("DANCE/BREAKING_" + tier + "_" + n + ".DPS", b => DpsLoader.Load(b));
             return (bd != null && bd.Rows != null && bd.Rows.Length > 0) ? bd : null;
         }
@@ -6532,14 +6545,8 @@ namespace Sdo.Game
         // from TickShowtime at (pelvis.x, showtimeAuraY, pelvis.z).
         private void SpawnShowtimeAura()
         {
-            if (string.IsNullOrEmpty(showtimeAuraEft) || _auraGo != null) return;
-            if (!_namedEftCache.TryGetValue(showtimeAuraEft, out var file))
-            {
-                var path = Path.Combine(SdoExtracted.Root, "3DEFT", showtimeAuraEft + ".EFT");
-                if (!VfsFile.Exists(path)) { Debug.LogWarning("[showtime] aura EFT missing " + path); return; }
-                file = EftFile.Load(VfsFile.ReadAllBytes(path));
-                _namedEftCache[showtimeAuraEft] = file;
-            }
+            if (_auraGo != null) return;
+            if (!TryLoadNamedEft(showtimeAuraEft, out var file)) return;
             var pelvis = _floorRing != null && _floorRing.Follow != null ? _floorRing.Follow.position
                          : new Vector3(_avatarChest.x, 0f, _avatarChest.z);
             _auraAnchor = new GameObject("ShowtimeAuraAnchor");
@@ -6569,15 +6576,23 @@ namespace Sdo.Game
             SpawnOneBoardBurst(showtimeBurstSideEft, showtimeBurstSide2Px, showtimeBurstSideScale, Quaternion.identity, persistent: true, speedMul: showtimeBurstSideSpeed);
         }
 
+        // 具名 3DEFT 的載入 + 快取(本機光環 / 板爆發 / 遠端玩家的光環共用同一份;.EFT 解析不便宜,
+        // 而遠端釋放可能在同一首歌裡反覆發生)。缺檔只警告一次性地跳過 —— 特效沒有比整場崩掉重要。
+        private bool TryLoadNamedEft(string name, out EftFile file)
+        {
+            file = null;
+            if (string.IsNullOrEmpty(name)) return false;
+            if (_namedEftCache.TryGetValue(name, out file)) return file != null;
+            var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
+            if (!VfsFile.Exists(path)) { Debug.LogWarning("[showtime] EFT missing " + path); return false; }
+            file = EftFile.Load(VfsFile.ReadAllBytes(path));
+            _namedEftCache[name] = file;
+            return file != null;
+        }
+
         private void SpawnOneBoardBurst(string name, Vector2 px, float scale, Quaternion rot, bool persistent, float speedMul = 1f)
         {
-            if (!_namedEftCache.TryGetValue(name, out var file))
-            {
-                var path = Path.Combine(SdoExtracted.Root, "3DEFT", name + ".EFT");
-                if (!VfsFile.Exists(path)) { Debug.LogWarning("[showtime] board-burst EFT missing " + path); return; }
-                file = EftFile.Load(VfsFile.ReadAllBytes(path));
-                _namedEftCache[name] = file;
-            }
+            if (!TryLoadNamedEft(name, out var file)) return;
             var go = new GameObject("ShowtimeBurst_" + name);
             go.transform.position = SdoLayout.ToWorld(px.x, px.y, showtimeBurstZ);
             go.transform.rotation = rot;               // effect-space rotation (particles are children; billboards re-orient themselves)

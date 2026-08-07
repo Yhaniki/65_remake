@@ -36,6 +36,10 @@ namespace Sdo.Server.Net
         private readonly Dictionary<int, Dictionary<int, int>> _comboMilestones
             = new Dictionary<int, Dictionary<int, int>>();
 
+        /// <summary>roomCode → (userId → 上一則放行的 ShowTime 釋放是 server 的哪一刻)。防洪用,見 <see cref="OnShowtimeRelease"/>。</summary>
+        private readonly Dictionary<int, Dictionary<int, long>> _showtimeReleases
+            = new Dictionary<int, Dictionary<int, long>>();
+
         /// <summary>roomCode to the authoritative live leader state for this match.</summary>
         private readonly Dictionary<int, LiveLeaderTracker> _liveLeaders
             = new Dictionary<int, LiveLeaderTracker>();
@@ -158,6 +162,7 @@ namespace Sdo.Server.Net
                 case NetProto.Frame: OnGameplayFrame(conn, node); break;
                 case NetProto.PlayFinished: OnPlayFinished(conn, node); break;
                 case NetProto.ComboMilestone: OnComboMilestone(conn, node); break;
+                case NetProto.ShowtimeRelease: OnShowtimeRelease(conn, node, now); break;
 
                 case NetProto.ChatSay: OnChatSay(conn, node, now); break;
                 case NetProto.ChatWhisper: OnChatWhisper(conn, node, now); break;
@@ -1226,6 +1231,7 @@ namespace Sdo.Server.Net
             _latestFrames.Remove(roomCode);
             _finalFrames.Remove(roomCode);
             _comboMilestones.Remove(roomCode);
+            _showtimeReleases.Remove(roomCode);
             _liveLeaders.Remove(roomCode);
         }
 
@@ -1337,6 +1343,69 @@ namespace Sdo.Server.Net
                 .Utf8();
 
             // The sender already played it locally; avoid replaying the same effect there.
+            ForEachInRoom(room, c =>
+            {
+                if (c.UserId != conn.UserId) c.SendPreEncoded(bytes);
+            });
+        }
+
+        /// <summary>
+        /// 轉發一則 ShowTime 釋放(按 SPACE 開視窗)。
+        ///
+        /// 與 <see cref="OnComboMilestone"/> 同一個形狀,理由也一樣:5 Hz 的分數快照裡看不出
+        /// 「他正在 ShowTime 視窗中」,而且要重現他的畫面所需的檔位與 breaking 變體是**他那一台自己骰的**
+        /// (見 <see cref="ShowtimeReleaseRules"/>)。收端靠這則才畫得出他的舞者光環與街舞。
+        ///
+        /// 🔴 三道門一個都不能少:必須是**這一場的參賽者**且座位真的在 playing(旁觀者/沒在打的人不能偽造
+        /// 別人場上的特效),欄位要在合法範圍(壞掉的 windowMs 會讓對方的舞者卡住整首歌),
+        /// 而且同一個人兩則之間要有最小間隔(視窗本身就 8 秒以上,這純粹是防每幀灌包)。
+        /// </summary>
+        private void OnShowtimeRelease(Connection conn, object node, long now)
+        {
+            var room = _rooms.RoomOf(conn.UserId);
+            if (room == null || room.Match == null || room.State.Status != RoomStatus.Playing) return;
+
+            long matchId = NetJson.Long(node, "matchId");
+            if (matchId != room.Match.MatchId) return;
+
+            int level = NetJson.Int(node, "level");
+            int variant = NetJson.Int(node, "variant");
+            double windowMs = NetJson.Num(node, "windowMs");
+            if (!ShowtimeReleaseRules.IsValid(level, variant, windowMs)) return;
+
+            bool participant = false;
+            var ids = room.Match.ParticipantUserIds;
+            for (int i = 0; i < ids.Length; i++)
+            {
+                if (ids[i] != conn.UserId) continue;
+                participant = true;
+                break;
+            }
+            if (!participant) return;
+
+            var seat = room.State.SeatOf(conn.UserId);
+            if (seat == null || seat.PlayState != PlayState.Playing) return;
+
+            Dictionary<int, long> lastByUser;
+            if (!_showtimeReleases.TryGetValue(room.Code, out lastByUser))
+            {
+                lastByUser = new Dictionary<int, long>();
+                _showtimeReleases[room.Code] = lastByUser;
+            }
+            long last;
+            if (lastByUser.TryGetValue(conn.UserId, out last) && !ShowtimeReleaseRules.AcceptsAt(last, now)) return;
+            lastByUser[conn.UserId] = now;
+
+            var bytes = JObj.New()
+                .Str(NetProto.FieldType, NetProto.ShowtimeRelease)
+                .Long("matchId", matchId)
+                .Int("userId", conn.UserId)
+                .Int("level", level)
+                .Int("variant", variant)
+                .Num("windowMs", windowMs)
+                .Utf8();
+
+            // 發送者的視窗已經在他自己那台開了(他按下去的那一幀就開),回送只會讓他自己被套第二次。
             ForEachInRoom(room, c =>
             {
                 if (c.UserId != conn.UserId) c.SendPreEncoded(bytes);

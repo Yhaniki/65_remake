@@ -55,7 +55,7 @@ server 是 async 讀取,兩邊 IO 寫法不同但**驗證邏輯必須一模一�
 | 組隊 | `assignTeams`{layout:"2v2"/"3v3"/"2v2v2"} / `setOwnTeam`{team:0..3} |
 | 開場 | `setReady` / `setSong`{NetSongRef} / `setRoomSettings` / `requestStart`{force,resolved} → `matchStarting`{matchId,startEpochMs,loadTimeoutMs,participants[],spectatorNames[],resolved,song,settings} / `setPlayState` / `gameplayStarted` / `gameplayAborted` / `resultsReady`{matchId,rows[]} |
 | 缺歌 | `setAvailability`{packId,state,progress} / `blobQuery`→`blobInfo` / `blobUploadBegin`→`blobUploadAccept`{need[]}→(chunks)→`blobUploadDone` / `blobProgress` / `blobDownloadBegin`→`blobManifest`→(chunks)→`blobDownloadDone` / `blobAvailable` / `blobError` |
-| 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{matchId,leaderUserId,f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²；`leaderUserId` = 權威領隊,見下) / `playFinished` / `comboMilestone`{matchId,combo} C→S→C |
+| 分數流 | `frame`{matchId,tMs,score,combo,maxCombo,hp,p,c,b,m} C→S / `frames`{matchId,leaderUserId,f:[…]} S→C(**server 攢所有人最新一筆固定 5 Hz 推一次** → N 人下行 N×5 而不是 N²；`leaderUserId` = 權威領隊,見下) / `playFinished` / `comboMilestone`{matchId,combo} C→S→C / `showtimeRelease`{matchId,level,variant,windowMs} C→S→C(見下) |
 | 房間走動 | `move`{roomCode,roomRev,slot,x,z,f,w} C→S / `moves`{roomCode,roomRev,m:[…]} S→C(同上,但頻率高一點；`slot`=座位 0..5 或旁觀 1000+索引，遲到的舊身分移動會被丟棄) |
 | 外觀 | `setLook`{gender,bodyIndex,parts[]} —— 握手時玩家還沒選性別/還沒讀 profile,所以外觀要另外送 |
 | 身分 | `setIdentity`{name,playerId,guild,guildEmblem,level} —— 同上的另一半:**選性別 == 選帳號**(女角/男角是兩個 profile,名字不一樣),只送 `setLook` 的話別人看到「新的男角模型 + 舊的女角名字」。兩者都在建房/加入/旁觀**之前**送 |
@@ -206,6 +206,28 @@ A 的最新一筆可能是歌曲時間 10000ms 的、B 的是 9600ms 的 —— 
 `(tMs, score)` 短期歷程(只在變動時記一筆、只留最近 5 秒),畫名單時取**最舊的一筆遠端 frame 的
 `tMs`**,把自己的分數倒帶到那一刻。取樣點單調遞增 → 名單上的數字不會倒退;有人卡住不再送 frame 時
 落後上限 2 秒,不會讓整張名單跟著他凍住。上方那排大分數仍然是即時的 —— 倒帶只影響名單與「第幾名」。
+
+### `showtimeRelease` —— 別人按 SPACE 時,我這台要看得見
+
+ShowTime 模式裡按 SPACE 會開一段自動全 PERFECT 的視窗,同時舞者換上 breaking 街舞、腳下亮起
+`body_star` 光環。**這件事推導不出來**,所以要獨立傳:
+
+* 分數流裡「他正在自動全 PERFECT 的視窗中」與「他打得很好」長得一模一樣 —— 5 Hz 的判定計數
+  (遠端跳/停唯一的原料,見 `Sdo.Ruleset.DanceGate`)區分不了這兩者。
+* 就算區分得了,還缺兩個**本機不可能算出**的值:`level`(釋放檔位 0/1/2 → breaking 的 E/N/H)與
+  `variant`(該檔位的變體編號)。官方是在**歌曲載入時**每個檔位各骰一次(`FUN_0092d280`),
+  那是釋放者那一台自己的亂數。
+
+少了這則的症狀就是使用者回報的那句:「遠端的人施放 space 跳 breaking 動作,看不到它的發光和特殊的
+舞蹈動作」—— 他在我的畫面上照舊跳歌曲編舞,腳下什麼都沒有。
+
+形狀與 `comboMilestone` 完全一樣(C→S→C、不回送給發送者、旁觀者也收得到)。server 三道門:
+必須是**這一場的參賽者**且座位真的在 `playing`、三個欄位在合法範圍(`Sdo.Net.ShowtimeReleaseRules`)、
+同一個人兩則之間至少 3 秒(視窗本身就 8 秒以上,這純粹擋每幀灌包)。
+
+收端(`ScreenGameplay.OnlineShowtime`)只重現**屬於那位舞者身上**的東西:光環 + 那一支 breaking,
+視窗到期就把他原本的編舞與時鐘原封不動還回去。note 板的金色換皮、兩側 EDGE4 閃電柱、中央 BOOM、
+氣條與加分數字都不做 —— 那些是**我自己的**打擊介面,別人放 ShowTime 不該讓我的板子閃起來。
 
 ### 曲末的輸贏:等權威名次,平手照座位序
 
