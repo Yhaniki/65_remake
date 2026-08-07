@@ -1425,6 +1425,9 @@ namespace Sdo.UI
                 spectator: game.spectatorMode,
                 online: _ctx != null && _ctx.Net != null && _ctx.Net.IsConnected,
                 gameMode: game.gameMode,
+                // 這一場幾個人。playerCount 是 WireNetGameplay 從 matchStarting 的 participants 灌進來的
+                // (離線維持預設 1)—— 一個人自己打完不記勝負,見 ShouldRecordWinLoss。
+                participants: game.playerCount,
                 // 🔴 記戰績用 LocalWonForRecord 而不是 LocalWon:**同分兩邊都記勝場**(使用者指定)。
                 // LocalWon 是「名次面板上的第一名」,平手時只會有一個人是 —— 拿它記戰績,平手的另一位
                 // 明明沒輸給誰卻被記一場敗。

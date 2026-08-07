@@ -11,10 +11,11 @@ namespace Sdo.UI.Core
     ///
     /// 政策(使用者指定):
     /// * **判定數(P/C/B/M)**:只要真的打完一場就累計,離線也算 —— 那些是玩家真的按出來的。
-    /// * **勝負**:只有**連線對局**、而且是**普通模式或 ShowTime 模式**才記。
+    /// * **勝負**:只有**連線對局**、**普通模式或 ShowTime 模式**、而且**這一場有兩個人以上**才記。
     ///   - 自由模式畫面上沒有名次可言(但 G幣/EXP 照發 —— 獎勵與勝負紀錄是兩回事)。
     ///   - 旁觀不是參賽者。
     ///   - 單機的對手是假資料 bot、本機幾乎必勝 —— 記了只會讓個人頁的勝率失去意義。
+    ///   - 一個人開房自己打完也一樣:沒有對手就沒有輸贏,那是白送的勝場(使用者指定)。
     /// * 中途離開(ESC)不算一場:那不是一份完整的成績,判定數也只有半首歌。
     /// </summary>
     public static class PlayStatsRecorder
@@ -33,23 +34,32 @@ namespace Sdo.UI.Core
         /// </summary>
         public static bool ShouldRecordRun(bool alreadyRecorded) => !alreadyRecorded;
 
-        /// <summary>這場的勝負要不要記?連線 + 非旁觀 + 普通/ShowTime 模式,三個都成立才記。</summary>
-        public static bool ShouldRecordWinLoss(bool finished, bool spectator, bool online, int gameMode)
-            => finished && !spectator && online && PlayStats.RecordsWinLoss(gameMode);
+        /// <summary>
+        /// 這場的勝負要不要記?連線 + 非旁觀 + 普通/ShowTime 模式 + <b>場上至少兩個參賽者</b>,四個都成立才記。
+        ///
+        /// 🔴 <paramref name="participants"/> 是這一場的**座位數**(server 在 matchStarting 發的
+        /// <c>participants</c>,開場就定案),不是結算時還活著的人數 —— 一個人在房裡自己打完,
+        /// 名次面板上他就是第一名,少了這條門檻等於每首歌白送一場勝場,勝率永遠 100%。
+        /// 用開場的座位數而不是結算列數,是為了不改「對手中途離開」那條路的行為(對方被 server
+        /// 從 <c>Participants</c> 移掉,結算只剩一列,但這一場本來就是兩個人開打的)。
+        /// </summary>
+        public static bool ShouldRecordWinLoss(bool finished, bool spectator, bool online, int gameMode, int participants)
+            => finished && !spectator && online && participants >= 2 && PlayStats.RecordsWinLoss(gameMode);
 
         /// <summary>
         /// 記一場。<paramref name="finished"/> = 打到曲末並看完結算(中途 ESC 走的是 false)。
         /// 回 true = 真的寫了檔(呼叫端可用來決定要不要 log)。
         /// </summary>
         public static bool Record(UserProfile who, int perfect, int cool, int bad, int miss,
-                                  bool finished, bool spectator, bool online, int gameMode, bool localWon)
+                                  bool finished, bool spectator, bool online, int gameMode, int participants,
+                                  bool localWon)
         {
             if (who == null) return false;
             if (!ShouldRecordPlay(finished, spectator)) return false;
 
             if (who.stats == null) who.stats = new PlayStats();
             who.stats.AddPlay(perfect, cool, bad, miss);
-            if (ShouldRecordWinLoss(finished, spectator, online, gameMode))
+            if (ShouldRecordWinLoss(finished, spectator, online, gameMode, participants))
                 who.stats.AddResult(localWon);
 
             ProfileManager.Save();

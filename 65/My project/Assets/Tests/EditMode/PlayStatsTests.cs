@@ -83,7 +83,7 @@ namespace Sdo.Tests
         public void Nothing_Is_Recorded_When_Spectating()
         {
             Assert.IsFalse(PlayStatsRecorder.ShouldRecordPlay(finished: true, spectator: true));
-            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, spectator: true, online: true, gameMode: 1));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, spectator: true, online: true, gameMode: 1, participants: 2));
         }
 
         [Test]
@@ -91,7 +91,7 @@ namespace Sdo.Tests
         {
             // 中途 ESC:判定數只有半首歌,而且「快輸了就退出」不該變成保住勝率的操作。
             Assert.IsFalse(PlayStatsRecorder.ShouldRecordPlay(finished: false, spectator: false));
-            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(false, false, online: true, gameMode: 1));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(false, false, online: true, gameMode: 1, participants: 2));
         }
 
         [Test]
@@ -102,18 +102,33 @@ namespace Sdo.Tests
             Assert.IsTrue(PlayStats.RecordsWinLoss(1));
             Assert.IsTrue(PlayStats.RecordsWinLoss(2));
 
-            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 0));
-            Assert.IsTrue(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 1));
-            Assert.IsTrue(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 2));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 0, participants: 2));
+            Assert.IsTrue(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 1, participants: 2));
+            Assert.IsTrue(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 2, participants: 2));
         }
 
         [Test]
         public void WinLoss_Is_Not_Recorded_Offline()
         {
             // 單機的對手是假資料 bot、本機幾乎必勝 —— 記了勝率就沒有意義。
-            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: false, gameMode: 1));
-            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: false, gameMode: 2));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: false, gameMode: 1, participants: 2));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: false, gameMode: 2, participants: 2));
             // 但判定數照記。
+            Assert.IsTrue(PlayStatsRecorder.ShouldRecordPlay(finished: true, spectator: false));
+        }
+
+        [Test]
+        public void WinLoss_Is_Not_Recorded_When_Playing_Alone()
+        {
+            // 🔴 使用者回報:一個人在房裡開普通模式打完,結算就是第一名 —— 每首歌白送一場勝場,
+            //    勝率從此永遠 100%。沒有對手就沒有輸贏,連線與否都一樣。
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 1, participants: 1));
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 2, participants: 1));
+            // 座位數壞掉(0/負數)也一樣不記 —— 不確定有幾個人時,寧可不記。
+            Assert.IsFalse(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 1, participants: 0));
+            // 兩個人才是一場真的對局。
+            Assert.IsTrue(PlayStatsRecorder.ShouldRecordWinLoss(true, false, online: true, gameMode: 1, participants: 2));
+            // 判定數不受影響:自己一個人打完的 P/C/B/M 照樣是玩家真的按出來的。
             Assert.IsTrue(PlayStatsRecorder.ShouldRecordPlay(finished: true, spectator: false));
         }
 

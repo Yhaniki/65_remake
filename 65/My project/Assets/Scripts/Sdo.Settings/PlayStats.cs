@@ -22,8 +22,10 @@ namespace Sdo.Settings
         /// <summary>完成的歌數(中途離開不算 —— 那不是一場完整的成績)。</summary>
         public int plays;
 
-        // ---- 勝負。**只有連線對局的普通模式與 ShowTime 模式**才會動(見 RecordsWinLoss)。----
-        //      自由模式沒有名次可言、旁觀不是參賽者、單機的對手是假資料 —— 那三種記了只會讓勝率失去意義。
+        // ---- 勝負。**只有連線對局的普通模式與 ShowTime 模式、而且場上兩個人以上**才會動
+        //      (模式那條在 RecordsWinLoss,人數那條在 PlayStatsRecorder.ShouldRecordWinLoss)。----
+        //      自由模式沒有名次可言、旁觀不是參賽者、單機的對手是假資料、一個人打沒有對手 ——
+        //      那四種記了只會讓勝率失去意義。
         public int wins;
         public int losses;
 
