@@ -45,11 +45,21 @@ namespace Sdo.Game
         public bool fitHairTop = false;     // 與 RoomHeadPortrait.fitHairTop 同義
 
         // ---- 跟頭的濾波(只有 MMD 那條用得到,見 AimFromMmd)----------------------------------------
-        // SDO 那條的取景中心是從**臉的 mesh bounds** 算的,姿勢一變框就跟著變形 → 天然就有殘留的相對運動,
-        // 頭在框裡看得出在動。MMD 的頭框是「錨定在頭骨上的固定大小盒子」,直接追等於把擺動整個抵消掉,
-        // 所以要跟本機那顆一樣走死區(見 RoomHeadPortrait 的 aimDeadZoneFaces 那幾個)。
-        public float aimDeadZoneFaces = HeadPortraitAimFilter.DefaultDeadZoneFaces;
-        public float aimSmoothSec = HeadPortraitAimFilter.DefaultSmoothSec;
+        // 🔴 **預設全關 = 每幀直接對準活的頭框**,因為本機那顆(RoomHeadPortrait.UpdateCam 的 MMD 分支)
+        //    就是這樣:`TryHeadBounds` → `FramePortrait` → 直接當 target,中間沒有任何濾波。
+        //
+        // 這裡曾經套上 SDO 那條的死區(0.3 個頭高),註解還寫「要跟本機那顆一樣走死區」—— 但那是看錯了:
+        // 本機走死區的是 **SDO** 那條(_aimFollow),MMD 那條沒有。兩邊的框根本不是同一種東西:
+        //   • SDO 的取景中心是每幀從**臉的 mesh bounds** 算的,姿勢一變框就跟著變形 → 追它會被形變帶著抖,
+        //     所以要死區。
+        //   • MMD 的框是 <see cref="MmdAvatar.StableHeadBox"/> —— 錨在頭骨上、大小取自 rest 姿勢的**直立**盒子,
+        //     轉頭/甩雙馬尾都不會改變它,只有錨點會動。追它是乾淨的,不需要濾波。
+        // 後果:死區半徑 0.3 頭高 ≈ 框高的 16%(頭本身才佔 55%),頭就在格子裡上下前後晃 —— 而且死區是球形,
+        // 連 z 也不補 → 頭還忽大忽小。使用者回報:「遠端載了模組後,上面大頭貼的頭會嚴重晃動,本機的不太會晃」。
+        //
+        // 欄位保留:想讓遠端那幾格「活一點」就把 aimDeadZoneFaces 調大(單位 = 頭框高),但那就會與本機不一致。
+        public float aimDeadZoneFaces = 0f;
+        public float aimSmoothSec = 0f;
         public float aimCreepSec = HeadPortraitAimFilter.DefaultCreepSec;
 
         private Camera _cam;
@@ -69,6 +79,7 @@ namespace Sdo.Game
             public Vector3 MmdAim0;       // MMD 取景的基準中心(角色座標系)—— 擺動是相對它量的
             public Vector3 MmdFollow;     // 濾波後的「跟頭」補償(死區內恆為上一幀的值,見 AimFromMmd)
             public float MmdHeadH;        // 頭框高度(角色座標系)—— 死區的尺標
+            public float MmdLastT;        // 這一格上次算取景的時間 —— 濾波的 dt(輪轉,不是每幀)
         }
 
         private readonly Dictionary<int, Slot> _slots = new Dictionary<int, Slot>();
@@ -265,18 +276,28 @@ namespace Sdo.Game
                 s.MmdAim0 = raw;
                 s.MmdFollow = Vector3.zero;
                 s.MmdHeadH = Mathf.Max(headWorld.size.y / scale, 1e-4f);
+                s.MmdLastT = 0f;
             }
 
-            // 🔴 **不能每幀直接追頭。**TryHeadBounds 是錨定在**活的**頭骨上的盒子,直接拿它當取景中心
-            // 等於相機把走路的上下擺動完全抵消掉 —— 頭就永遠釘在框正中央,看起來像一張靜止的圖
-            // (回報:「遠端的人在走路,上面大頭貼都沒動」)。這正是這個類別開頭那條註解說的
-            // 「擺動要在框內演出,相機跟著擺的話頭反而看起來是靜止的」,SDO 那條老早就處理過。
-            //
-            // 所以只補「持續偏同一邊」的那種(前傾滑翔會把頭一直往相機推 → 不補的話頭會爆大),
-            // 待機/走路的小擺動落在死區內 → 相機一動也不動,擺動在框內演出。
+            // 🔴 預設路徑:**每幀直接對準活的頭框**,與本機那顆一模一樣(理由見 aimDeadZoneFaces 那段註解 ——
+            //    MMD 的框是錨在頭骨上、大小取自 rest 姿勢的直立盒子,追它不會抖,不需要濾波)。
+            //    MmdFollow 照樣記著,這樣之後把死區調開時是從目前位置接續,不會跳一下。
+            if (!(aimDeadZoneFaces > 0f) && !(aimSmoothSec > 0f))
+            {
+                s.MmdFollow = raw - s.MmdAim0;
+                aimLocal = raw;
+                return true;
+            }
+
+            // 有人把死區調開了 → 走濾波:只補「持續偏同一邊」的位移(前傾滑翔會把頭一直往相機推),
+            // 小擺動落在死區內 → 相機不動,擺動在框內演出。
+            // 🔴 dt 是「這一格**上次拍到現在**」而不是 Time.deltaTime:這顆相機是輪轉的(房裡 N 個人就
+            //    N 幀才輪到一次),餵單幀時間等於把時間常數實際拉長 N 倍,追不動也追不準。
+            float dt = s.MmdLastT > 0f ? Mathf.Max(Time.time - s.MmdLastT, 0f) : Time.deltaTime;
+            s.MmdLastT = Time.time;
             s.MmdFollow = HeadPortraitAimFilter.Step(s.MmdFollow, raw - s.MmdAim0,
                                                      aimDeadZoneFaces * s.MmdHeadH,
-                                                     aimSmoothSec, aimCreepSec, Time.deltaTime);
+                                                     aimSmoothSec, aimCreepSec, dt);
             aimLocal = s.MmdAim0 + s.MmdFollow;
             return true;
         }
