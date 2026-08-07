@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Sdo.Game
@@ -45,14 +46,29 @@ namespace Sdo.Game
         /// 音符板也不受影響 —— 板/音符在主相機(layer 0),場景是另一台相機的 RenderTexture 疊上去的。
         ///
         /// 黑邊拿的是 <c>order − 1</c>(見 Label3D),所以字面用 2、黑邊 1,兩層都還在 0 之上。
+        ///
+        /// 這一組是**最遠那位**的值 —— 每個人實際吃的是依站位算出來的一段(見
+        /// <see cref="NameplateDrawOrder"/> / <see cref="ApplyWorldDrawOrder"/>),否則全場共用一組畫序
+        /// 會讓後面那個人的字面蓋掉前面那個人的黑邊,兩串名字糊在一起。
         /// </summary>
-        public const int WorldNameOrder = 2, WorldArrowOrder = 1;
+        public const int WorldNameOrder = NameplateDrawOrder.FirstFaceOrder;
+        public const int WorldArrowOrder = WorldNameOrder - 1;
+
+        // 場上所有活著的名牌。畫序是**跨名牌**的排名,所以要有一份全域清單:遠端名牌各自是獨立的
+        // GameObject(沒人集中持有),讓它們自己在 Init/OnEnable 進、OnDisable/OnDestroy 出最不會漏。
+        private static readonly List<HeadMarker> Live = new List<HeadMarker>();
+        private static readonly List<HeadMarker> SortMarkers = new List<HeadMarker>();
+        private static readonly List<float> SortDepths = new List<float>();
+        private static readonly List<int> SortRanks = new List<int>();
+        private static readonly List<int> SortOrders = new List<int>();
+        private static int _sortedFrame = -1;
 
         private SpriteRenderer _arrow;
         private Label3D _name;
         private Sprite[] _arrowFrames;
         private float _arrowStart;
         private bool _depthTestedWorld;
+        private int _worldFaceOrder = WorldNameOrder;
 
         public bool DepthTestedWorld => _depthTestedWorld;
         public GameObject NameRootForTest => _name != null ? _name.root : null;
@@ -64,6 +80,7 @@ namespace Sdo.Game
             _arrowFrames = arrowFrames;
             _arrowStart = Time.time;
             _depthTestedWorld = depthTestedWorld;
+            _worldFaceOrder = WorldNameOrder;   // 起手是「最遠那位」的值;第一次 ApplyWorldDrawOrder 會照站位改
             int layer = depthTestedWorld ? worldLayer : 0;
             gameObject.layer = layer;
 
@@ -79,6 +96,7 @@ namespace Sdo.Game
                                         depthTestedWorld ? WorldNameOrder : NameOrder, nameFontPx,
                                         TextAnchor.MiddleCenter, layer, depthTested: depthTestedWorld);
             _name.Text = playerName ?? string.Empty;
+            Register();
         }
 
         public void SetName(string playerName) { if (_name != null) _name.Text = playerName ?? string.Empty; }
@@ -90,6 +108,7 @@ namespace Sdo.Game
         public void EnableDepthTestedWorld(int worldLayer)
         {
             _depthTestedWorld = true;
+            _worldFaceOrder = WorldNameOrder;
             gameObject.layer = worldLayer;
             if (_arrow != null)
             {
@@ -114,6 +133,70 @@ namespace Sdo.Game
             _name.SetColors(face, Color.black);
         }
 
+        // 進出全域清單。註冊點是 Init(而不是只有 OnEnable):名牌一建好就該參與排名,而且 edit-mode
+        // 測試裡 Unity 根本不呼叫 OnEnable —— 只掛在 OnEnable 上的話,排序在測試中永遠是空的。
+        private void Register() { if (!Live.Contains(this)) Live.Add(this); }
+        private void OnEnable() => Register();
+        private void OnDisable() => Live.Remove(this);
+
+        /// <summary>
+        /// 這一面名牌沿相機視線的深度(愈大 = 愈遠)。量不到(還沒接上相機/anchor)就回 <see cref="float.MaxValue"/>
+        /// → 排最遠,而不是冒出來蓋住所有人(與房間名字牌同一個約定)。
+        /// </summary>
+        private float SortDepth()
+        {
+            Camera cam = CamGetter != null ? CamGetter() : null;
+            if (cam == null || AnchorGetter == null) return float.MaxValue;
+            var t = cam.transform;
+            return Vector3.Dot(AnchorGetter() - t.position, t.forward);
+        }
+
+        /// <summary>
+        /// 把這面名牌整組(字面 + 黑邊 + 箭頭)搬到 <paramref name="faceOrder"/> 這一段畫序。
+        /// 黑邊/箭頭吃 <c>faceOrder − 1</c>,所以字面永遠壓得住**自己的**黑邊。
+        /// </summary>
+        public void SetWorldFaceOrder(int faceOrder)
+        {
+            if (!_depthTestedWorld || faceOrder == _worldFaceOrder) return;   // 每幀跑 → 沒變就別碰 renderer
+            _worldFaceOrder = faceOrder;
+            if (_name != null) _name.SetSortingOrder(faceOrder);
+            if (_arrow != null) _arrow.sortingOrder = faceOrder - 1;
+        }
+
+        /// <summary>目前這面名牌字面的畫序(測試用)。</summary>
+        public int WorldFaceOrderForTest => _worldFaceOrder;
+
+        /// <summary>
+        /// 依站位重排全場名牌的畫序:近的人整組(**連黑邊**)畫在遠的人的字面之上。
+        ///
+        /// 🔴 不能只把大家設成同一個 order 讓 Unity 按距離排 —— 同一面名牌的 17 個 renderer(字面 + 16 向黑邊)
+        /// 幾乎在同一個位置,同 order 內的距離排序會讓字面和自己的黑邊順序抖動。一個人一段 order 才是穩的。
+        /// </summary>
+        public static void ApplyWorldDrawOrder()
+        {
+            SortMarkers.Clear();
+            SortDepths.Clear();
+            for (int i = 0; i < Live.Count; i++)
+            {
+                var m = Live[i];
+                if (m == null || !m._depthTestedWorld) continue;   // HUD 模式那條路徑維持它相對音符板挑的負值
+                SortMarkers.Add(m);
+                SortDepths.Add(m.SortDepth());
+            }
+            if (SortMarkers.Count == 0) return;
+            NameplateDrawOrder.FaceOrders(SortDepths, SortOrders, SortRanks);
+            for (int i = 0; i < SortMarkers.Count; i++) SortMarkers[i].SetWorldFaceOrder(SortOrders[i]);
+        }
+
+        // 排名是全場共用的一件事,但名牌沒有一個集中的擁有者(遠端那些是散在場景根的獨立物件),
+        // 所以由當幀第一個跑到 LateUpdate 的名牌代表全場排一次。
+        private static void SortWorldDrawOrderOncePerFrame()
+        {
+            if (_sortedFrame == Time.frameCount) return;
+            _sortedFrame = Time.frameCount;
+            ApplyWorldDrawOrder();
+        }
+
         /// <summary>Hide the arrow + name and STOP tracking (the name label is a separate root object that LateUpdate
         /// re-shows every frame, so disabling this component alone wouldn't hide it). Used when the result panel opens.</summary>
         public void Hide()
@@ -125,6 +208,7 @@ namespace Sdo.Game
 
         private void OnDestroy()
         {
+            Live.Remove(this);   // OnDisable 通常已經做過;edit-mode 的 DestroyImmediate 走不到那裡
             // Label3D deliberately owns a separate scene root (it is not parented under this component), so normal
             // GameObject hierarchy destruction cannot clean it. Hide first to avoid a one-frame orphan in play mode.
             if (_name == null || _name.root == null) return;
@@ -160,6 +244,7 @@ namespace Sdo.Game
 
         private void LateUpdate()
         {
+            SortWorldDrawOrderOncePerFrame();   // 排全場,不是排自己 → 在下面的 early-return 之前
             Camera cam = CamGetter != null ? CamGetter() : null;
             if (cam == null || AnchorGetter == null) return;
 
