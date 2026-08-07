@@ -964,16 +964,19 @@ namespace Sdo.Game
         public static bool DebugGaugeSweep;
         // ShowTime auto→manual HANDOFF. During the window AutoPlay forces PERFECT and HandleInput is NOT called, so a
         // real key the player presses INSIDE the window (anticipating a note at the seam) has its GetKeyDown edge
-        // consumed on an auto frame and lost — the boundary tap / hold-head would then MISS when manual resumes. Fix:
-        // ObserveShowtimeInput records, per lane, each in-window press's time (_stPressMs), release time (_stReleaseMs)
-        // and the EXACT note it aimed at (_stPressNote); on the single seam frame ReplayShowtimeSeamPress replays that
-        // press onto THAT note only, graded at the real press time, so the note earns its true grade instead of a MISS —
-        // and a held hold-head keeps going. Precise-targeted on purpose (a re-searched neighbour / any-held-key replay
-        // caused phantom hits + wrong-note misses). [user-reported handoff bug]
-        private bool _stJustEnded;                          // true only on the frame a ShowTime window ended → seam carry-over
-        private readonly double[] _stPressMs = new double[Keys];   // last real DOWN-edge time (ms) seen inside the window, per lane (-1 = none)
-        private readonly RuntimeNote[] _stPressNote = new RuntimeNote[Keys];   // the EXACT note that in-window press aimed at (null = none) → replay onto it precisely, never a re-searched neighbour
-        private readonly double[] _stReleaseMs = new double[Keys];   // last real key-UP time (ms) inside the window (-1 = none) → grade a released hold's tail at the TRUE release, not the seam
+        // consumed on an auto frame and lost — the boundary tap / hold-head would then MISS when manual resumes.
+        // ObserveShowtimeInput feeds every in-window press (its REAL time + the EXACT note it aimed at) and release
+        // into _seam; ReplayShowtimeSeamPress replays them on the seam frame, graded at the real press time, onto
+        // THOSE notes only (a re-searched neighbour / any-held-key replay caused phantom hits + wrong-note misses).
+        //
+        // 使用者回報接縫仍會斷(2026-08-07),三個實測破口都補在下面:
+        //  (1) 舊版每軌只留「最後一次」按鍵 → 視窗末尾連按兩下,第一下沒人補判 → ShowtimeSeam 改存一小串;
+        //  (2) 舊版補判是 `if (down) … else if (seam)` → 接縫那一幀又按一下就把補判擠掉 → 改成補判先跑;
+        //  (3) ★主因:視窗結束後第一次按鍵沿用自動的節奏,抓到 180~240ms 後才到的音符,判定窗對稱地把它
+        //      當場判成 MISS,玩家再也沒機會 → 寬限期內改成「太早就忽略」(ShowtimeSeamRules.IgnoreEarlyPress)。
+        //  另外長條:自動幫忙按住的長條佔著 _holding[lane],舊版接縫看到它就整個放棄(視窗內的放開沒人結算、
+        //  接手的按鍵去抓下一顆並覆蓋掉那條長條)→ 見 ReplayShowtimeSeamPress 與 PressLane 的兩道保護。
+        private readonly ShowtimeSeam<RuntimeNote> _seam = new ShowtimeSeam<RuntimeNote>(Keys);
         private double _nowMs;                              // this frame's song time (ms), shared with the HUD tick
         private SpriteRenderer _energyFrameL, _energyFrameR, _energyFill, _energyBadge;   // official frame + fill + level badge
         private SpriteRenderer _energyMini;                 // mini band-up flash chunk (EnergyProgress @279,15)
@@ -1352,7 +1355,11 @@ namespace Sdo.Game
             // 一般模式單人時死掉當場就出局、不再判定，這個 latch 對那條路是 no-op。
             _health = new HealthProcessor(healthLevel, lockOnDeath: true);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
-            _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // clear the auto→manual handoff latches
+            _seam.Clear();                                        // clear the auto→manual handoff latches
+            // 接縫寬限期 = 一個判定窗的寬度。視窗結束後這段時間內,提早落在 Miss 帶的按鍵只是被忽略(音符留著等你
+            // 再按一次),不會當場判死 —— 見 ShowtimeSeamRules.IgnoreEarlyPress。用 MissBoundary 而不是常數,
+            // 精度調鬆調緊時寬限期跟著走。
+            _seam.GraceMs = _engine.Windows.MissBoundary;
             _gaugeCur[0] = _gaugeCur[1] = _gaugeCur[2] = GaugeBaseP; _gaugeActive = 0;   // gauge positions re-init empty
             // official FUN_0092d280: breaking variants are rolled ONCE per song load (E=rand%6, N/H=rand&7) and stay
             // fixed for every release; the tier letter is picked at release time by the released energy level.
@@ -5505,10 +5512,10 @@ namespace Sdo.Game
                     // The frame can cross UntilMs before judging runs. Finish every head strictly inside the old
                     // window so a DSP-scheduled keysound can never exist without its matching auto-PERFECT.
                     AutoPlay(showtimeEndBeforeTick - 0.0001, showtime: true);
-                    if (autoPlay) { AutoPlay(now); _stJustEnded = false; }
+                    if (autoPlay) { AutoPlay(now); _seam.ConsumeSeamFrame(); }
                     else { HandleInput(now); AutoMiss(now); }
                 }
-                else if (autoPlay) { AutoPlay(now); _stJustEnded = false; }   // dev auto-play never handoffs → drop any pending seam flag
+                else if (autoPlay) { AutoPlay(now); _seam.ConsumeSeamFrame(); }   // dev auto-play never handoffs → drop any pending seam replay
                 else { HandleInput(now); AutoMiss(now); }
             }
             TickBombs(now, detonate: manualPlay);   // 炸彈:手動打時踩到(該軌按著)引爆;F8自動/ShowTime自動避雷,只安全流過
@@ -6294,10 +6301,13 @@ namespace Sdo.Game
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
                 if (anyHeld) mask |= 1 << lane;
                 if (down) { PressLane(lane, press); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
-                else if (_stJustEnded) ReplayShowtimeSeamPress(lane, now, anyHeld);    // ShowTime auto→manual SEAM: replay the in-window press that lost its GetKeyDown edge onto the exact note it aimed at
                 if (anyUp && !anyHeld) ReleaseLane(lane, press);   // released only when no set key is still held（放開同樣是輪詢邊緣 → 同一個中點修正）
             }
-            if (_stJustEnded) { _stJustEnded = false; for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; } }   // seam carry-over is a one-frame event
+                // ShowTime auto→manual SEAM 先跑,再處理這一幀的新按鍵。舊版是 `if (down) … else if (seam)`:
+                // 接縫那一幀玩家只要又按了一下(連打時很常見),視窗內那些遺失邊緣的按鍵就整批被擠掉、永遠不補判。
+                // 補判過的音符已 HeadJudged,底下的 PressLane 自然會跳過它去找真正該打的下一顆,兩者不會搶同一顆。
+                if (_seam.JustEnded) ReplayShowtimeSeamPress(lane, now, anyHeld);
+            if (_seam.JustEnded) _seam.ConsumeSeamFrame();   // seam replay is a one-frame event（寬限期繼續有效）
             _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
         }
 
@@ -6435,7 +6445,7 @@ namespace Sdo.Game
         private void OnShowtimeStart()
         {
             _preShowtimeNoteDir = NoteDir;   // remember the active skin (F4-selected or default) to restore on exit
-            for (int i = 0; i < Keys; i++) { _stPressMs[i] = -1.0; _stReleaseMs[i] = -1.0; _stPressNote[i] = null; }   // fresh handoff latches for this window
+            _seam.Clear();   // fresh handoff latches for this window（連上一個視窗殘留的寬限期一起清掉）
             ApplyNoteDir(Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_SHOWTIME"));   // golden showtime notes (online DOES swap)
             if (_showtimeHitFrames != null) { _savedBurstFrames = _burstFrames; _burstFrames = _showtimeHitFrames; _burstSwapped = true; }
             // Frida实机: release fires 0x50 showtimeboom + 0x51 electricity(loop) + 0x4e showtime. The big "SHOW TIME"
@@ -6457,7 +6467,9 @@ namespace Sdo.Game
         // Window ended: restore the pre-showtime note skin + hit burst + the song dance (there is NO bonus-tally chime).
         private void OnShowtimeEnd()
         {
-            _stJustEnded = true;   // arm the auto→manual seam carry-over for this frame's HandleInput (replay held/just-pressed keys)
+            // 武裝接縫:這一幀的 HandleInput 會重播視窗內所有遺失邊緣的按鍵,接下來一個判定窗的時間則是寬限期
+            // (提早按不判死,見 PressLane)。_nowMs 就是這一幀的譜面時間 —— 視窗到期與這一幀最多差一幀,遠小於寬限期。
+            _seam.MarkWindowEnded(_nowMs);
             if (_preShowtimeNoteDir != null) { ApplyNoteDir(_preShowtimeNoteDir); _preShowtimeNoteDir = null; }
             if (_burstSwapped) { _burstFrames = _savedBurstFrames; _savedBurstFrames = null; _burstSwapped = false; }
             if (_dpsSwapped && _avatar != null) { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _dpsSwapped = false; }   // 接回原本歌曲舞蹈
@@ -6616,35 +6628,52 @@ namespace Sdo.Game
             for (int lane = 0; lane < Keys; lane++)
                 foreach (var k in laneKeys[lane])
                 {
-                    if (Input.GetKeyDown(k)) { _stPressMs[lane] = now; _stPressNote[lane] = NearestHittable(lane, now); }   // latch the press time AND the exact note it aimed at, for a precise seam handoff
-                    if (Input.GetKeyUp(k)) _stReleaseMs[lane] = now;                                                        // latch the release time so a released hold's tail is graded at the TRUE let-go, not the seam
+            double press = PressTimeMs(now);   // 與手動路徑同一個輪詢中點修正 —— 補判要用真實按下時刻才判得準
+                    if (Input.GetKeyDown(k)) _seam.OnPress(lane, press, NearestHittable(lane, press));   // 記下按下時刻 + 當下瞄準的那一顆(接縫只認這一顆,絕不重新搜尋鄰居)
+                    if (Input.GetKeyUp(k)) _seam.OnRelease(lane, press);                                  // 記下放開時刻:長條尾判要用真實的放手時間,不是接縫那一幀
                 }
         }
 
-        // ShowTime auto→manual SEAM replay (one seam frame only). During the window HandleInput isn't called, so a real
-        // press the player made INSIDE the window — aiming at a note near the window's end — lost its GetKeyDown edge on
-        // an auto frame. ObserveShowtimeInput recorded that press's EXACT target note (_stPressNote) + time (_stPressMs);
-        // here we replay it onto THAT note only (never a re-searched neighbour), and only when it is still unjudged and
-        // the real press-time timing is an actual hit. That is what lets the boundary tap / hold-head the player pressed
-        // (and is still holding) earn its grade instead of flowing off into a MISS — without inventing phantom hits.
+        // ShowTime auto→manual SEAM replay (one seam frame only). During the window HandleInput isn't called, so every
+        // real press the player made INSIDE the window — aiming at notes near the window's end — lost its GetKeyDown
+        // edge on an auto frame. _seam recorded each press's EXACT target note + real time; here we replay them onto
+        // THOSE notes only (never a re-searched neighbour), and only while they are still unjudged and the real
+        // press-time timing is an actual hit. That is what lets the boundary taps / hold-heads the player pressed earn
+        // their grade instead of flowing off into a MISS — without inventing phantom hits.
         private void ReplayShowtimeSeamPress(int lane, double now, bool held)
         {
-            if (_holding[lane] != null) return;                    // an auto/pre-window hold is still running this lane → let it finish (don't grab a 2nd note)
-            var n = _stPressNote[lane];                            // the note this in-window press aimed at (null = no real in-window press → no phantom hit from a resting/held-through key)
-            if (n == null || n.Done || n.HeadJudged) return;       // already auto-perfected during the window, or never aimed → nothing to hand off
-            var j = _engine.JudgeHit(n.Note.StartTimeMs, _stPressMs[lane]);   // grade at the player's REAL press time
-            if (j == null || j.Value == Judgment.Miss) return;     // press too far off the aimed note → leave it for normal manual play (a fresh post-seam press), don't force a seam miss
-            n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
-            PlayOsuHitSample(n.Note, j.Value);
-            if (!n.Note.IsHold) { n.Done = true; return; }         // tap → done
-            if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; return; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
-            if (held) { BeginHold(lane, n); return; }              // still holding across the seam → hold continues (tail judged on the later real release / AutoMiss)
-            if (n.Note.IsFakeTail) { EndHold(lane, n, Judgment.Perfect); return; }   // cap 被 warp 掃掉 → 結尾不判定(見 ReleaseLane)
-            // player already let go INSIDE the window → judge the tail at the TRUE release time (clamped ≤ seam), not a lingering auto-Perfect and not the over-lenient seam time
-            double relMs = _stReleaseMs[lane] >= 0.0 ? Math.Min(_stReleaseMs[lane], now) : now;
-            var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss;
-            ApplyEvent(tail, lane);
-            EndHold(lane, n, tail);
+            // (1) 自動在視窗裡幫玩家按下的長條還佔著這一軌,而玩家其實在視窗內就放開了 —— 那次放開的邊緣被自動幀
+            //     吞掉,沒有人結算。舊版在這裡直接 return,長條就成了「幽靈按住」,一路撐到 AutoMiss 判尾判 MISS
+            //     (=使用者說的「自動長條按一半斷掉」)。用真實放開時刻(夾在接縫之前)正常收尾。
+            var running = _holding[lane];
+            if (running != null && !held && _seam.ReleasedAfterLastPress(lane))
+                ReleaseLane(lane, Math.Min(_seam.ReleaseMsFor(lane), now));
+            // 該軌仍有進行中的長條(玩家跨接縫按著,或自動按住而玩家沒放開)→ 交給它,視窗內的按鍵不再另外補判:
+            // 補了會搶走長條之後的音符,還會覆蓋 _holding[lane] 讓這條長條變成沒人結算的孤兒。
+            if (_holding[lane] != null) return;
+            var presses = _seam.PressesFor(lane);
+            for (int i = 0; i < presses.Count; i++)
+            {
+                var n = presses[i].Aimed;                          // 這次按下瞄準的那一顆(null = 附近沒有可打的音符)
+                if (n == null || n.Done || n.HeadJudged) continue;  // 已經被視窗內的自動打擊判掉,或根本沒瞄到 → 跳過
+                var j = _engine.JudgeHit(n.Note.StartTimeMs, presses[i].AtMs);   // grade at the player's REAL press time
+                if (j == null || j.Value == Judgment.Miss) continue;   // 這次按下離那顆太遠 → 交還一般手動(接縫寬限期會保護它不被提早判死),不硬塞一個 seam miss
+                n.HeadJudged = true; ApplyEvent(j.Value, lane); _recDownStart[lane] = Time.time;   // keydown burst on the replayed press too
+                PlayOsuHitSample(n.Note, j.Value);
+                if (!n.Note.IsHold) { n.Done = true; continue; }    // tap → done,繼續看這一軌還有沒有下一次按鍵要補
+                if (j.Value == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; continue; }   // bad hold head → never held: dimmed bar, AutoMiss fails the tail later (matches PressLane)
+                // 只有**最後一次**按下才可能是「現在還按著」的那一次;更早的按下後面必定又有一次按下,一定放開過。
+                bool stillHeld = held && i == presses.Count - 1;
+                if (stillHeld) { BeginHold(lane, n); return; }      // 跨接縫繼續按著 → 長條續行(尾判交給之後的真實放開 / AutoMiss),該軌到此為止
+                if (n.Note.IsFakeTail) { EndHold(lane, n, Judgment.Perfect); continue; }   // cap 被 warp 掃掉 → 結尾不判定(見 ReleaseLane)
+                // 玩家在視窗內就放掉了 → 用真實放開時刻判尾。最後一次按下用 latch 的放開時間;更早的那幾次用「下一次
+                // 按下的時刻」當放開時間(那是能取得的最接近上界),都不採用接縫時間 —— 那會過度寬容送分。
+                double relMs = i + 1 < presses.Count ? presses[i + 1].AtMs
+                             : (_seam.ReleaseMsFor(lane) >= 0.0 ? Math.Min(_seam.ReleaseMsFor(lane), now) : now);
+                var tail = _engine.JudgeHoldTail(n.Note.EndTimeMs ?? n.Note.StartTimeMs, relMs) ?? Judgment.Miss;
+                ApplyEvent(tail, lane);
+                EndHold(lane, n, tail);
+            }
         }
 
         private void PressLane(int lane, double now)
@@ -6652,8 +6681,23 @@ namespace Sdo.Game
             var n = NearestHittable(lane, now); if (n == null) return;
             Judgment jv;
             if (forcedJudge >= 0) jv = (Judgment)forcedJudge;                         // debug: force a grade on the hit
-            else { var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return; jv = j.Value; }
+            else
+            {
+                var j = _engine.JudgeHit(n.Note.StartTimeMs, now); if (j == null) return;
+                // ShowTime 接縫寬限期:提早落在 Miss 帶的按鍵只是忽略,音符留著等你在正確時間再按一次。視窗中你的
+                // 按鍵全被自動吞掉、節奏被帶偏,一結束就沿用那個節奏按下去 —— 舊行為會把 200ms 後才到的音符當場
+                // 判死,你再也沒機會補按。太晚的按鍵不在此列(過線了就是漏打)。見 ShowtimeSeamRules.IgnoreEarlyPress。
+                if (_seam.InGrace(now) && ShowtimeSeamRules.IgnoreEarlyPress(j, n.Note.StartTimeMs, now)) return;
+                jv = j.Value;
+            }
             n.HeadJudged = true; ApplyEvent(jv, lane);
+            // 這一軌還按著一條沒結束的長條時,絕不去撿「那條長條結束之後才到」的音符:那次按下是**重新按住這條
+            // 長條**(ShowTime 自動幫你按住頭、你在視窗結束後才按鍵接手,就是這個情況)。撿了的話那顆會被提早
+            // 判掉,而且它若也是長條,BeginHold 會覆蓋 _holding[lane],原本那條就成了沒人結算的孤兒 —— 尾判永遠
+            // 不出現,畫面上就是長條「斷掉」。同軌疊譜(音符落在長條結束之前)不受影響,照舊判定。
+            var running = _holding[lane];
+            if (running != null && running.Note.EndTimeMs.HasValue
+                && ShowtimeSeamRules.PressBelongsToRunningHold(running.Note.EndTimeMs.Value, n.Note.StartTimeMs)) return;
             PlayOsuHitSample(n.Note, jv);
             if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
             else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else BeginHold(lane, n); }   // Bad head = never held → dimmed bar
