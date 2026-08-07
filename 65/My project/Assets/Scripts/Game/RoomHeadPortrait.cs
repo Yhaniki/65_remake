@@ -42,6 +42,17 @@ namespace Sdo.Game
         /// <summary>true = 穿飛行翅膀也**不**換飛行 clip(照地面 idle 演)。結算列用:那裡沒有在飛,
         /// 而 flystay 的浮空前傾會讓頭貼跟其他人對不齊。</summary>
         public bool groundClipsOnly = false;
+        /// <summary>true = 這一格的 MMD 身體**要建布料**(頭髮/裙子會擺動)。
+        ///
+        /// 沒有布料時症狀不是「少一點細節」而是**頭髮完全不動**:<see cref="MmdAvatar"/> 的 retarget 會整組
+        /// 跳過 physics 骨(那些骨本來就是留給布料解算的),於是它們停在造型姿勢、剛性地跟著頭骨走
+        /// (使用者回報「遠端玩家大頭貼換 MMD 的沒有擺動」)。所以**看得到頭髮的那幾格都要開**:
+        /// 結算列(192×216)與房間座位那排的本機那格 —— 旁邊 5 格是 <c>RoomRemoteHeadSet</c> 拍現場角色,
+        /// 那幾隻本來就有布料,自己這格不開的話同一排裡只有我的頭髮是死的。
+        ///
+        /// 預設 false 是因為布料是建一具 MMD rig 最貴的一段:新的頭貼要自己決定「這格大到值得付這筆錢嗎」。
+        /// 而且只有真的畫出 MMD 身體時才付得到:SDO 穿搭沒有布料解算,這個旗標對它是 no-op。</summary>
+        public bool clothSim = false;
         /// <summary>待機 clip 換成這一支(相對路徑;null/空 = 用房間的大廳待機)。
         ///
         /// 結算列要的是**舞台**待機(WREST0072 / MREST0082)—— 本機那一列是它(BuildIdleHeadAvatar),
@@ -146,11 +157,11 @@ namespace Sdo.Game
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
             _mirrorPrimed = false;   // 新的頭貼 avatar → 第一次接上本體姿勢再硬切一次(見 LateUpdate)
-            // MMD 顯示模式下頭貼也換成 MMD 模型 (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
-            // sway is invisible, and the solver is the costliest part of an MMD rig — the hair just rides the head instead.
+            // MMD 顯示模式下頭貼也換成 MMD 模型 (framing: MmdAvatar.TryHeadBounds)。布料看 clothSim
+            // (預設不建 —— 那是 rig 最貴的一段;看得到頭髮的那幾格自己打開)。
             // 🔴 別人的那幾格(結算列)一定要走 RegisterRemote —— 走本機那條的話,他們會全部戴上**我**選的模型。
-            if (remoteMmdRef == null) MmdAvatarSwap.Register(_avatar, cloth: false);
-            else MmdAvatarSwap.RegisterRemote(_avatar, remoteMmdRef, cloth: false);
+            if (remoteMmdRef == null) MmdAvatarSwap.Register(_avatar, cloth: clothSim);
+            else MmdAvatarSwap.RegisterRemote(_avatar, remoteMmdRef, cloth: clothSim);
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作). 穿飛行翅膀時比照房間 avatar 用 flystay 浮空 idle /
             // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。

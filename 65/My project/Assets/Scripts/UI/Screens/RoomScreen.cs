@@ -804,18 +804,7 @@ namespace Sdo.UI.Screens
                 }
             }
 
-            if (_localHead == null)
-            {
-                var headGo = new GameObject("RoomLocalHead");
-                _localHead = headGo.AddComponent<RoomHeadPortrait>();
-                _localHead.layer = HeadLayer;
-                ApplyHeadFraming(_localHead, localMale);   // 男女各自的上下/遠近
-                _localHead.Init(localMale, localAvatarParts, localBody);
-                _localHead.SetSpectating(LocalSpectating);   // 旁觀進房的人:頭貼一開始就不要演飛行動作
-                _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
-                _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
-                _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;   // …and its exact pose (no drift)
-            }
+            if (_localHead == null) BuildLocalHead(localMale, localAvatarParts, localBody);
 
             // mask the room's 3D layers off the front-end UI camera (it renders ~0, so it would otherwise draw them flat)
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
@@ -899,15 +888,33 @@ namespace Sdo.UI.Screens
             // 舊的、頭貼不更新。故銷毀整個 _localHead 再重建並重接 provider。
             // (Destroy 幀尾才生效 → 先 SetActive(false)，否則舊頭 avatar 這一幀還在同一個 parkSpot，新頭相機會同時拍到兩顆。)
             if (_localHead != null) { _localHead.gameObject.SetActive(false); Destroy(_localHead.gameObject); _localHead = null; }
+            BuildLocalHead(male, parts, body);
+        }
+
+        /// <summary>
+        /// 建出「我自己那一格」座位頭貼(上面那排 6 格裡的本機那格)。
+        ///
+        /// 進房時建一次、每次換裝再整個重建一次 —— 兩條路都走這裡。**別把它拆回兩份**:這一整段
+        /// (layer / 布料 / 取景 / 旁觀 / 三個 provider)少接一項就是一個症狀各異的 bug
+        /// (頭貼不跟著走路、旁觀時頭在飛、換裝後頭貼不更新…),而兩份程式碼永遠只會改到一邊。
+        ///
+        /// 其他 5 格不走這裡:那是 <c>RoomRemoteHeadSet</c> 直接拍房間裡已經在跑的那幾隻角色,不另建 avatar。
+        /// </summary>
+        private void BuildLocalHead(bool male, string[] parts, int body)
+        {
             var headGo = new GameObject("RoomLocalHead");
             _localHead = headGo.AddComponent<RoomHeadPortrait>();
             _localHead.layer = HeadLayer;
+            // 換上 MMD 模型時頭髮/裙擺要跟著擺(見 RoomHeadPortrait.clothSim)。旁邊那 5 格拍的是現場角色、
+            // 本來就有布料 —— 不開的話同一排裡只有自己那格的頭髮是死的。
+            _localHead.clothSim = true;
             ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
             _localHead.Init(male, parts, body);
-            _localHead.SetSpectating(LocalSpectating);   // 重建會回到 Init 的預設(穿翅膀=飛)→ 旁觀中要再關掉一次
-            _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;
-            _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;
-            _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;
+            // 旁觀席上不演飛行動作:進房就在旁觀席時要關,換裝重建也會回到 Init 的預設(穿翅膀=飛)→ 得再關一次。
+            _localHead.SetSpectating(LocalSpectating);
+            _localHead.WalkingProvider = () => _scene != null && _scene.IsWalking;   // framed head mirrors the avatar's motion
+            _localHead.FacingProvider = () => _scene != null ? _scene.AvatarFacing : 0f;   // …and its left/right facing
+            _localHead.MirrorSourceProvider = () => _scene != null ? _scene.PlayerAvatar : null;   // …and its exact pose (no drift)
         }
 
         // 進/出房間廣播（進入房間的人送出；同房才收得到，只在「當前」分類顯示）。

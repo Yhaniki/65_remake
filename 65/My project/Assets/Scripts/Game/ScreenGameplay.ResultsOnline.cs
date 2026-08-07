@@ -162,6 +162,10 @@ namespace Sdo.Game
                     // 這是**別人**的頭貼 → MMD 走他自己宣告的模型(空＝他沒穿,就照他的 SDO 穿搭)。
                     // 不設的話這一格會走「本機」那條,整排結算頭貼都會戴上我選的模型。
                     portrait.remoteMmdRef = dancer.MmdRef ?? "";
+                    // 他身上是 MMD 的話,頭髮要會擺 —— 結算這格 192×216、頭幾乎填滿,不建布料的話
+                    // 頭髮是剛性跟著頭骨走的(見 RoomHeadPortrait.clothSim / MmdAvatar 的 retarget 跳過 physics 骨)。
+                    // 本機那一列同樣要開(BuildIdleHeadAvatar),整排才是同一個樣子。
+                    portrait.clothSim = true;
                     portrait.rtWidth = 192;
                     portrait.rtHeight = 216;
                     if (!portrait.Init(dancer.Male, dancer.Parts, dancer.BodyIndex))

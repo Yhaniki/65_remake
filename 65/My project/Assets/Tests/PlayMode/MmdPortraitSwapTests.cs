@@ -53,9 +53,9 @@ namespace Sdo.Tests
             foreach (var mr in driver.GetComponentsInChildren<MeshRenderer>(true))
                 Assert.IsFalse(mr.enabled, "the SDO body is still drawn behind the MMD one");
 
-            // (a2) no cloth solver on a portrait rig — the sway is invisible at 192×152 and the solver is the costliest
-            // part of a build. The hair rides the head in its styled rest pose instead.
-            Assert.IsFalse(mmd.HasCloth, "the 頭貼 rig built a hair/skirt sim it will never visibly use");
+            // (a2) 房間那顆頭貼**預設不建**布料:它整場都活著,而布料是 rig 最貴的一段。頭髮就維持造型姿勢
+            // 跟著頭骨走。要擺動的那幾格(結算列)自己把 clothSim 打開 —— 見下面那個測試。
+            Assert.IsFalse(mmd.HasCloth, "the 頭貼 rig built a hair/skirt sim it was not asked for");
 
             // (b) framing: the head box must be HEAD-sized. Miku's twintails hang off head-child bones down to the waist,
             // so a naive "head bone subtree" AABB would be most of the body — the portrait would show a full figure.
@@ -93,6 +93,39 @@ namespace Sdo.Tests
                 Assert.Greater(OpaqueFraction((RenderTexture)portrait.Texture), 0.05f,
                     "the 頭貼 RenderTexture is (near) empty — the portrait cam is not seeing the MMD rig");
             }
+
+            Object.Destroy(host);
+            yield return null;
+        }
+
+        /// <summary>
+        /// 結算列那幾格頭貼(<c>ScreenGameplay.AttachResultHeadPortraits</c> / <c>BuildIdleHeadAvatar</c>)是
+        /// <c>clothSim = true</c> 建的,MMD 身體上的頭髮/裙子才會擺動。
+        ///
+        /// 沒有布料時症狀不是「少了一點細節」而是**頭髮完全不動**:<see cref="MmdAvatar"/> 的 retarget 會整組
+        /// 跳過 physics 骨(那些骨本來就是留給布料解算的),於是它們停在 rest 姿勢剛性地跟著頭骨走
+        /// (使用者回報:「遠端玩家大頭貼換 MMD 的沒有擺動」)。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ResultRowPortrait_WithClothSim_BuildsTheHairSim()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            MmdAvatarSwap.SetEnabled(true);
+
+            var host = new GameObject("ResultHeadPortraitHost");
+            var portrait = host.AddComponent<RoomHeadPortrait>();
+            // 結算列的設定(見 AttachResultHeadPortraits):只對頭骨取景、地面 clip、192×216、**要布料**
+            portrait.clothSim = true;
+            portrait.boneFraming = true;
+            portrait.groundClipsOnly = true;
+            portrait.rtWidth = 192; portrait.rtHeight = 216;
+            Assert.IsTrue(portrait.Init(male: false), "portrait avatar failed to load");
+            for (int i = 0; i < 5; i++) yield return null;
+
+            var driver = host.GetComponentInChildren<SdoAvatar>(true);
+            var mmd = MmdAvatarSwap.ActiveFor(driver);
+            Assert.IsNotNull(mmd, "the 結算頭貼 avatar did not swap to the MMD body");
+            Assert.IsTrue(mmd.HasCloth, "結算頭貼 built no hair sim — the MMD hair can only ride the head rigidly");
 
             Object.Destroy(host);
             yield return null;

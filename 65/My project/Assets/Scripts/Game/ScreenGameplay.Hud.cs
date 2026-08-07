@@ -333,9 +333,11 @@ namespace Sdo.Game
             av.PoseInitialIdle();
             SetLayerRecursive(parent, headPortraitLayer);
             _headAvatar = av;
-            // MMD 顯示模式下結算頭貼也換成 MMD 模型 (framing: TryHeadBoundsRest below). No cloth sim — same reason as
-            // the room 頭貼: invisible at portrait size, and it is the most expensive part of building a rig.
-            MmdAvatarSwap.Register(av, cloth: false);
+            // MMD 顯示模式下結算頭貼也換成 MMD 模型 (framing: TryHeadBoundsRest below)。
+            // 🔴 布料要建(cloth: true):這格是 192×216、頭幾乎填滿,沒有布料時頭髮是剛性跟著頭骨走的
+            // ——MmdAvatar 的 retarget 會整組跳過 physics 骨(那些骨本來就是給布料解算的)。房間那顆頭貼
+            // 仍然不建(RoomHeadPortrait.clothSim 預設 false),它是整場都活著的,而布料是 rig 最貴的一段。
+            MmdAvatarSwap.Register(av, cloth: true);
             // cache the head bone's REST (bind) model-space position — the cam targets this (NOT the live animated bone),
             // so the camera stays FIXED and the idle head-bob plays out inside the frame instead of being chased.
             Vector3 hp = av.BoneModelPos("Bip01_Head");
