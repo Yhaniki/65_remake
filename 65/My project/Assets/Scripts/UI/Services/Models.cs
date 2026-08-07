@@ -2,7 +2,11 @@ using System.Collections.Generic;
 
 namespace Sdo.UI.Services
 {
-    public enum GameMode { Free, Normal }
+    // 🔴 數值要與協定/`GameSession.GameMode` 的編碼一致(0=自由 1=普通 2=ShowTime),
+    //    NetRoomMapping.ToUiMode / OnlineRoomService.SetMode 直接 cast。
+    //    以前這個 enum 只有 Free/Normal,ShowTime 的房間在大廳房卡與「房間信息」框裡
+    //    都被寫成「普通模式」—— 房間內顯示對、大廳顯示錯,同一間房兩種講法。
+    public enum GameMode { Free = 0, Normal = 1, ShowTime = 2 }
     public enum RoomStatus { Waiting, InGame }
     public enum JoinResult { Ok, Full, InGame, NotFound }
     public enum ChatChannel { Family, Friend, Current, Reply }

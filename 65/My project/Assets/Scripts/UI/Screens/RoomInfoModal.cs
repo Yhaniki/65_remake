@@ -298,7 +298,8 @@ namespace Sdo.UI.Screens
 
             // 房名空的時候要顯示「房主名 + 的舞蹈室」—— 與房卡上那行同一份規則,不要各算各的。
             _name.text = RoomLabels.DisplayName(r.Name, r.HostName);
-            _mode.text = L(r.Mode == GameMode.Normal ? "songselect.mode_normal" : "songselect.mode_free");
+            // 模式字走 RoomLabels.ModeKey —— 三種模式都要分(ShowTime 以前寫成「普通模式」)。
+            _mode.text = L(RoomLabels.ModeKey(r.Mode));
             _players.text = r.Count + "/" + r.Capacity;
             // 旁觀人數:房間快照沒帶旁觀者,官方那格是「0/10」。
             _audience.text = "0/" + AudienceCapacity;

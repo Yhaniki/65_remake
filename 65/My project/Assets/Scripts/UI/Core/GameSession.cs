@@ -111,9 +111,14 @@ namespace Sdo.UI.Core
         public int DropDirection = 0;    // 掉落方式：0=向上,1=向下,2=傾斜
 
         // ROOMDLG room settings (single-player: stored locally).
+        // 房間設定沒有 config.ini key 的那兩項的預設值(模式與場景有,見 RoomConfig.defaultGameMode/defaultScene)。
+        // 抽成常數是因為 ResetRoomSettingsToDefaults 要用同一個值 —— 兩邊各寫一個字面值就會漂。
+        public const int DefaultFormation = 0;     // 基本
+        public const int DefaultLookerCount = 10;  // 旁觀開滿
+
         public int GameMode = 0;      // 0=自由模式, 1=普通模式, 2=ShowTime模式 (氣條/集氣 → ScreenGameplay.showtimeMode)
-        public int Formation = 0;     // 0=基本, 1=扇形, 2=環線, 3=隨機
-        public int LookerCount = 10;  // 旁觀人數 0..10
+        public int Formation = DefaultFormation;     // 0=基本, 1=扇形, 2=環線, 3=隨機
+        public int LookerCount = DefaultLookerCount; // 旁觀人數 0..10
 
         public bool HasSong => !string.IsNullOrEmpty(SongGn);
 
@@ -125,25 +130,43 @@ namespace Sdo.UI.Core
             NoteType = RoomConfig.defaultNoteType;
             Team = RoomConfig.defaultTeam;
             DropDirection = RoomConfig.defaultDropDirection;
-            GameMode = RoomConfig.defaultGameMode;
             // 家族名跟著這個角色走（config.ini [Profile] 是 Default，角色自己設過就以角色的為準）。
             // 這裡種是因為 SeedRoomDefaults 每次切帳號都會重跑 —— 換角色時家族名要跟著換，
             // 而 GuildName 是家族頻道與送上線身分共同的來源。設定裡完全沒填 → 留著示範家族名，
             // 家族頻道才不會在單機下變成一個永遠說「你沒有家族」的死頁籤。
             string family = ProfileFields.FamilyName(ProfileManager.Active);
             GuildName = family.Length > 0 ? family : DemoGuildName;
-            // 場景：config 沒指定（-1，或 config.ini 被刪 → 回退預設 -1）就維持隨機；指定了就套用那個場景。
+            ResetRoomSettingsToDefaults();
+            // 錢包 + 衣櫃(擁有/穿搭) 現在從 active user 的 profile.json 載入 (見 WardrobeStore.Load，於 AppContext.CreateMock
+            // 呼叫)；首次(wallet 未 seeded)才發起始金額。這裡不再種錢包，避免每次開機把花掉的錢補回去。
+        }
+
+        /// <summary>
+        /// **房間設定**(模式/隊形/旁觀人數/場景)回到 config.ini 的預設 —— 出廠值是「自由模式 + 基本隊形 + 隨機場景」。
+        ///
+        /// 為什麼要單獨一個入口:線上時非房主會把**別人房間**的設定收進自己的 session
+        /// (<c>NetRoomSettingsPublisher.AdoptIfNotHost</c>,那是「把房主讓給別人房間就變自由模式」的修法)。
+        /// 收進來的值只該在那間房裡有效 —— 自己開新房時要回到自己的預設,而不是繼承剛才待過那間房的模式。
+        ///
+        /// 🔴 只碰房間設定。速度 / note 皮 / 組隊 / 掉落方向是**個人偏好**(官方就是分開的,見 NetRoomSettings),
+        /// 不在這裡重設。
+        /// </summary>
+        public void ResetRoomSettingsToDefaults()
+        {
+            GameMode = RoomConfig.defaultGameMode;   // 出廠 0 = 自由模式
+            Formation = DefaultFormation;
+            LookerCount = DefaultLookerCount;
+            // 場景：config 沒指定（-1，或 config.ini 被刪 → 回退預設 -1）就回到隨機；指定了就套用那個場景。
             if (RoomConfig.defaultScene < 0)
             {
-                StageRandom = true;
+                var def = StageCatalog.Default;
+                StageId = def.Id; StageFolder = def.Folder; StageRandom = true;
             }
             else
             {
                 var st = StageCatalog.Get(RoomConfig.defaultScene);
                 StageId = st.Id; StageFolder = st.Folder; StageRandom = false;
             }
-            // 錢包 + 衣櫃(擁有/穿搭) 現在從 active user 的 profile.json 載入 (見 WardrobeStore.Load，於 AppContext.CreateMock
-            // 呼叫)；首次(wallet 未 seeded)才發起始金額。這裡不再種錢包，避免每次開機把花掉的錢補回去。
         }
 
         /// <summary>

@@ -114,7 +114,9 @@ namespace Sdo.UI.Services
         public void SetMode(GameMode mode)
         {
             var settings = CurrentSettingsOrDefault();
-            settings.GameMode = mode == GameMode.Free ? 0 : 1;
+            // enum 的值就是協定代號(0=自由 1=普通 2=ShowTime)—— 以前寫成「Free→0 其餘→1」,
+            // 把 ShowTime 降級成普通模式送上去。
+            settings.GameMode = GameModeRules.Clamp((int)mode);
             _net.SetRoomSettings(settings);
         }
 

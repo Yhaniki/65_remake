@@ -289,6 +289,41 @@ namespace Sdo.Tests
             Assert.AreEqual(2f, b.max.y, 1e-3f, "2.93 > 1.35×2 → 退回幾何的 +2");
         }
 
+        // ---- tail 的上限參照是「含髮」的幾何(MaxTailOverGeometry)-------------------------------------------------
+        // 顱蓋整片都是髮材質的模型(Fuwawa Abyssgard / 宝鐘マリン V2:tail 2.0、剔髮後幾何頂只剩 1.667 / 2.154)
+        // 拿剔完髮的框當門檻會把 tail 誤判成說謊 → 退回用**光頭骨**的框 → 相機近 1.66/1.41 倍,頭爆大又被切頂。
+
+        /// <summary>顱蓋被頭髮蓋住的模型(照 Fuwawa 的比例縮寫):臉頂 +1.667、下巴 −0.5、髮頂 +2.673、tail = 2.0
+        /// (→ 顱頂 2.93)。<paramref name="hairTop"/> 可調,用來試探門檻。</summary>
+        private static PmxLoader BuildHairCappedHead(float hairTop = 12.673f)
+        {
+            var pmx = BuildModel(
+                (new Vector3(-1f, 11.667f, 0f), Head),   // 臉頂(顱蓋以下露出來的那一點點)
+                (new Vector3(1f, 9.5f, 0f), Head),       // 下巴
+                (new Vector3(0f, hairTop, 0f), Head),    // 髮皮/前髪 —— 綁在頭骨上,蓋住整片顱蓋
+                (new Vector3(0f, 0f, 0f), Center));      // 腳
+            Paint(pmx, ("顔", 2, 1f), ("前髪", 1, 1f), ("body", 1, 1f));
+            pmx.Bones[Head].TailOffset = new Vector3(0f, 2f, 0f);
+            return pmx;
+        }
+
+        [Test]
+        public void TryCompute_TrustsTheTail_WhenTheSkullIsHiddenUnderHair()
+        {
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHairCappedHead(), out _, out Bounds b));
+            Assert.AreEqual(MmdHeadBounds.HeadTopPerTail * 2f, b.max.y, 1e-3f,
+                            "含髮的幾何頂 2.673 撐得住 tail 說的 2.93 → 採信 tail,不是剔髮後的 1.667");
+            Assert.AreEqual(MmdHeadBounds.HeadBottomPerTail * 2f, b.min.y, 1e-3f);
+        }
+
+        [Test]
+        public void TryCompute_IgnoresTheTail_WhenEvenTheHairIsNotThatTall()
+        {
+            // 髮頂只到 +2.1 → 1.35×2.1 = 2.835 < 2.93:連頭髮都撐不到 tail 說的高度 → 這道門照樣咬。
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHairCappedHead(12.1f), out _, out Bounds b));
+            Assert.AreEqual(1.667f, b.max.y, 1e-3f, "退回剔髮後的幾何");
+        }
+
         [Test]
         public void TryCompute_TailWins_EvenWhenTheHairMaterialsAreUnrecognisable()
         {

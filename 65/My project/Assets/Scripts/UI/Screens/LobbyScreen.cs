@@ -1351,11 +1351,10 @@ namespace Sdo.UI.Screens
             return g != null && index >= 0 && index < g.Length && g[index] == 1;
         }
 
-        /// <summary>房卡上那格的模式字。與選歌畫面/房間畫面共用同一組 loc key —— 同一件事在三個地方
-        /// 不該有三種講法。(<c>GameMode</c> 只有 Free / Normal 兩個值;ShowTime 是房間裡另外一個開關,
-        /// 大廳的房間列表帶不到,所以這裡不分。)</summary>
-        private static string ModeLabel(GameMode mode)
-            => L(mode == GameMode.Normal ? "songselect.mode_normal" : "songselect.mode_free");
+        /// <summary>房卡上那格的模式字。與選歌畫面/房間畫面共用同一組 loc key(<see cref="RoomLabels.ModeKey"/>)
+        /// —— 同一件事在三個地方不該有三種講法。三種模式都要分:房間列表的 <c>mode</c> 欄位帶的就是
+        /// 房間設定的 gameMode(0/1/2),ShowTime 以前被歸進「普通模式」。</summary>
+        private static string ModeLabel(GameMode mode) => L(RoomLabels.ModeKey(mode));
 
         /// <summary>
         /// 捲軸被拖(或被點軌道)之後 → 換算成第幾列。房卡是**整數分頁**的,所以 0..1 要乘上可捲列數
@@ -1418,6 +1417,12 @@ namespace Sdo.UI.Screens
         /// </summary>
         private void CreateRoomNow(string name, GameMode mode)
         {
+            // 🔴 自己開新房 = 房間設定回到自己的預設(出廠是自由模式)。
+            //    非房主會把**別人房間**的設定收進 session(見 NetRoomSettingsPublisher.AdoptIfNotHost),
+            //    不清掉的話「在別人的 ShowTime 房待過 → 回大廳開自己的房」會莫名其妙也是 ShowTime。
+            //    這行要在 CreateRoom 之前:建房成功後房主的第一份快照就會把 session 的值推上去。
+            if (Ctx != null && Ctx.Session != null) Ctx.Session.ResetRoomSettingsToDefaults();
+
             var net = Ctx.Net;
             if (net != null)
             {
@@ -1437,7 +1442,9 @@ namespace Sdo.UI.Screens
                 return;
             }
 
-            Ctx.Rooms.CreateRoom(mode);
+            // 離線:房卡上的模式字要跟房間面板一致 —— 面板讀的是 session,所以這裡也拿 session 的值。
+            // (建房對話框那格「模式」是官方的房型欄位、固定值,不是玩法模式,見 RoomCreateModal.Confirm。)
+            Ctx.Rooms.CreateRoom(NetRoomMapping.ToUiMode(Ctx.Session != null ? Ctx.Session.GameMode : (int)mode));
             EnterRoom();
         }
 

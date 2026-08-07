@@ -396,8 +396,11 @@ namespace Sdo.UI.Screens
         {
             // 選性別 == 進「我自己」的房間當房主：確保當前身分真的擁有房主座位。若殘留了上一個身分/別人的房
             // (例如 ESC 退出未清房)，先離開再重建，否則 IsHost=false → 房主標記消失。
+            // 自己的房 = 房間設定回到自己的預設(出廠自由模式)。理由見 GameSession.ResetRoomSettingsToDefaults。
+            if (Ctx != null && Ctx.Session != null) Ctx.Session.ResetRoomSettingsToDefaults();
             if (Ctx != null && Ctx.Rooms != null)
-                RoomEntry.EnsureOwnHostRoom(Ctx.Rooms, GameMode.Normal);
+                RoomEntry.EnsureOwnHostRoom(Ctx.Rooms,
+                    NetRoomMapping.ToUiMode(Ctx.Session != null ? Ctx.Session.GameMode : 0));
             // 進房間轉場：漸黑 → loading → 漸亮，房間 UI 從四邊滑入（Nav.PlayRoomEntrance）。切畫面(GoTo)在全黑時執行。
             ScreenTransition.Run(() => GoTo(ScreenId.Room), onReveal: Nav.PlayRoomEntrance);
         }

@@ -86,7 +86,19 @@ namespace Sdo.Game
         /// 表示先沒照慣例填 → 退回量幾何。</summary>
         public const float MinTailPerHeight = 0.03f, MaxTailPerHeight = 0.20f;
         /// <summary>tail 推出來的顱頂比「實際量到的頭部幾何頂」還高過這個倍數 = tail 在說謊(幾何裡根本沒有那麼
-        /// 高的頭)→ 退回量幾何。反過來低很多是**正常**的,那正是角/帽子被排除掉的樣子(La+ 是 0.51)。</summary>
+        /// 高的頭)→ 退回量幾何。反過來低很多是**正常**的,那正是角/帽子被排除掉的樣子(La+ 是 0.51)。
+        ///
+        /// 🔴 比的是**含髮**的那個框(<see cref="TryCompute"/> 餵給 <see cref="TryTailBox"/> 的第三個參數),
+        ///    不是剔完頭髮的。這道門只問一件事:「這顆頭上到底有沒有東西長那麼高?」—— 頭髮當然算。拿剔完髮的框
+        ///    去比的話,顱蓋整片都是髮材質的模型會被誤判成「tail 在說謊」:
+        ///    <list type="bullet">
+        ///    <item>Fuwawa Abyssgard:tail 2.0 → 顱頂 2.93;剔髮後幾何頂只剩 1.667(臉那一塊)→ 1.35×1.667 = 2.25 &lt; 2.93 → 誤退</item>
+        ///    <item>宝鐘マリン V2:同樣 tail 2.0;剔髮後 2.154 → 2.91 &lt; 2.93,差 0.8% 也誤退</item>
+        ///    </list>
+        ///    誤退的後果是拿**光頭骨**的框(1.98 / 2.33)當尺標,而畫出來的頭連髮帶耳高 3.45 / 4.10 —— 是框的 1.74/1.76 倍
+        ///    (校正這組常數的初音只有 1.11~1.21 倍)→ 相機近了 1.66/1.41 倍,頭爆大又被切頂(使用者截圖)。
+        ///    改看含髮的框之後兩包都採信 tail,可見的頭回到畫面高的 57.7% / 68.5%(初音 64.3%、SDO 63.6%)。
+        ///    這樣**不會**放鬆對角/帽子的防護:角是把幾何頂**撐高**,本來就不會踩到這道門(La+ 撐到 4.44)。</summary>
         public const float MaxTailOverGeometry = 1.35f;
 
         /// <summary>Fallback only: how far BELOW the head bone the subtree slab reaches, as a fraction of the hair height
@@ -249,8 +261,10 @@ namespace Sdo.Game
             headBone = FindBone(pmx.Bones, HeadBoneJp);
             if (headBone < 0) return false;
 
-            if (!TryMeasureGeometry(pmx, headBone, out headLocal)) return false;
-            if (TryTailBox(pmx, headBone, headLocal, out var tailBox)) headLocal = tailBox;   // 首選:骨頭說了算
+            // 量幾何拿到兩個框:剔掉頭髮的(頭的大小,tail 不可信時的後備)與含髮的(只拿來當 tail 的上限參照,
+            // 見 MaxTailOverGeometry —— 顱蓋是髮材質的模型,剔完那個框比 tail 矮一大截,拿它當門檻會誤退)。
+            if (!TryMeasureGeometry(pmx, headBone, out headLocal, out var withHair)) return false;
+            if (TryTailBox(pmx, headBone, withHair, out var tailBox)) headLocal = tailBox;   // 首選:骨頭說了算
             return true;
         }
 
@@ -265,9 +279,10 @@ namespace Sdo.Game
             return b.TailOffset.y;
         }
 
-        /// <summary>頭的框由 tail 長度算出來(見上面那段註解)。<paramref name="geometry"/> ＝ 量幾何得到的框,
-        /// 只拿來做「tail 有沒有在說謊」的上限檢查。tail 不可信就回 false,呼叫端留著幾何那個框。</summary>
-        public static bool TryTailBox(PmxLoader pmx, int headBone, Bounds geometry, out Bounds tailBox)
+        /// <summary>頭的框由 tail 長度算出來(見上面那段註解)。<paramref name="hairyGeometry"/> ＝ 量幾何得到的框,
+        /// **含頭髮**(見 <see cref="MaxTailOverGeometry"/>:這裡只拿它做「tail 有沒有在說謊」的上限檢查,頭髮也是
+        /// 長在頭上的東西,要算)。tail 不可信就回 false,呼叫端留著幾何那個框。</summary>
+        public static bool TryTailBox(PmxLoader pmx, int headBone, Bounds hairyGeometry, out Bounds tailBox)
         {
             tailBox = default;
             float tail = HeadTailLength(pmx?.Bones, headBone);
@@ -281,7 +296,7 @@ namespace Sdo.Game
             if (frac < MinTailPerHeight || frac > MaxTailPerHeight) return false;   // 表示先沒照慣例填
 
             float top = HeadTopPerTail * tail, bottom = HeadBottomPerTail * tail;
-            if (top > MaxTailOverGeometry * geometry.max.y) return false;           // 幾何裡沒有那麼高的頭
+            if (top > MaxTailOverGeometry * hairyGeometry.max.y) return false;      // 幾何裡沒有那麼高的頭
 
             float h = top - bottom;
             // X/Z 只有 size 會被讀到(StableHeadBox 把框釘在頭骨的 x/z 上),給一個等邊的方框即可。
@@ -289,16 +304,28 @@ namespace Sdo.Game
             return true;
         }
 
-        /// <summary>量幾何:綁在頭骨(或其子骨)上、**扣掉頭髮材質**的那一塊。tail 不可信時的後備。</summary>
-        private static bool TryMeasureGeometry(PmxLoader pmx, int headBone, out Bounds headLocal)
+        /// <summary>量幾何:綁在頭骨(或其子骨)上、**扣掉頭髮材質**的那一塊(<paramref name="headLocal"/>),
+        /// tail 不可信時的後備。<paramref name="hairyGeometry"/> ＝ 同一塊但**含髮**,給 <see cref="TryTailBox"/>
+        /// 當上限參照(認不出頭髮時兩個框相同)。</summary>
+        private static bool TryMeasureGeometry(PmxLoader pmx, int headBone, out Bounds headLocal, out Bounds hairyGeometry)
         {
             var keep = VisibleNonHairVertices(pmx);
-            if (keep == null) return TryMeasure(pmx, headBone, null, out headLocal);   // 認不出頭髮 → 照舊全收
+            if (keep == null)   // 認不出頭髮 → 照舊全收,兩個框就是同一個
+            {
+                bool ok = TryMeasure(pmx, headBone, null, out headLocal);
+                hairyGeometry = headLocal;
+                return ok;
+            }
 
-            if (!TryMeasure(pmx, headBone, keep, out headLocal)) return TryMeasure(pmx, headBone, null, out headLocal);
+            bool gotHairy = TryMeasure(pmx, headBone, null, out hairyGeometry);
+            if (!TryMeasure(pmx, headBone, keep, out headLocal))
+            {
+                headLocal = hairyGeometry;
+                return gotHairy;
+            }
             // 剔到只剩一小塊 = 把臉本身當成頭髮剔掉了(材質名字騙了我們)→ 整塊退回含髮的量法,寧可跟以前一樣。
-            if (TryMeasure(pmx, headBone, null, out var withHair) && headLocal.size.y < MinSkullFrac * withHair.size.y)
-                headLocal = withHair;
+            if (gotHairy && headLocal.size.y < MinSkullFrac * hairyGeometry.size.y) headLocal = hairyGeometry;
+            if (!gotHairy) hairyGeometry = headLocal;
             return true;
         }
 

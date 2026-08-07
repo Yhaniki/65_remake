@@ -557,6 +557,10 @@ namespace Sdo.UI
             if (_ctx == null) return;
             if (_ctx.Rooms.CurrentRoom != null) { _ctx.Flow.GoTo(ScreenId.Room); return; }
 
+            // 自己開新房 = 房間設定回到自己的預設(出廠自由模式)—— 與 LobbyScreen.CreateRoomNow 同一條規則,
+            // 理由見 GameSession.ResetRoomSettingsToDefaults(非房主會把別人房間的設定收進 session)。
+            if (_ctx.Session != null) _ctx.Session.ResetRoomSettingsToDefaults();
+
             // 線上模式:建房是非同步的(要等 server 配房號),所以在回呼裡才切畫面。
             if (_ctx.Net != null)
             {
@@ -572,7 +576,8 @@ namespace Sdo.UI
                 return;
             }
 
-            _ctx.Rooms.CreateRoom(Sdo.UI.Services.GameMode.Normal);
+            _ctx.Rooms.CreateRoom(Sdo.UI.Services.NetRoomMapping.ToUiMode(
+                _ctx.Session != null ? _ctx.Session.GameMode : 0));
             _ctx.Flow.GoTo(ScreenId.Room);
         }
 

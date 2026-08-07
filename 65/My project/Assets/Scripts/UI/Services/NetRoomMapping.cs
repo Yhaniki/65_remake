@@ -42,9 +42,7 @@ namespace Sdo.UI.Services
             info.HostUserId = snap.HostUserId;
             info.Capacity = snap.Capacity;
 
-            // GameMode:協定用 int(0=自由 1=普通 2=ShowTime),UI 的 enum 只有 Free/Normal。
-            // ShowTime 在 UI enum 裡沒有對應值 —— 當成 Normal(它是「普通模式 + 氣條」的變體)。
-            info.Mode = snap.Settings != null && snap.Settings.GameMode == 0 ? GameMode.Free : GameMode.Normal;
+            info.Mode = ToUiMode(snap.Settings != null ? snap.Settings.GameMode : 0);
 
             // 房間狀態:協定有四種,UI 的 enum 只有 Waiting/InGame。
             info.Status = snap.Status == NetRoomStatus.Open ? UiRoomStatus.Waiting : UiRoomStatus.InGame;
@@ -131,7 +129,7 @@ namespace Sdo.UI.Services
             info.Name = e.Name ?? "";
             info.HostName = e.HostName ?? "";
             info.Capacity = e.Capacity;
-            info.Mode = e.Mode == 0 ? GameMode.Free : GameMode.Normal;
+            info.Mode = ToUiMode(e.Mode);
             info.Status = e.Status == NetRoomStatus.Open ? UiRoomStatus.Waiting : UiRoomStatus.InGame;
             info.SongTitle = string.IsNullOrEmpty(e.SongTitle) ? null : e.SongTitle;
             info.SongLevel = e.SongLevel;   // 0 = 不知道(見 NetRoomListEntry.SongLevel)
@@ -158,6 +156,16 @@ namespace Sdo.UI.Services
             }
             return info;
         }
+
+        /// <summary>
+        /// 協定的模式代號(0=自由 1=普通 2=ShowTime)→ UI 的 <see cref="GameMode"/>。
+        ///
+        /// 🔴 以前這裡寫的是「0 → Free,其餘 → Normal」,於是 ShowTime 的房間在大廳房卡與
+        /// 「房間信息」框裡都變成「普通模式」(房間內讀 <c>Settings.GameMode</c> 所以是對的 ——
+        /// 同一間房兩種講法,而且只有列表那邊錯)。夾值與 <see cref="GameModeRules.Clamp"/> 一致:
+        /// 未來 server 多出第 4 種模式時退回 ShowTime 而不是丟出一個 enum 裡沒有的數字。
+        /// </summary>
+        public static GameMode ToUiMode(int gameMode) => (GameMode)GameModeRules.Clamp(gameMode);
 
         public static List<RoomInfo> ToRoomInfos(NetRoomListEntry[] entries)
         {

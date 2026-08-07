@@ -758,6 +758,10 @@ namespace Sdo.UI.Screens
             }
             // joinResult and the first roomState can arrive before this screen subscribes; reconcile the snapshot now.
             SyncNetSongAvailability();
+            // 同一個理由:第一份 roomState 可能早於 OnRoomUpdated 的訂閱 → 非房主要在這裡先把
+            // 房間設定收進 session。漏掉的話「一進房房主就走人」那一瞬間升上來的新房主
+            // 會拿自己 config.ini 的預設值把整間房的模式/場景蓋掉(見 AdoptIfNotHost)。
+            NetRoomSettingsPublisher.AdoptIfNotHost(Ctx);
 
 
             bool localMale = Ctx != null && Ctx.Session != null && Ctx.Session.Gender == 1;
@@ -1032,6 +1036,11 @@ namespace Sdo.UI.Screens
             // 房間設定(模式/隊形/旁觀人數/場景)同理:在此之前根本沒有任何一條路徑把它們送上去,
             // 所以線上這間房永遠停在 server 的預設值 —— 房主選了「普通模式」別人還是看到「自由模式」,
             // 而「只有普通模式才能組隊」就永遠不成立。守門是「跟 server 手上的不一樣才送」。
+            //
+            // 🔴 順序不能反:**先收再推**。非房主要先把房間設定收進自己的 session,
+            //    否則房主一轉移,新房主就拿自己 config.ini 的預設值(通常是自由模式)把整間房蓋掉
+            //    —— 使用者回報的「ShowTime 的房間把房主給別人之後變成自由模式」就是這條。
+            NetRoomSettingsPublisher.AdoptIfNotHost(Ctx);
             NetRoomSettingsPublisher.SyncIfHost(Ctx);
             // 先取消/切換上一首歌的傳輸，再回報「我有沒有這首歌」。
             // 沒有可用性回報時，server 眼中每個人都是 Unknown，
@@ -3008,7 +3017,7 @@ namespace Sdo.UI.Screens
             // 兩邊本來就該一致;推送還沒成功時顯示 server 手上的那個才是誠實的。
             int gameMode = RoomGameMode();
             if (_modeLabel != null)
-                _modeLabel.SetText(L(gameMode == 2 ? "songselect.mode_showtime" : gameMode == 1 ? "songselect.mode_normal" : "songselect.mode_free"));
+                _modeLabel.SetText(L(RoomLabels.ModeKey(gameMode)));
 
             // 場景縮圖：隨機 → RANDOM；具體 → Scene{id+1}（官方縮圖編號是 1-based）
             bool sceneRandom = netSet != null ? netSet.SceneRandom : s.StageRandom;
