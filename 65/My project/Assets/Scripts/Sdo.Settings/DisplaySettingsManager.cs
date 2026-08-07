@@ -86,6 +86,9 @@ namespace Sdo.Settings
             s.display.height = c.Height;
             if (s.display.uiScale <= 0f) s.display.uiScale = 1f;
             s.display.uiScale = Mathf.Clamp(s.display.uiScale, 0.5f, 3f);
+            // 亮度：0（沒寫/壞值）→ 回預設 1，不然舊檔會被解讀成「全黑」。
+            if (s.display.brightness <= 0f) s.display.brightness = DisplaySettings.DefaultBrightness;
+            s.display.brightness = Mathf.Clamp(s.display.brightness, DisplaySettings.MinBrightness, DisplaySettings.MaxBrightness);
             if (string.IsNullOrEmpty(s.display.displayMode)) s.display.displayMode = "Windowed";
 
             s.audio.bgm = Mathf.Clamp01(s.audio.bgm);

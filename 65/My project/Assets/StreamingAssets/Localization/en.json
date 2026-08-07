@@ -1400,6 +1400,14 @@
    "v": "⚠ Nothing in the game reads this value yet (everything is framed at 800x600 4:3), so changing it does nothing — it is here to match the config file."
   },
   {
+   "k": "cfg.brightness.label",
+   "v": "Brightness"
+  },
+  {
+   "k": "cfg.brightness.help",
+   "v": "Overall screen brightness as a light multiplier (1x = untouched, 0.5x = half the light, 2x = twice). The whole picture — 3D stage, scene, UI — is multiplied after it is drawn, so dark areas stay dark instead of washing out to grey. Takes effect as you drag; press 保存配置 to keep it."
+  },
+  {
    "k": "cfg.mmd_model.label",
    "v": "Model"
   },
@@ -1469,7 +1477,7 @@
   },
   {
    "k": "cfg.mmd_profile.help",
-   "v": "Save = write this model's physics (the values converted from its .pmx) into the model folder's physics.ini; from then on that model runs from it and other models are unaffected. The sliders above are a shared multiplier applied on top for every model, so they are NOT baked into the file (baking them would multiply the feel again on every save). Reset = delete that file and go back to the values converted straight from the .pmx. The right-hand text says which one is in use."
+   "v": "Save = write the physics currently running (converted values x the sliders above) into the model folder's physics.ini; from then on that model runs from it and other models are unaffected. Reset = delete that file and go back to the values converted straight from the .pmx. The right-hand text says which one is in use."
   },
   {
    "k": "cfg.mmd_profile.save",

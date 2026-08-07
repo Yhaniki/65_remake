@@ -17,6 +17,7 @@ namespace Sdo.Tests
             src.audio.bgm = 0.2f; src.audio.gameMusic = 0.9f; src.audio.sfx = 0.7f;
             src.display.width = 1280; src.display.height = 960; src.display.displayMode = "Fullscreen"; src.display.vsync = false;
             src.display.uiScale = 1.25f;
+            src.display.brightness = 1.25f;   // 畫面亮度（非預設值才驗得出有沒有落地）
             src.language = "en";
             src.gameplay.fullscreenFill = true; src.gameplay.cameraAuto = false; src.gameplay.cameraFixed = 4;
             src.gameplay.playFullSong = true;
@@ -31,6 +32,7 @@ namespace Sdo.Tests
             RoomConfig.hasOption = false; RoomConfig.hasOptUiScale = false;
             RoomConfig.optBgm = RoomConfig.optMusic = RoomConfig.optSfx = 0.5f;
             RoomConfig.optDispW = 1024; RoomConfig.optLang = "zh-TW"; RoomConfig.optUiScale = 1f;
+            RoomConfig.optBrightness = 1f;
             RoomConfig.optFullscreenFill = false; RoomConfig.optCameraAuto = true; RoomConfig.optCameraFixed = 0;
             RoomConfig.optPlayFullSong = false; RoomConfig.optSongBombs = true;
             RoomConfig.optDanceIgnoreMiss = false;
@@ -45,6 +47,7 @@ namespace Sdo.Tests
             Assert.AreEqual(0.9f, dst.audio.gameMusic, 1e-4f);
             Assert.AreEqual(0.7f, dst.audio.sfx, 1e-4f);
             Assert.AreEqual(1.25f, dst.display.uiScale, 1e-4f, "uiScale 以前只在 settings.json，併進來後不能掉");
+            Assert.AreEqual(1.25f, dst.display.brightness, 1e-4f, "畫面亮度要跟著 config.ini 走");
             Assert.AreEqual(1280, dst.display.width);
             Assert.AreEqual(960, dst.display.height);
             Assert.AreEqual("Fullscreen", dst.display.displayMode);

@@ -37,6 +37,7 @@ public static class BuildScript
         "Sdo/HpGlowClip",
         "Sdo/GlowClipRect",      // ShowTime energy-bar head glow (rect-clipped additive = official viewport crop)
         "Sdo/AdditiveRGB",       // ShowTime gauge RT composite (One-One add of the POWER EFT camera render)
+        "Sdo/UiScreenGain",      // 畫面亮度 overlay(BrightnessOverlay,乘法); stripped -> 只剩黑幕變暗、調亮完全失效
         "Sdo/NoteCutout",        // 3D note highway cut-out sprites; stripped -> notes fall back to opaque (Note3dHighway/ScreenGameplay)
         "Sdo/UnlitSpotGlow",     // gameplay spotlight glow; stripped -> glow renders wrong (ScreenGameplay)
         "Sdo/LensFlare",         // SCN0004 太陽鏡頭光斑(ONE/ONE 純加法); stripped -> Shader.Find null -> 退回 Unlit/Texture 變成不透明黑方塊

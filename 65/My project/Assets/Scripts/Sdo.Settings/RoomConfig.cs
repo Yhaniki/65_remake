@@ -181,6 +181,7 @@ namespace Sdo.Settings
         public static string optKeysAux = "LeftArrow,DownArrow,UpArrow,RightArrow";
         public static int optDispW = 800, optDispH = 600, optVsync = 1;   // 預設視窗化 800×600（與遊戲畫面「窗口」連動，同 GameSettings 預設）
         public static float optUiScale = 1f;
+        public static float optBrightness = DisplaySettings.DefaultBrightness;   // 畫面亮度（1=原樣，見 BrightnessOverlay）
         public static string optDispMode = "Windowed";
         public static string optLang = "zh-TW";
         public static bool optFullscreenFill = false, optBloom = true, optNotesPanelLeft = true,
@@ -601,6 +602,7 @@ namespace Sdo.Settings
                     case "opt_dispW": optDispW = ParseInt(val, optDispW); break;
                     case "opt_dispH": optDispH = ParseInt(val, optDispH); break;
                     case "opt_uiScale": optUiScale = ParseFloat(val, optUiScale); hasOptUiScale = true; break;
+                    case "opt_brightness": optBrightness = ParseFloat(val, optBrightness); break;
                     case "opt_dispMode": optDispMode = val; break;
                     case "opt_vsync": optVsync = ParseInt(val, optVsync); break;
                     case "opt_lang": optLang = val; break;
@@ -671,6 +673,8 @@ namespace Sdo.Settings
             judgeTextPop = Mathf.Clamp(judgeTextPop, 1f, 4f);
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
+            if (optBrightness <= 0f) optBrightness = DisplaySettings.DefaultBrightness;   // 0/沒寫 → 回 1，不然畫面全黑
+            optBrightness = Mathf.Clamp(optBrightness, DisplaySettings.MinBrightness, DisplaySettings.MaxBrightness);
             // [Mmd]：範圍與開場設定面板的滑桿一致（面板一開就把值夾進滑桿範圍，兩邊不同會被夾掉玩家的設定）。
             mmdModel = (mmdModel ?? "").Trim();                              // 空＝掃到的第一個模型
             mmdGravity = Mathf.Clamp(mmdGravity, 0.05f, 8f);                 // 0＝布料不落下；>8 抖到爆
@@ -845,6 +849,8 @@ namespace Sdo.Settings
             sb.Append("opt_dispMode=").Append(optDispMode ?? "Windowed").Append('\n');
             sb.Append("opt_vsync=").Append(optVsync).Append('\n');
             sb.Append("opt_uiScale=").Append(optUiScale.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 畫面亮度 0.5~2.0（1=原樣，＝光量倍率）。整個畫面（3D 舞台/場景/UI）畫完後一起乘上這個值。\n");
+            sb.Append("opt_brightness=").Append(optBrightness.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("opt_lang=").Append(optLang ?? "zh-TW").Append('\n');
             sb.Append("# 遊戲頁（1=開 0=關）：全屏填滿 / 泛光 / notes面板靠左 / 人物特效 / 場景特效 / 自動導播 / 呼叫卡 / 完奏模式 / 歌曲變速\n");
             sb.Append("opt_fullscreenFill=").Append(B(optFullscreenFill)).Append('\n');
@@ -898,6 +904,7 @@ namespace Sdo.Settings
                 optDispW = s.display.width; optDispH = s.display.height;
                 optDispMode = s.display.displayMode; optVsync = s.display.vsync ? 1 : 0;
                 optUiScale = s.display.uiScale;
+                optBrightness = s.display.brightness;
             }
             optLang = s.language;
             if (s.gameplay != null)
@@ -927,6 +934,7 @@ namespace Sdo.Settings
             s.display.width = optDispW; s.display.height = optDispH;
             s.display.displayMode = optDispMode; s.display.vsync = optVsync != 0;
             s.display.uiScale = optUiScale;
+            s.display.brightness = optBrightness;
             if (!string.IsNullOrEmpty(optLang)) s.language = optLang;
             if (s.gameplay == null) s.gameplay = new GameplaySettings();
             var g = s.gameplay;

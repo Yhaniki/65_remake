@@ -11,6 +11,13 @@ namespace Sdo.Settings
         public string displayMode = "Windowed"; // 預設視窗化（與遊戲畫面「窗口」連動）。Windowed | Fullscreen | Borderless
         public bool vsync = true;
         public float uiScale = 1f;              // 1.0 / 1.25 / 1.5
+        // 畫面亮度＝光量倍率（1=原樣）：畫完之後整個畫面乘上這個值，蓋在 3D 舞台＋場景＋UI＋對話框上一起變，
+        // 由 Sdo.UI 的 BrightnessOverlay 每幀讀這個值套用。範圍 MinBrightness..MaxBrightness。
+        public float brightness = 1f;
+
+        public const float MinBrightness = 0.5f;   // 一半的光（再暗下去譜面就看不見了）
+        public const float MaxBrightness = 2f;     // 兩倍的光。上限是硬的：LDR 下 Blend DstColor One 最多讓畫面 ×2
+        public const float DefaultBrightness = 1f;
     }
 
     [Serializable]

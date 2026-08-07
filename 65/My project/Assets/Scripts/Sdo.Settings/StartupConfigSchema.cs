@@ -492,6 +492,14 @@ namespace Sdo.Settings
                 Min = 0.5f, Max = 3f, Unit = "×",
                 Get = () => Num(Display().uiScale), Set = v => Display().uiScale = ParseFloat(v, Display().uiScale),
             });
+            // 亮度：拖的當下就看得到（Sdo.UI 的 BrightnessOverlay 每幀讀這個工作副本的值），不必按保存/重開。
+            f.Add(new ConfigField
+            {
+                Key = "opt_brightness", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.brightness.label", HelpKey = "cfg.brightness.help",
+                Min = DisplaySettings.MinBrightness, Max = DisplaySettings.MaxBrightness, Step = 0.05f, Unit = "×",
+                Get = () => Num(Display().brightness), Set = v => Display().brightness = ParseFloat(v, Display().brightness),
+            });
 
             // ---------------------------------------------------------------- MMD [Mmd]
             // 以前這一整頁是遊戲裡一塊自己畫的 IMGUI 除錯面板（F7/F9/F10），值只活在記憶體、關掉就沒了。
