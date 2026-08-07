@@ -32,8 +32,7 @@ namespace Sdo.Game
         /// only for skins whose EFT folder ships them (2/5/8/9/10/PET) — the 11/12/13/14 family shares PUBLICEFT, stays put.</summary>
         internal void SetNoteType(int noteType)
         {
-            _hit3dMode = false; _note3dMode = false;                        // picking a 2D skin leaves the 3D hit + coloured-note mode
-            for (int l = 0; l < Keys; l++) if (_hit3dLive[l] != null) { Destroy(_hit3dLive[l].gameObject); _hit3dLive[l] = null; }   // don't leak a looping hold burst
+            LeaveNote3dSkin();                                              // picking a 2D skin leaves the 3D hit + coloured-note mode
             int t = (noteType >= 0 && noteType < NoteTypeEftSuffix.Length) ? noteType : 0;
             SetNoteBoardSkin(NoteTypeBoardSuffix[t]);                        // falling notes + receptors + hold (live reload)
             LoadHitEffects(t);                                              // per-skin hit burst (sets _eftNoteType)
@@ -71,6 +70,22 @@ namespace Sdo.Game
             LoadNote3dFamilies(); LoadBoard3dSkin();
             LoadComboJudgeArt(0);   // the official 3D mode uses the SHARED standard combo/judge (PUBLICEFT) — set it
                                     // EXPLICITLY (index 0), not inherited from whatever 2D skin was selected before.
+        }
+
+        /// <summary>離開 3D 皮:關掉旗標,並清掉每軌可能正在**循環**的長按 3D 命中特效(HIT_LONG 是 loop 的,
+        /// 不清就會一直播下去)。板子美術由呼叫端自己換(SetNoteType→SetNoteBoardSkin / ShowTime→ApplyNoteDir)。</summary>
+        private void LeaveNote3dSkin()
+        {
+            _hit3dMode = false; _note3dMode = false;
+            for (int l = 0; l < Keys; l++) if (_hit3dLive[l] != null) { Destroy(_hit3dLive[l].gameObject); _hit3dLive[l] = null; }
+        }
+
+        /// <summary>ShowTime 視窗結束後把 3D 皮裝回來。刻意**不**碰 combo/判定字(ShowTime 從頭到尾沒動過它們,
+        /// 重讀只是白花時間);note 家族有 early-out、3DNOTES 的 DDS 走快取,所以這裡不會有解碼成本。</summary>
+        private void RestoreNote3dSkin()
+        {
+            _hit3dMode = true; _note3dMode = true;
+            LoadNote3dFamilies(); LoadBoard3dSkin();
         }
 
         // hiteft3D hit burst: play the selected 3D hit EFT (default HIT.EFT = the official note-ARROW flash) at the struck

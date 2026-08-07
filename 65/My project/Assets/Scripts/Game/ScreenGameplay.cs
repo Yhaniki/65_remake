@@ -1127,6 +1127,7 @@ namespace Sdo.Game
         public float showtimeEndFlashMs = 3001f, showtimeEndFlashPeriodMs = 1000f;   // ~1 s red→yellow→red
         public float showtimeNoteScale = 1.15f;             // notes grow a little larger during the auto-hit window
         private string _preShowtimeNoteDir;                 // note skin to restore when a window ends
+        private bool _preShowtimeNote3d;                    // …and whether that skin was the 3D one (it lives outside _noteDir)
         private static Sprite _solidSprite;                 // 1×1 white fallback sprite (used only if official art missing)
         // local total for ranking/result = base score + folded ShowTime bonus (exe merges 0x840 at song end).
         private long TotalScore => (_score?.Score ?? 0L) + (showtimeMode ? _showtime.Bonus : 0L);
@@ -1778,6 +1779,81 @@ namespace Sdo.Game
         // hold body/caps. 判定區的分幀規則見 LoadJudgeLineArt;長條兩端的封口見 HoldCapArt。
         private void LoadBoardArt()
         {
+            string dir = NoteDir;
+            if (_boardArtCache.TryGetValue(dir, out var hit) && BoardArtAlive(hit)) { ApplyBoardArt(hit); return; }
+            LoadBoardArtUncached();
+            _boardArtCache[dir] = SnapshotBoardArt();
+        }
+
+        // ---------- note-board art cache (一個 skin 資料夾一份) ----------
+        //
+        // LoadBoardArtUncached 不便宜:長條身體要 AlphaBleed(GetPixels32 + 4 趟 dilate + Apply),兩端封口各軌
+        // 都走 CleanCapCopy(**每次都 new 一張 Texture2D + Sprite**,四軌兩端 = 8 張),而且那 8 張沒有人負責銷毀。
+        // ShowTime 在**每個視窗開始與結束**都要換皮 —— 照原樣重跑等於在玩家按下 SPACE 的那一幀做 8 次
+        // SetPixels32+Apply(卡頓),還一路漏貼圖。把整理好的每軌陣列照資料夾快取起來,第二次以後就只是搬指標。
+        // static:與 SdoExtracted 自己的貼圖快取同一個生命週期,下一首歌也直接命中。
+        // 註:LoadBoardArtUncached 對讀不到的圖是「保留上一套」,快取存的就是那個結果 —— 同一個資料夾之後
+        // 一律重播同一份(比每次依當下狀態重新退讓更穩定),視覺結果與第一次載入時完全相同。
+        private sealed class BoardArt
+        {
+            public readonly Sprite[][] NoteFrames = new Sprite[Keys][];
+            public readonly Sprite[] RecIdle = new Sprite[Keys];
+            public readonly Sprite[][] RecIdleFrames = new Sprite[Keys][];
+            public readonly Sprite[][] RecDownFrames = new Sprite[Keys][];
+            public readonly Texture2D[] HoldTex = new Texture2D[Keys];
+            public readonly Sprite[] HoldTail = new Sprite[Keys];
+            public readonly Sprite[] HoldCapHead = new Sprite[Keys];
+            public readonly bool[] HoldCapPerLane = new bool[Keys];
+            public readonly bool[] HoldCapAtHead = new bool[Keys];
+            public readonly bool[] HoldCapAtTail = new bool[Keys];
+            public readonly bool[] HoldTailFlipX = new bool[Keys];
+            public readonly bool[] HoldTailFlipY = new bool[Keys];
+            public Sprite[] BombFrames;
+        }
+        private static readonly Dictionary<string, BoardArt> _boardArtCache = new Dictionary<string, BoardArt>();
+
+        // 快取存的是 null 就照 null 用;存了東西卻已被 Unity 銷毀(理論上只有外部 UnloadUnusedAssets 才會)→
+        // 整份作廢重讀,不要拿到假的空引用。
+        private static bool Alive(UnityEngine.Object o) => ReferenceEquals(o, null) || o != null;
+
+        private static bool BoardArtAlive(BoardArt a)
+        {
+            for (int c = 0; c < Keys; c++)
+                if (!Alive(a.RecIdle[c]) || !Alive(a.HoldTex[c]) || !Alive(a.HoldTail[c]) || !Alive(a.HoldCapHead[c]))
+                    return false;
+            return true;
+        }
+
+        private BoardArt SnapshotBoardArt()
+        {
+            var a = new BoardArt();
+            for (int c = 0; c < Keys; c++)
+            {
+                a.NoteFrames[c] = _noteFrames[c];
+                a.RecIdle[c] = _recIdle[c]; a.RecIdleFrames[c] = _recIdleFrames[c]; a.RecDownFrames[c] = _recDownFrames[c];
+                a.HoldTex[c] = _holdTex[c]; a.HoldTail[c] = _holdTail[c]; a.HoldCapHead[c] = _holdCapHead[c];
+                a.HoldCapPerLane[c] = _holdCapPerLane[c]; a.HoldCapAtHead[c] = _holdCapAtHead[c]; a.HoldCapAtTail[c] = _holdCapAtTail[c];
+                a.HoldTailFlipX[c] = _holdTailFlipX[c]; a.HoldTailFlipY[c] = _holdTailFlipY[c];
+            }
+            a.BombFrames = _bombFrames;
+            return a;
+        }
+
+        private void ApplyBoardArt(BoardArt a)
+        {
+            for (int c = 0; c < Keys; c++)
+            {
+                _noteFrames[c] = a.NoteFrames[c];
+                _recIdle[c] = a.RecIdle[c]; _recIdleFrames[c] = a.RecIdleFrames[c]; _recDownFrames[c] = a.RecDownFrames[c];
+                _holdTex[c] = a.HoldTex[c]; _holdTail[c] = a.HoldTail[c]; _holdCapHead[c] = a.HoldCapHead[c];
+                _holdCapPerLane[c] = a.HoldCapPerLane[c]; _holdCapAtHead[c] = a.HoldCapAtHead[c]; _holdCapAtTail[c] = a.HoldCapAtTail[c];
+                _holdTailFlipX[c] = a.HoldTailFlipX[c]; _holdTailFlipY[c] = a.HoldTailFlipY[c];
+            }
+            _bombFrames = a.BombFrames;
+        }
+
+        private void LoadBoardArtUncached()
+        {
             // 判定區的兩支官方動畫整份讀進來(四軌合在同一個 .an 裡,順序 left/down/up/right = Dir5)。
             // 讀不到就是空陣列 → LoadJudgeLineArt 退回檔名規則,見它的註解。
             var idleAn = SdoExtracted.LoadAn(NoteDir, "judgeline.an", bleed: true);
@@ -2023,17 +2099,29 @@ namespace Sdo.Game
         // ppu 1 to match the play field (1 design px = 1 world unit); the note head keeps its own material (SpawnNotes).
         private static Sprite LoadDdsSprite(string path)
         {
+            if (_ddsSpriteCache.TryGetValue(path, out var cached) && Alive(cached)) return cached;
             var tex = LoadDdsTex(path, flipV: true);   // sprites flip V (DDS-top→row0 = upside-down otherwise)
-            return tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect) : null;
+            var spr = tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect) : null;
+            _ddsSpriteCache[path] = spr;
+            return spr;
         }
+
+        // 3DNOTES 的 DDS 一律走快取。LoadBoard3dSkin 會在 ShowTime 每個視窗結束時重跑(換回 3D 皮),沒有快取的話
+        // 每次都重讀檔 + DXT 解碼 + 配置新的 Texture2D/Sprite(舊的沒人銷毀)—— 就是視窗結束那一幀的卡頓來源。
+        private static readonly Dictionary<string, Sprite> _ddsSpriteCache = new Dictionary<string, Sprite>();
+        private static readonly Dictionary<string, Texture2D> _ddsTexCache = new Dictionary<string, Texture2D>();
 
         // Load a keyed DXT1 note/board glyph as a Texture2D. flipV=false for a MESH texture (hold body — its UVs already
         // match the row-0-at-top convention); flipV=true for a sprite. Background colour is keyed out (LoadDxt1Alpha).
         private static Texture2D LoadDdsTex(string path, bool flipV, bool desilver = false)
         {
-            if (!VfsFile.Exists(path)) return null;
-            try { return DdsLoader.LoadDxt1Alpha(VfsFile.ReadAllBytes(path), flipV, desilver); }
-            catch { return null; }
+            string key = path + "|" + (flipV ? 1 : 0) + (desilver ? 1 : 0);
+            if (_ddsTexCache.TryGetValue(key, out var cached) && Alive(cached)) return cached;
+            Texture2D t = null;
+            if (VfsFile.Exists(path))
+                try { t = DdsLoader.LoadDxt1Alpha(VfsFile.ReadAllBytes(path), flipV, desilver); } catch { t = null; }
+            _ddsTexCache[key] = t;
+            return t;
         }
 
         // 3D-note skin board art (the other half of the "3D" skin, beyond the coloured falling notes): swap the RECEPTORS
@@ -2071,14 +2159,20 @@ namespace Sdo.Game
         // official body V mapping goes negative on long holds (V = 1 − z/31.2, tail-anchored).
         private static Texture2D LoadDdsOpaque(string path)
         {
+            string key = "op|" + path;
+            if (_ddsTexCache.TryGetValue(key, out var cached) && Alive(cached)) return cached;
+            Texture2D t = null;
             try
             {
-                if (!VfsFile.Exists(path)) return null;
-                var t = DdsLoader.Load(VfsFile.ReadAllBytes(path));
-                if (t != null) t.wrapMode = TextureWrapMode.Repeat;
-                return t;
+                if (VfsFile.Exists(path))
+                {
+                    t = DdsLoader.Load(VfsFile.ReadAllBytes(path));
+                    if (t != null) t.wrapMode = TextureWrapMode.Repeat;
+                }
             }
-            catch { return null; }
+            catch { t = null; }
+            _ddsTexCache[key] = t;
+            return t;
         }
 
         // (Re)load the LONG body texture (opaque, verbatim — official) and re-point every spawned hold body to it.
@@ -6509,6 +6603,11 @@ namespace Sdo.Game
             if (string.IsNullOrEmpty(dir) || dir == cur) return;
             _noteDir = dir; LoadBoardArt();
             _noteDir = cur; LoadBoardArt();
+            // 🔴 3D 皮不是換 _noteDir,而是 LoadBoard3dSkin() **就地覆寫** _recIdle/_holdTex/receptor 尺寸
+            // (_noteDir 仍指著底下那個 2D 資料夾)。上面「讀回來」那一句會把 2D 美術寫回那些陣列,而
+            // _note3dMode 還是 true → 整首歌都在「2D 貼圖 + 3D 繪製規則」:判定區照 Note3dRot 轉到指錯方向、
+            // 長條拿 2D 平鋪圖去套官方 mesh 的 UV。所以預熱完要把 3D 皮原樣裝回去(現在都命中快取,近乎免費)。
+            if (_note3dMode) LoadBoard3dSkin();
         }
 
         // Entering the auto-PERFECT window: REPLACE the hit burst with the golden EFT_SHOWTIME flipbook (online: the
@@ -6518,6 +6617,11 @@ namespace Sdo.Game
         {
             _preShowtimeNoteDir = NoteDir;   // remember the active skin (F4-selected or default) to restore on exit
             _seam.Clear();   // fresh handoff latches for this window（連上一個視窗殘留的寬限期一起清掉）
+            // 金色 showtime 皮是一整套 **2D** 美術,而 3D 皮(hiteft3D)是另一套素材 + 另一套繪製規則
+            // (判定區逐軌旋轉、長條走官方 mesh UV)。官方沒有「金色的 3D 皮」,兩者混著跑就是判定區指錯方向、
+            // 長條變條紋亂碼 —— 所以進視窗時**整個離開 3D 皮**,視窗結束再原樣裝回去(見 OnShowtimeEnd)。
+            _preShowtimeNote3d = _note3dMode;
+            if (_note3dMode) LeaveNote3dSkin();
             ApplyNoteDir(Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_SHOWTIME"));   // golden showtime notes (online DOES swap)
             if (_showtimeHitFrames != null) { _savedBurstFrames = _burstFrames; _burstFrames = _showtimeHitFrames; _burstSwapped = true; }
             // Frida实机: release fires 0x50 showtimeboom + 0x51 electricity(loop) + 0x4e showtime. The big "SHOW TIME"
@@ -6543,6 +6647,8 @@ namespace Sdo.Game
             // (提早按不判死,見 PressLane)。_nowMs 就是這一幀的譜面時間 —— 視窗到期與這一幀最多差一幀,遠小於寬限期。
             _seam.MarkWindowEnded(_nowMs);
             if (_preShowtimeNoteDir != null) { ApplyNoteDir(_preShowtimeNoteDir); _preShowtimeNoteDir = null; }
+            // 進視窗前是 3D 皮的話,ApplyNoteDir 只還原到它底下那層 2D 資料夾 —— 3D 皮本身要另外裝回來。
+            if (_preShowtimeNote3d) { _preShowtimeNote3d = false; RestoreNote3dSkin(); }
             if (_burstSwapped) { _burstFrames = _savedBurstFrames; _savedBurstFrames = null; _burstSwapped = false; }
             if (_dpsSwapped && _avatar != null) { _avatar.Dps = _songDps; _avatar.DanceTimeSec = _songDanceTime; _dpsSwapped = false; }   // 接回原本歌曲舞蹈
             _breakIdled = false;   // reset the idle-tail latch for the next release
