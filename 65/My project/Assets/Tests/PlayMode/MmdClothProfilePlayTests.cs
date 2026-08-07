@@ -4,6 +4,7 @@ using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
 using Sdo.Game;
+using Sdo.Settings;
 
 namespace Sdo.Tests
 {
@@ -63,7 +64,9 @@ namespace Sdo.Tests
             Assert.IsNull(cloth.ProfilePath, "a physics.ini leaked in from somewhere");
             var converted = FindPart(cloth, MmdClothPartId.Hair);
             Assert.Greater(converted.AngleStiffness, 0f, "the converted hair stiffness is empty");
-            Assert.AreEqual(1f, cloth.CurrentColliderMul, 1e-4f);
+            // 模型這一份的碰撞倍率 —— 沒有 physics.ini 就是 1。玩家 config.ini 的 mmdColliderScale 不在裡面
+            // (那是本機偏好,乘在這上面),所以這條在調過旋鈕的機器上也成立。
+            Assert.AreEqual(1f, cloth.SavedColliderMul, 1e-4f);
 
             // ---- 2) drop a physics.ini in the model folder and rebuild → the FILE wins, key by key ----
             File.WriteAllText(MmdClothProfile.PathFor(_dir),
@@ -80,7 +83,7 @@ namespace Sdo.Tests
             var tuned = FindPart(cloth2, MmdClothPartId.Hair);
             Assert.AreEqual(0.123f, tuned.AngleStiffness, 1e-3f, "the file's angleStiffness did not reach the cloth");
             Assert.AreEqual(0.25f, tuned.GravityMul, 1e-3f, "the file's gravityMul did not reach the cloth");
-            Assert.AreEqual(1.5f, cloth2.CurrentColliderMul, 1e-3f, "the file's colliderRadiusMul did not reach the colliders");
+            Assert.AreEqual(1.5f, cloth2.SavedColliderMul, 1e-3f, "the file's colliderRadiusMul did not reach the colliders");
             // a key the file never mentioned keeps the converted value
             Assert.AreEqual(converted.DepthInertia, tuned.DepthInertia, 1e-4f, "an un-mentioned key was clobbered instead of kept");
 
@@ -98,8 +101,9 @@ namespace Sdo.Tests
             yield return null;
         }
 
+        /// <summary>存檔 → 重建,跑出來的必須是同一套值(存檔會改變手感就是 bug)。</summary>
         [UnityTest]
-        public IEnumerator SaveProfile_WritesWhatTheDancerIsRunning_AndItReloadsTheSame()
+        public IEnumerator SaveProfile_WritesTheModelsOwnTuning_AndItReloadsTheSame()
         {
             LogAssert.ignoreFailingMessages = true;
 
@@ -136,9 +140,60 @@ namespace Sdo.Tests
             yield return null;
         }
 
+        /// <summary>
+        /// 存檔**不能**把 config.ini 那三根旋鈕(重力/硬度/碰撞半徑)烘進 physics.ini。
+        ///
+        /// 它們是本機玩家的偏好倍率,乘在模型自己的值上,而且下次建身體還會再乘一次
+        /// (config.ini 的說明就是「那份先套,這三個再乘上去」)。烘進去的話,每按一次存檔手感就被平方一次:
+        /// 重力旋鈕 1.31 的機器上,存一次檔重力就變成 1.72 —— 而按存檔要的是「維持我現在看到的樣子」。
+        ///
+        /// 這裡自己把旋鈕轉到 2×(不管使用者的 config.ini 原本調成什麼),所以在任何機器上都測得到。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator SaveProfile_DoesNotBakeTheLocalGravityKnobIntoTheFile()
+        {
+            LogAssert.ignoreFailingMessages = true;
+
+            var host = new GameObject("ClothKnobHost");
+            var preview = host.AddComponent<GenderPreview3D>();
+            preview.Build(gender: 0);
+            MmdAvatarSwap.SetEnabled(true);
+            for (int i = 0; i < 5; i++) yield return null;
+
+            var driver = System.Array.Find(host.GetComponentsInChildren<SdoAvatar>(true), a => a.gameObject.activeInHierarchy);
+            var cloth = MmdAvatarSwap.ActiveFor(driver)?.Cloth;
+            if (cloth == null) Assert.Ignore("Magica Cloth 2 not installed — the cloth path can't be exercised");
+
+            float baseGrav = FindPart(cloth, MmdClothPartId.Hair).GravityMul;   // 模型自己的值(旁邊的旋鈕不算在內)
+
+            float knob0 = RoomConfig.mmdGravity;
+            try
+            {
+                RoomConfig.mmdGravity = 2f;      // 玩家把重力轉到 2×
+                MmdAvatarSwap.Rebuild();         // → ApplyOptsTo 把旋鈕套到 rig 上
+                for (int i = 0; i < 5; i++) yield return null;
+
+                Assert.IsNotNull(MmdAvatarSwap.SaveProfile(), "physics.ini could not be written into the model folder");
+                MmdAvatarSwap.Rebuild();         // 讀回剛存的檔,旋鈕仍然是 2×
+                for (int i = 0; i < 5; i++) yield return null;
+
+                float reloaded = FindPart(MmdAvatarSwap.ActiveFor(driver).Cloth, MmdClothPartId.Hair).GravityMul;
+                Assert.AreEqual(baseGrav, reloaded, 1e-3f,
+                    "存檔把本機的重力旋鈕烘進 physics.ini 了 —— 重載時旋鈕再乘一次,手感每存一次就被平方");
+            }
+            finally
+            {
+                RoomConfig.mmdGravity = knob0;
+                MmdAvatarSwap.Rebuild();
+            }
+
+            Object.Destroy(host);
+            yield return null;
+        }
+
         private static MmdClothPart FindPart(MmdMagicaCloth cloth, MmdClothPartId id)
         {
-            foreach (var kv in cloth.CurrentParts) if (kv.Key == id) return kv.Value;
+            foreach (var kv in cloth.SavedParts) if (kv.Key == id) return kv.Value;
             Assert.Fail("the model has no '" + id + "' cloth part");
             return default;
         }

@@ -47,7 +47,6 @@ namespace Sdo.Game
         private readonly List<int> _resolvedBones = new List<int>();
         private float _simFreq = 150f;      // global solver rate (profile: [global] simulationFrequency)
         private float _profileColMul = 1f;  // profile's collider-radius multiplier; the panel's knob multiplies on top
-        private float _liveGrav = 1f, _liveStiff = 1f, _liveCol = 1f;   // the debug panel's live knobs
 
         public bool Any => _cloths.Count > 0;
         public int ClothCount => _cloths.Count;
@@ -56,10 +55,17 @@ namespace Sdo.Game
         /// <summary>The physics.ini this rig was built with, or null when the tuning came straight from the .pmx.</summary>
         public string ProfilePath { get; private set; }
 
-        /// <summary>The tuning the rig is running RIGHT NOW: the resolved values with the debug panel's live gravity /
-        /// stiffness knobs folded in — i.e. exactly what <see cref="MmdClothProfile.Save"/> should write so that
-        /// re-loading it reproduces what you are looking at.</summary>
-        public IEnumerable<KeyValuePair<MmdClothPartId, MmdClothPart>> CurrentParts
+        /// <summary>
+        /// The tuning that belongs to the MODEL — the converted values with this model's physics.ini already applied,
+        /// and this is exactly what <see cref="MmdClothProfile.Save"/> writes back out.
+        ///
+        /// 🔴 **本機那三根旋鈕(重力/硬度/碰撞半徑)刻意不折進來。** 它們是玩家的偏好倍率,乘在模型自己的值上
+        /// (config.ini 就是這樣寫的:「模型資料夾裡若有 physics.ini,那份先套,這三個再乘上去」),而且下次
+        /// 重建**還會再乘一次** —— 存檔時把它們烘進去的話,每按一次存檔手感就被平方一次
+        /// (重力旋鈕 1.31 → 存檔重建後變 1.72),而使用者按存檔要的正是「維持我現在看到的樣子」。
+        /// 旋鈕留在 config.ini 裡照樣套用,所以存基準值才是**存檔前後畫面不變**的那個選擇。
+        /// </summary>
+        public IEnumerable<KeyValuePair<MmdClothPartId, MmdClothPart>> SavedParts
         {
             get
             {
@@ -70,16 +76,16 @@ namespace Sdo.Game
                     for (int i = 0; i < _resolved.Count; i++)
                         if ((int)_resolved[i].Key == part && (best < 0 || _resolvedBones[i] > _resolvedBones[best])) best = i;
                     if (best < 0) continue;
-                    var p = _resolved[best].Value;
-                    p.GravityMul *= _liveGrav;
-                    if (p.AngleStiffness > 0.001f) p.AngleStiffness = Mathf.Clamp01(p.AngleStiffness * _liveStiff);
-                    yield return new KeyValuePair<MmdClothPartId, MmdClothPart>((MmdClothPartId)part, p);
+                    yield return new KeyValuePair<MmdClothPartId, MmdClothPart>((MmdClothPartId)part, _resolved[best].Value);
                 }
             }
         }
 
         public float CurrentSimulationFrequency => _simFreq;
-        public float CurrentColliderMul => _profileColMul * _liveCol;
+
+        /// <summary>模型這一份的碰撞體半徑倍率(= physics.ini 的 colliderRadiusMul;沒有那個檔就是 1)。
+        /// 面板旋鈕**不在**裡面 —— 理由同 <see cref="SavedParts"/>。</summary>
+        public float SavedColliderMul => _profileColMul;
 
         /// <param name="profile">The model's physics.ini, or null → convert everything from the .pmx.</param>
         public static MmdMagicaCloth Setup(GameObject host, Transform[] bone, int[] parent, PmxLoader pmx, float unitScale,
@@ -350,10 +356,12 @@ namespace Sdo.Game
         public void SetEnabled(bool on) { foreach (var c in _cloths) if (c != null) c.enabled = on; }
 
         /// <summary>Live tune (matches the SDO debug panel). <paramref name="stiffMul"/> scales each part's base
-        /// stiffness (clamped to 1), <paramref name="gravMul"/> scales gravity.</summary>
+        /// stiffness (clamped to 1), <paramref name="gravMul"/> scales gravity.
+        ///
+        /// 這兩個倍率**不會**被記下來寫進 physics.ini —— 它們是本機玩家的偏好,每次建好身體都會再套一次
+        /// (<c>MmdAvatarSwap.ApplyOptsTo</c>);存檔存的是模型自己的基準值,見 <see cref="SavedParts"/>。</summary>
         public void Tune(float gravMul, float stiffMul)
         {
-            _liveGrav = gravMul; _liveStiff = stiffMul;   // remembered so Save writes what you are actually looking at
             for (int i = 0; i < _cloths.Count; i++)
             {
                 var c = _cloths[i]; if (c == null) continue;
@@ -375,7 +383,6 @@ namespace Sdo.Game
         /// <c>cloth.SetParameterChange()</c> 推的是布料自己的參數，不含 collider 尺寸。</summary>
         public void SetColliderRadius(float mul)
         {
-            _liveCol = mul;
             float m = mul * _profileColMul;
             for (int i = 0; i < _colliders.Count; i++)
             {

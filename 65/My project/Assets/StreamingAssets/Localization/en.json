@@ -1469,7 +1469,7 @@
   },
   {
    "k": "cfg.mmd_profile.help",
-   "v": "Save = write the physics currently running (converted values x the sliders above) into the model folder's physics.ini; from then on that model runs from it and other models are unaffected. Reset = delete that file and go back to the values converted straight from the .pmx. The right-hand text says which one is in use."
+   "v": "Save = write this model's physics (the values converted from its .pmx) into the model folder's physics.ini; from then on that model runs from it and other models are unaffected. The sliders above are a shared multiplier applied on top for every model, so they are NOT baked into the file (baking them would multiply the feel again on every save). Reset = delete that file and go back to the values converted straight from the .pmx. The right-hand text says which one is in use."
   },
   {
    "k": "cfg.mmd_profile.save",

@@ -610,16 +610,21 @@ namespace Sdo.Game
         /// <summary>The installed models, in panel order.</summary>
         public static IReadOnlyList<MmdModelCatalog.Entry> Models => _models;
 
-        /// <summary>Write the cloth tuning the dancer is running right now (the values converted from the .pmx, plus the
-        /// live gravity/stiffness/collider knobs from config.ini) into the model's own folder as physics.ini. From then
-        /// on THAT file is what the model loads — on this machine and in a packaged build, since DATA/MODEL ships whole.
-        /// Returns the file written, or null (no MMD body on screen / nothing writable).</summary>
+        /// <summary>Write the cloth tuning of the model the dancer is running (the values converted from the .pmx with
+        /// this model's existing physics.ini applied) into the model's own folder as physics.ini. From then on THAT file
+        /// is what the model loads — on this machine and in a packaged build, since DATA/MODEL ships whole.
+        /// Returns the file written, or null (no MMD body on screen / nothing writable).
+        ///
+        /// 🔴 config.ini 的三根旋鈕(mmdGravity / mmdStiffness / mmdColliderScale)**不寫進去**:它們是本機玩家的
+        /// 偏好倍率,每次建好身體都會再乘一次(見 <c>ApplyOptsTo</c> 與 config.ini 自己的說明「那份先套,這三個再乘
+        /// 上去」)。烘進檔案的話,每存一次檔手感就被平方一次(重力旋鈕 1.31 → 存檔重建後 1.72)——
+        /// 而按存檔要的是「維持我現在看到的樣子」。見 <see cref="MmdMagicaCloth.SavedParts"/>。</summary>
         public static string SaveProfile()
         {
             var e = Sel;
             var cloth = FirstCloth();
             if (e == null || cloth == null) { _lastError = "沒有可存的布料(先在設定面板的「我用的模型」選一個)"; return null; }
-            string path = MmdClothProfile.Save(e.Dir, cloth.CurrentSimulationFrequency, cloth.CurrentColliderMul, cloth.CurrentParts);
+            string path = MmdClothProfile.Save(e.Dir, cloth.CurrentSimulationFrequency, cloth.SavedColliderMul, cloth.SavedParts);
             _lastError = path == null ? "physics.ini 寫入失敗(資料夾唯讀?)" : "";
             Log(path != null ? "[mmd] 物理已存到 " + path : "[mmd] physics.ini 寫入失敗: " + MmdClothProfile.PathFor(e.Dir));
             return path;
