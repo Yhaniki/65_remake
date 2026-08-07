@@ -169,10 +169,7 @@ namespace Sdo.UI.Screens
 
             // 場景選擇器初值：反映 session/config 目前的場景（具體場景 → 對到清單位置+1；隨機 → 0）。這樣重開遊戲後
             // config 記住的場景會顯示在預覽，且不點場景直接確認也不會把持久化的場景覆蓋回隨機。
-            _sceneIndex = 0;
-            if (!Ctx.Session.StageRandom)
-                for (int i = 0; i < _stages.Count; i++)
-                    if (_stages[i].Id == Ctx.Session.StageId) { _sceneIndex = i + 1; break; }
+            _sceneIndex = SceneSelectorIndex(_stages, Ctx.Session.StageRandom, Ctx.Session.StageId);
 
             BuildBackground();
             BuildDisk();
@@ -234,8 +231,11 @@ namespace Sdo.UI.Screens
 
             _previewGateTime = Time.unscaledTime + 1f;   // hold music ~1s until the open spin settles
             _difficulty = (int)Ctx.Session.Difficulty;
-            // Scene / random-range / mode·formation·looker combos PERSIST across visits — the screen is built once
-            // and those fields/widgets are never reset here, so it reopens exactly as it was left.
+            // 🔴 模式/隊形/旁觀/場景這四個 widget 每次開都要拉回 session —— 面板只 BuildUI 一次,而 session
+            // 會被別的地方改掉(線上收到別人房間的設定、自己開新房重設)。平常這是 no-op,因為那幾個 widget
+            // 自己就是 session 的寫入者,所以「reopens exactly as it was left」仍然成立。見那邊的註解。
+            SyncRoomSettingWidgets();
+            // random-range 一樣 PERSIST across visits — the screen is built once and that field is never reset here.
             // EXCEPTIONS reset on every open: the category tab snaps back to 全部, and the search box is cleared —
             // so re-entering always shows the full list, not a stale filter/tab.
             // BUT: 若上次確認的是「隨機難度」→ 直接回隨機 tab 的同一個區間按鈕（房間顯示的是隨機標籤，不是某首歌）。
@@ -1183,6 +1183,43 @@ namespace Sdo.UI.Screens
         }
 
         // ---------------- scene preview ----------------
+
+        /// <summary>
+        /// 場景選擇器的位置:<b>0 = 隨機</b>,1..stages.Count = <c>stages[pos-1]</c>。
+        /// 認不得的場景 id(目錄裡沒有)→ 退回隨機那格。
+        ///
+        /// 抽成 static 純函式是因為建版面與每次開面板都要算同一件事(見 <see cref="SyncRoomSettingWidgets"/>),
+        /// 而且它是可以單元測試的那一半。
+        /// </summary>
+        public static int SceneSelectorIndex(IList<StageInfo> stages, bool stageRandom, int stageId)
+        {
+            if (stageRandom || stages == null) return 0;
+            for (int i = 0; i < stages.Count; i++)
+                if (stages[i].Id == stageId) return i + 1;
+            return 0;
+        }
+
+        /// <summary>
+        /// 把底部那三個下拉與場景選擇器**拉回 session 目前的值**。
+        ///
+        /// 🔴 這個面板只 BuildUI 一次,那幾個 widget 的值是建版面當下讀的。平常它們自己就是 session 的寫入者
+        /// (所以這裡是 no-op),但 session 會被**別的地方**改掉:
+        ///   - 線上非房主每份房間快照都把房間設定收進 session(<c>NetRoomSettingsPublisher.AdoptIfNotHost</c>)
+        ///   - 自己開新房時房間設定重設成預設(<c>GameSession.ResetRoomSettingsToDefaults</c>)
+        /// 不重新對齊的話,使用者回報的就是這個:房主把 ShowTime 的房主讓給我,我打開選歌選單還是寫「自由模式」。
+        ///
+        /// 用 <c>SetIndexWithoutNotify</c>:這裡是拿 session 對齊 UI,回頭再寫一次 session 只會多一次
+        /// 持久化 + 推送給 server。
+        /// </summary>
+        private void SyncRoomSettingWidgets()
+        {
+            var s = Ctx != null ? Ctx.Session : null;
+            if (s == null) return;
+            if (_modeCombo != null) _modeCombo.SetIndexWithoutNotify(s.GameMode);
+            if (_formCombo != null) _formCombo.SetIndexWithoutNotify(s.Formation);
+            if (_lookerCombo != null) _lookerCombo.SetIndexWithoutNotify(s.LookerCount);
+            _sceneIndex = SceneSelectorIndex(_stages, s.StageRandom, s.StageId);
+        }
 
         // Scene selector positions: 0 = 隨機 (random); 1.._stages.Count = _stages[pos-1].
         private void SceneStep(int delta)

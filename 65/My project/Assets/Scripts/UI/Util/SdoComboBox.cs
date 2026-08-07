@@ -247,6 +247,25 @@ namespace Sdo.UI.Util
         /// <summary>Force-close the open list from outside (e.g. when the host panel collapses/slides away).</summary>
         public void CloseList() => Close();
 
+        /// <summary>
+        /// 從外部把顯示值改成第 <paramref name="index"/> 個,**不觸發 onPick**。
+        ///
+        /// 為什麼需要它:選歌面板只 BuildUI 一次,那幾個下拉的值是建版面當下從 session 讀的。
+        /// session 之後被別的地方改掉(線上收到房間設定、自己開新房重設)時,下拉會停在舊值 ——
+        /// 症狀是「房主把 ShowTime 的房主讓給我,我打開選歌選單卻寫自由模式」。
+        /// 不通知是因為呼叫端是拿 session 的值來對齊 UI,回頭再寫一次 session 只會多一次
+        /// 持久化/推送(場景那個 onPick 會 RoomConfig.Save + SyncIfHost)。
+        /// </summary>
+        public void SetIndexWithoutNotify(int index)
+        {
+            int last = Mathf.Max(0, (_options != null ? _options.Length : 1) - 1);
+            int i = Mathf.Clamp(index, 0, last);
+            if (i == _index) return;
+            _index = i;
+            RefreshValue();
+            if (IsOpen) { Close(); Open(); }   // 展開中 → 重畫,高亮才會跟著移到新的那列
+        }
+
         private void Close()
         {
             if (_popup != null) { Destroy(_popup); _popup = null; }
