@@ -6300,13 +6300,13 @@ namespace Sdo.Game
                 foreach (var k in laneKeys[lane])
                 { if (Input.GetKeyDown(k)) down = true; if (Input.GetKey(k)) anyHeld = true; if (Input.GetKeyUp(k)) anyUp = true; }
                 if (anyHeld) mask |= 1 << lane;
-                if (down) { PressLane(lane, press); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
-                if (anyUp && !anyHeld) ReleaseLane(lane, press);   // released only when no set key is still held（放開同樣是輪詢邊緣 → 同一個中點修正）
-            }
                 // ShowTime auto→manual SEAM 先跑,再處理這一幀的新按鍵。舊版是 `if (down) … else if (seam)`:
                 // 接縫那一幀玩家只要又按了一下(連打時很常見),視窗內那些遺失邊緣的按鍵就整批被擠掉、永遠不補判。
                 // 補判過的音符已 HeadJudged,底下的 PressLane 自然會跳過它去找真正該打的下一顆,兩者不會搶同一顆。
                 if (_seam.JustEnded) ReplayShowtimeSeamPress(lane, now, anyHeld);
+                if (down) { PressLane(lane, press); _recDownStart[lane] = Time.time; }   // any press fires the one-shot keydown burst
+                if (anyUp && !anyHeld) ReleaseLane(lane, press);   // released only when no set key is still held（放開同樣是輪詢邊緣 → 同一個中點修正）
+            }
             if (_seam.JustEnded) _seam.ConsumeSeamFrame();   // seam replay is a one-frame event（寬限期繼續有效）
             _replay.Record(now, mask);   // osu-style 打擊紀錄 (appends only when the held-key bitmask changes)
         }
@@ -6624,11 +6624,11 @@ namespace Sdo.Game
         private void ObserveShowtimeInput(double now)
         {
             if (ChatTyping) return;   // 打字中的按鍵是文字,不能被記成「窗內按過這條 lane」
+            double press = PressTimeMs(now);   // 與手動路徑同一個輪詢中點修正 —— 補判要用真實按下時刻才判得準
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
                 foreach (var k in laneKeys[lane])
                 {
-            double press = PressTimeMs(now);   // 與手動路徑同一個輪詢中點修正 —— 補判要用真實按下時刻才判得準
                     if (Input.GetKeyDown(k)) _seam.OnPress(lane, press, NearestHittable(lane, press));   // 記下按下時刻 + 當下瞄準的那一顆(接縫只認這一顆,絕不重新搜尋鄰居)
                     if (Input.GetKeyUp(k)) _seam.OnRelease(lane, press);                                  // 記下放開時刻:長條尾判要用真實的放手時間,不是接縫那一幀
                 }
@@ -6679,6 +6679,13 @@ namespace Sdo.Game
         private void PressLane(int lane, double now)
         {
             var n = NearestHittable(lane, now); if (n == null) return;
+            // 這一軌還按著一條沒結束的長條時,絕不去撿「那條長條結束之後才到」的音符:那次按下是**重新按住這條
+            // 長條**(ShowTime 自動幫你按住頭、你在視窗結束後才按鍵接手,就是這個情況)。撿了的話那顆會被提早
+            // 判掉,而且它若也是長條,BeginHold 會覆蓋 _holding[lane],原本那條就成了沒人結算的孤兒 —— 尾判永遠
+            // 不出現,畫面上就是長條「斷掉」。同軌疊譜(音符落在長條結束之前)不受影響,照舊判定。
+            var running = _holding[lane];
+            if (running != null && running.Note.EndTimeMs.HasValue
+                && ShowtimeSeamRules.PressBelongsToRunningHold(running.Note.EndTimeMs.Value, n.Note.StartTimeMs)) return;
             Judgment jv;
             if (forcedJudge >= 0) jv = (Judgment)forcedJudge;                         // debug: force a grade on the hit
             else
@@ -6691,13 +6698,6 @@ namespace Sdo.Game
                 jv = j.Value;
             }
             n.HeadJudged = true; ApplyEvent(jv, lane);
-            // 這一軌還按著一條沒結束的長條時,絕不去撿「那條長條結束之後才到」的音符:那次按下是**重新按住這條
-            // 長條**(ShowTime 自動幫你按住頭、你在視窗結束後才按鍵接手,就是這個情況)。撿了的話那顆會被提早
-            // 判掉,而且它若也是長條,BeginHold 會覆蓋 _holding[lane],原本那條就成了沒人結算的孤兒 —— 尾判永遠
-            // 不出現,畫面上就是長條「斷掉」。同軌疊譜(音符落在長條結束之前)不受影響,照舊判定。
-            var running = _holding[lane];
-            if (running != null && running.Note.EndTimeMs.HasValue
-                && ShowtimeSeamRules.PressBelongsToRunningHold(running.Note.EndTimeMs.Value, n.Note.StartTimeMs)) return;
             PlayOsuHitSample(n.Note, jv);
             if (jv == Judgment.Miss) { if (n.Note.IsHold) n.Dropped = true; }   // keep flowing past the receptor (dimmed if it's a bar); ScrollNotes removes it off the top
             else if (n.Note.IsHold) { if (jv == Judgment.Bad) { n.BundledFail = true; n.Dropped = true; } else BeginHold(lane, n); }   // Bad head = never held → dimmed bar
