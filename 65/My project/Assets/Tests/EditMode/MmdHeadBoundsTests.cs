@@ -275,9 +275,9 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void TryCompute_IgnoresTheTail_WhenItClaimsAHeadTallerThanAnyGeometry()
+        public void TryCompute_ClampsTheTail_WhenItClaimsAHeadTallerThanAnyGeometry()
         {
-            // 沒有角的模型,臉頂只到 +2,但 tail 說顱頂在 +2.93(1.465×2)—— 幾何裡根本沒那麼高的頭 → 不採信。
+            // 沒有角的模型,臉頂只到 +2,但 tail 說顱頂在 +2.93(1.465×2)—— 幾何裡根本沒那麼高的頭 → 夾回 +2。
             var pmx = BuildModel(
                 (new Vector3(-1f, 12f, 0f), Head),
                 (new Vector3(1f, 9.5f, 0f), Head),
@@ -286,42 +286,88 @@ namespace Sdo.Tests
             pmx.Bones[Head].TailOffset = new Vector3(0f, 2f, 0f);   // 身高 12 → frac 0.167,通過長度檢查
 
             Assert.IsTrue(MmdHeadBounds.TryCompute(pmx, out _, out Bounds b));
-            Assert.AreEqual(2f, b.max.y, 1e-3f, "2.93 > 1.35×2 → 退回幾何的 +2");
+            Assert.AreEqual(2f, b.max.y, 1e-3f, "顱頂夾到量得到的 +2");
+            Assert.AreEqual(MmdHeadBounds.HeadBottomPerTail * 2f, b.min.y, 1e-3f, "框底仍由 tail 決定");
         }
 
-        // ---- tail 的上限參照是「含髮」的幾何(MaxTailOverGeometry)-------------------------------------------------
-        // 顱蓋整片都是髮材質的模型(Fuwawa Abyssgard / 宝鐘マリン V2:tail 2.0、剔髮後幾何頂只剩 1.667 / 2.154)
-        // 拿剔完髮的框當門檻會把 tail 誤判成說謊 → 退回用**光頭骨**的框 → 相機近 1.66/1.41 倍,頭爆大又被切頂。
+        // ---- tail 說的顱頂會被「量得到的頭」夾回來 -----------------------------------------------------------------
+        // tail 是作者手填的,hololive V2 那幾包(Fuwawa / 宝鐘マリン / Nerissa)一律填 2.0 → 顱頂 2.93,比它們
+        // 真正的頭高 10~17% → 相機退遠那麼多 → 頭貼裡的臉就小那麼多(使用者兩次回報)。夾的上限有兩個:
+        // 綁在頭骨上的幾何頂(含髮)、以及臉材質的頂(只在那片臉確實包住顱骨時才採信)。
 
-        /// <summary>顱蓋被頭髮蓋住的模型(照 Fuwawa 的比例縮寫):臉頂 +1.667、下巴 −0.5、髮頂 +2.673、tail = 2.0
-        /// (→ 顱頂 2.93)。<paramref name="hairTop"/> 可調,用來試探門檻。</summary>
+        /// <summary>顱蓋被頭髮蓋住的模型(照 Fuwawa 的比例縮寫):下巴 −0.5、眼線 +0.5、臉材質只到 +1.667
+        /// (髮際線,顱蓋是髮材質畫的)、髮頂 +2.673、tail = 2.0(→ 顱頂 2.93)。
+        /// 臉頂離眼線只有 1.17 個臉長 &lt; <see cref="MmdHeadBounds.FaceCrownTrustPerFace"/> → 臉頂不採信。</summary>
         private static PmxLoader BuildHairCappedHead(float hairTop = 12.673f)
         {
             var pmx = BuildModel(
-                (new Vector3(-1f, 11.667f, 0f), Head),   // 臉頂(顱蓋以下露出來的那一點點)
+                (new Vector3(-1f, 11.667f, 0f), Head),   // 臉材質的頂(髮際線)
                 (new Vector3(1f, 9.5f, 0f), Head),       // 下巴
+                (new Vector3(0f, 10.5f, 0f), Head),      // 眼睛
                 (new Vector3(0f, hairTop, 0f), Head),    // 髮皮/前髪 —— 綁在頭骨上,蓋住整片顱蓋
                 (new Vector3(0f, 0f, 0f), Center));      // 腳
-            Paint(pmx, ("顔", 2, 1f), ("前髪", 1, 1f), ("body", 1, 1f));
+            Paint(pmx, ("顔", 2, 1f), ("白目", 1, 1f), ("前髪", 1, 1f), ("body", 1, 1f));
             pmx.Bones[Head].TailOffset = new Vector3(0f, 2f, 0f);
             return pmx;
         }
 
         [Test]
-        public void TryCompute_TrustsTheTail_WhenTheSkullIsHiddenUnderHair()
+        public void TryCompute_ClampsTheTailToTheHairyHeadTop_NotToTheSkullUnderTheHair()
         {
             Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHairCappedHead(), out _, out Bounds b));
-            Assert.AreEqual(MmdHeadBounds.HeadTopPerTail * 2f, b.max.y, 1e-3f,
-                            "含髮的幾何頂 2.673 撐得住 tail 說的 2.93 → 採信 tail,不是剔髮後的 1.667");
+            Assert.AreEqual(2.673f, b.max.y, 1e-3f,
+                            "夾到含髮的幾何頂 2.673 —— 不是 tail 的 2.93,也不是剔髮後的 1.667(那會讓頭爆大)");
+            Assert.AreEqual(MmdHeadBounds.HeadBottomPerTail * 2f, b.min.y, 1e-3f);
+
+            Assert.IsFalse(MmdHeadBounds.TryFaceCrown(BuildHairCappedHead(), Head, out _),
+                           "臉只切到髮際線(臉頂離眼線 1.17 個臉長)→ 它的頂不能當顱頂");
+        }
+
+        [Test]
+        public void TryCompute_ClampsTheTailToTheHairyHeadTop_WhenEvenTheHairIsShort()
+        {
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHairCappedHead(12.1f), out _, out Bounds b));
+            Assert.AreEqual(2.1f, b.max.y, 1e-3f, "頭上最高的東西就是 +2.1 → 夾到那裡");
+        }
+
+        /// <summary>頭上長角/花的模型(照 Nerissa 的比例縮寫):下巴 −0.5、眼線 +0.5、臉材質包到顱頂 +2.2
+        /// (離眼線 1.7 個臉長 → 採信)、角 +4.0、tail = 2.0(→ 顱頂 2.93,比真的顱頂高)。</summary>
+        private static PmxLoader BuildHornedFaceHead()
+        {
+            var pmx = BuildModel(
+                (new Vector3(-1f, 12.2f, 0f), Head),     // 顱頂(臉材質畫到這裡)
+                (new Vector3(1f, 9.5f, 0f), Head),       // 下巴
+                (new Vector3(0f, 10.5f, 0f), Head),      // 眼睛
+                (new Vector3(0f, 14f, 0f), Head),        // 角 —— 綁在頭骨上,比頭高一大截
+                (new Vector3(0f, 0f, 0f), Center));      // 腳
+            Paint(pmx, ("顔", 2, 1f), ("白目", 1, 1f), ("Horn_mtl", 1, 1f), ("body", 1, 1f));
+            pmx.Bones[Head].TailOffset = new Vector3(0f, 2f, 0f);   // 身高 14 → frac 0.143,通過長度檢查
+            return pmx;
+        }
+
+        [Test]
+        public void TryCompute_ClampsTheTailToTheFaceCrown_WhenHornsOutgrowTheHead()
+        {
+            Assert.IsTrue(MmdHeadBounds.TryFaceCrown(BuildHornedFaceHead(), Head, out float crown));
+            Assert.AreEqual(2.2f, crown, 1e-3f, "臉包住顱骨 → 它的頂就是顱頂");
+
+            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHornedFaceHead(), out _, out Bounds b));
+            Assert.AreEqual(2.2f, b.max.y, 1e-3f, "tail 的 2.93 高過真的顱頂 → 夾到 2.2(角的 +4 更不算)");
             Assert.AreEqual(MmdHeadBounds.HeadBottomPerTail * 2f, b.min.y, 1e-3f);
         }
 
         [Test]
-        public void TryCompute_IgnoresTheTail_WhenEvenTheHairIsNotThatTall()
+        public void FaceAndEyeMaterials_AreRecognisedAcrossLanguages_AndBrowsLashesAreNotEyes()
         {
-            // 髮頂只到 +2.1 → 1.35×2.1 = 2.835 < 2.93:連頭髮都撐不到 tail 說的高度 → 這道門照樣咬。
-            Assert.IsTrue(MmdHeadBounds.TryCompute(BuildHairCappedHead(12.1f), out _, out Bounds b));
-            Assert.AreEqual(1.667f, b.max.y, 1e-3f, "退回剔髮後的幾何");
+            foreach (var n in new[] { "顔", "脸颊", "face01", "MT_Nerissa_Face" })
+                Assert.IsTrue(MmdHeadBounds.IsFaceMaterial(n, null), n + " 應該算臉");
+            foreach (var n in new[] { "MT_Nerissa_Facial_1", "前髪", "body" })
+                Assert.IsFalse(MmdHeadBounds.IsFaceMaterial(n, null), n + " 不是臉");
+
+            foreach (var n in new[] { "白目", "瞳", "瞳孔", "eyeball", "eyes", "MT_Fuwawa_Eye_EX" })
+                Assert.IsTrue(MmdHeadBounds.IsEyeMaterial(n, null), n + " 應該算眼球");
+            foreach (var n in new[] { "MT_Fuwawa_Eyebrow", "MT_Fuwawa_EyeLashes", "まつげ", "眉毛", "目かげ", "ハイライト" })
+                Assert.IsFalse(MmdHeadBounds.IsEyeMaterial(n, null), n + " 不能拿來定眼線");
         }
 
         [Test]

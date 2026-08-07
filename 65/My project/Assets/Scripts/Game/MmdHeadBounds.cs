@@ -9,7 +9,10 @@ namespace Sdo.Game
     /// headshot). Pure maths over the parsed <see cref="PmxLoader"/> arrays; no Unity object is touched, so this is
     /// unit-tested.
     ///
-    /// 🔴 **頭的大小是「頭」骨的 tail(表示先)說了算,不是量幾何**(2026-08-05 定案,見 <see cref="HeadTopPerTail"/>
+    /// 🔴 **頭的大小是「頭」骨的 tail(表示先)說了算,但不准比真的量得到的頭還高**(2026-08-07 補;夾的規則見
+    /// <see cref="FaceCrownTrustPerFace"/> 那一段 —— tail 是作者手填的,hololive V2 那幾包一律填 2.0,
+    /// 推出來的顱頂比它們真正的頭高 10~17%,頭貼裡的臉就小了那麼多)。原始的「用 tail 不量幾何」理由如下
+    /// (2026-08-05 定案,見 <see cref="HeadTopPerTail"/>
     /// 那一段的實測)。量幾何一路踩雷:先是頭髮(下面那節),接著是**角**——La+ Darknesss 的角綁在頭骨上、伸到
     /// 臉頂的 1.9 倍高,結算那格的頭當場小得可笑。帽子/髮飾/呆毛/頭上的耳朵光環全是同一類,靠名字認是認不完的。
     /// 下面「剔頭髮」那一整套仍在,但只是 tail 不可信時的**後備**。
@@ -85,21 +88,32 @@ namespace Sdo.Game
         /// <summary>tail 長度要落在模型總高的這個區間才採信(實測三具都是 7.5%~8.2%)。落在外面 = 這個模型的
         /// 表示先沒照慣例填 → 退回量幾何。</summary>
         public const float MinTailPerHeight = 0.03f, MaxTailPerHeight = 0.20f;
-        /// <summary>tail 推出來的顱頂比「實際量到的頭部幾何頂」還高過這個倍數 = tail 在說謊(幾何裡根本沒有那麼
-        /// 高的頭)→ 退回量幾何。反過來低很多是**正常**的,那正是角/帽子被排除掉的樣子(La+ 是 0.51)。
-        ///
-        /// 🔴 比的是**含髮**的那個框(<see cref="TryCompute"/> 餵給 <see cref="TryTailBox"/> 的第三個參數),
-        ///    不是剔完頭髮的。這道門只問一件事:「這顆頭上到底有沒有東西長那麼高?」—— 頭髮當然算。拿剔完髮的框
-        ///    去比的話,顱蓋整片都是髮材質的模型會被誤判成「tail 在說謊」:
-        ///    <list type="bullet">
-        ///    <item>Fuwawa Abyssgard:tail 2.0 → 顱頂 2.93;剔髮後幾何頂只剩 1.667(臉那一塊)→ 1.35×1.667 = 2.25 &lt; 2.93 → 誤退</item>
-        ///    <item>宝鐘マリン V2:同樣 tail 2.0;剔髮後 2.154 → 2.91 &lt; 2.93,差 0.8% 也誤退</item>
-        ///    </list>
-        ///    誤退的後果是拿**光頭骨**的框(1.98 / 2.33)當尺標,而畫出來的頭連髮帶耳高 3.45 / 4.10 —— 是框的 1.74/1.76 倍
-        ///    (校正這組常數的初音只有 1.11~1.21 倍)→ 相機近了 1.66/1.41 倍,頭爆大又被切頂(使用者截圖)。
-        ///    改看含髮的框之後兩包都採信 tail,可見的頭回到畫面高的 57.7% / 68.5%(初音 64.3%、SDO 63.6%)。
-        ///    這樣**不會**放鬆對角/帽子的防護:角是把幾何頂**撐高**,本來就不會踩到這道門(La+ 撐到 4.44)。</summary>
-        public const float MaxTailOverGeometry = 1.35f;
+        // ---- tail 說的顱頂還要被「真的量得到的頭」壓回來(2026-08-07)------------------------------------------
+        // tail 是**作者手填**的,而很多模型根本沒照慣例填 —— 三包 hololive V2(Fuwawa / 宝鐘マリン / Nerissa)
+        // 一律填整數 2.0,推出來的顱頂 2.93 全都高過它們真正的頭。高多少就等於相機退多遠,頭/臉就小多少:
+        //
+        //   Nerissa Ravencroft:臉的幾何只到 2.500(2.93 那一截是角 4.40 與花 3.03)→ 框高 17% → 臉小 17%
+        //   Fuwawa Abyssgard  :綁在頭骨上的東西(含髮蓋)只到 2.673 → 框高 10%
+        //
+        // 所以 tail 現在只當**上限**,再被兩個量得到的東西夾回來(取三者最小):
+        //   (1) 綁在頭骨上的幾何頂(含髮)—— 頭上長不出比它更高的頭
+        //   (2) 臉材質的頂(只在它確實包住顱骨時採信,見 FaceCrownTrustPerFace)—— 這條專治角/花/髮飾
+        // 夾回來取代了舊的「tail 說謊就整個不採信、退回量幾何」:退回去等於連角一起量進來(Fuwawa 那次頭爆大
+        // 就是這樣),夾一下才是要的 —— tail 仍然負責排除離群配件,只是不准比真的頭還高。
+        /// <summary>臉材質的頂要高過眼線這麼多個「眼線到下巴」的距離,才算「這片臉材質包住了顱骨」,它的頂才能
+        /// 拿來夾 tail。低於這個值 = 那片臉只切到髮際線(顱蓋是髮材質畫的),它的頂根本不是顱頂 —— 拿去夾會把
+        /// 框壓到只剩臉,頭就爆大(Fuwawa 那次的症狀)。實測:
+        /// Ika 1.83 / Nerissa 1.55 / YYB 1.47 採信;宝鐘マリン 1.20 / Fuwawa 1.11 不採信。</summary>
+        public const float FaceCrownTrustPerFace = 1.3f;
+
+        /// <summary>材質名字裡有這些字就當「臉」(顱骨那一片)。Ika 的臉叫「脸颊」、YYB 叫「face01」、
+        /// マリン 叫「顔」、Fuwawa/Nerissa 叫「MT_*_Face」。<c>Facial</c> 不含 <c>face</c>(F-a-c-i),不會誤收。</summary>
+        public static readonly string[] FaceNameKeys = { "顔", "顏", "脸", "臉", "face" };
+        /// <summary>眼睛材質(拿來定眼線)。</summary>
+        public static readonly string[] EyeNameKeys = { "白目", "瞳", "eye", "目玉" };
+        /// <summary>名字裡有這些就**不是**眼球:眉毛/睫毛/高光/眼影都貼在眼睛附近,會把眼線拉歪
+        /// (而且 "eyebrow"/"eyelash" 本身就含 "eye")。</summary>
+        public static readonly string[] NotEyeNameKeys = { "brow", "lash", "眉", "睫", "まつげ", "まゆ", "highlight", "ハイライト", "かげ", "影", "陰" };
 
         /// <summary>Fallback only: how far BELOW the head bone the subtree slab reaches, as a fraction of the hair height
         /// above it. The chin sits a little under the bone; the long hair hanging past that is not part of the portrait.</summary>
@@ -156,13 +170,13 @@ namespace Sdo.Game
 
         /// <summary>這個材質是頭髮(或髮飾)嗎 —— 名字含 <see cref="HairNameKeys"/> 任一個字(不分大小寫)。
         /// 日文名與英文名任一個中就算。</summary>
-        public static bool IsHairMaterial(string nameJp, string nameEn) => HasHairKey(nameJp) || HasHairKey(nameEn);
+        public static bool IsHairMaterial(string nameJp, string nameEn) => HasKey(nameJp, HairNameKeys) || HasKey(nameEn, HairNameKeys);
 
-        private static bool HasHairKey(string s)
+        private static bool HasKey(string s, string[] keys)
         {
-            if (string.IsNullOrEmpty(s)) return false;
-            for (int i = 0; i < HairNameKeys.Length; i++)
-                if (s.IndexOf(HairNameKeys[i], StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (string.IsNullOrEmpty(s) || keys == null) return false;
+            for (int i = 0; i < keys.Length; i++)
+                if (s.IndexOf(keys[i], StringComparison.OrdinalIgnoreCase) >= 0) return true;
             return false;
         }
 
@@ -261,10 +275,13 @@ namespace Sdo.Game
             headBone = FindBone(pmx.Bones, HeadBoneJp);
             if (headBone < 0) return false;
 
-            // 量幾何拿到兩個框:剔掉頭髮的(頭的大小,tail 不可信時的後備)與含髮的(只拿來當 tail 的上限參照,
-            // 見 MaxTailOverGeometry —— 顱蓋是髮材質的模型,剔完那個框比 tail 矮一大截,拿它當門檻會誤退)。
+            // 量幾何拿到兩個框:剔掉頭髮的(頭的大小,tail 不可信時的後備)與含髮的(頭上長不出比它更高的頭 →
+            // 當 tail 的上限)。顱蓋是髮材質的模型剔完那個框比 tail 矮一大截,所以上限一定要用含髮的那個。
             if (!TryMeasureGeometry(pmx, headBone, out headLocal, out var withHair)) return false;
-            if (TryTailBox(pmx, headBone, withHair, out var tailBox)) headLocal = tailBox;   // 首選:骨頭說了算
+            float crownCap = withHair.max.y;
+            // 臉材質包住顱骨的話,它的頂就是更準的顱頂 —— 角/花/髮飾都在它上面,夾下去正好把它們排掉。
+            if (TryFaceCrown(pmx, headBone, out float faceCrown) && faceCrown < crownCap) crownCap = faceCrown;
+            if (TryTailBox(pmx, headBone, crownCap, out var tailBox)) headLocal = tailBox;   // 首選:骨頭說了算
             return true;
         }
 
@@ -279,10 +296,10 @@ namespace Sdo.Game
             return b.TailOffset.y;
         }
 
-        /// <summary>頭的框由 tail 長度算出來(見上面那段註解)。<paramref name="hairyGeometry"/> ＝ 量幾何得到的框,
-        /// **含頭髮**(見 <see cref="MaxTailOverGeometry"/>:這裡只拿它做「tail 有沒有在說謊」的上限檢查,頭髮也是
-        /// 長在頭上的東西,要算)。tail 不可信就回 false,呼叫端留著幾何那個框。</summary>
-        public static bool TryTailBox(PmxLoader pmx, int headBone, Bounds hairyGeometry, out Bounds tailBox)
+        /// <summary>頭的框由 tail 長度算出來(見上面那段註解),但顱頂不准高過 <paramref name="crownCap"/>
+        /// (頭骨座標;＝量得到的頭有多高,見 <see cref="TryCompute"/>)。tail 本身不可用(沒填/長度不合理)才
+        /// 回 false,呼叫端留著幾何那個框。</summary>
+        public static bool TryTailBox(PmxLoader pmx, int headBone, float crownCap, out Bounds tailBox)
         {
             tailBox = default;
             float tail = HeadTailLength(pmx?.Bones, headBone);
@@ -295,13 +312,77 @@ namespace Sdo.Game
             float frac = tail / modelH;
             if (frac < MinTailPerHeight || frac > MaxTailPerHeight) return false;   // 表示先沒照慣例填
 
-            float top = HeadTopPerTail * tail, bottom = HeadBottomPerTail * tail;
-            if (top > MaxTailOverGeometry * hairyGeometry.max.y) return false;      // 幾何裡沒有那麼高的頭
+            float bottom = HeadBottomPerTail * tail;
+            float top = Mathf.Min(HeadTopPerTail * tail, crownCap);                 // 不准比真的量得到的頭還高
+            if (!(top > bottom)) return false;                                      // 夾到翻過去 = 這個上限不可信
 
             float h = top - bottom;
             // X/Z 只有 size 會被讀到(StableHeadBox 把框釘在頭骨的 x/z 上),給一個等邊的方框即可。
             tailBox = new Bounds(new Vector3(0f, (top + bottom) * 0.5f, 0f), new Vector3(h, h, h));
             return true;
+        }
+
+        /// <summary>這個材質是「臉」(顱骨那一片)嗎 —— 名字含 <see cref="FaceNameKeys"/> 任一個字。</summary>
+        public static bool IsFaceMaterial(string nameJp, string nameEn) => HasKey(nameJp, FaceNameKeys) || HasKey(nameEn, FaceNameKeys);
+
+        /// <summary>這個材質是「眼球」嗎 —— 含 <see cref="EyeNameKeys"/> 且不含 <see cref="NotEyeNameKeys"/>
+        /// (眉毛/睫毛/高光/眼影都貼在眼睛附近,會把眼線拉歪)。</summary>
+        public static bool IsEyeMaterial(string nameJp, string nameEn)
+            => (HasKey(nameJp, EyeNameKeys) || HasKey(nameEn, EyeNameKeys)) &&
+               !HasKey(nameJp, NotEyeNameKeys) && !HasKey(nameEn, NotEyeNameKeys);
+
+        /// <summary>臉的幾何量到的顱頂(頭骨座標的 Y)。只有在「這片臉材質確實包住顱骨」時才回 true —— 判準是
+        /// 臉頂離眼線有 <see cref="FaceCrownTrustPerFace"/> 個「眼線到下巴」那麼遠(顱蓋是髮材質畫的模型,
+        /// 那片臉只到髮際線,這個比值會很小)。認不出臉或眼睛就回 false,呼叫端只靠 tail 與含髮幾何。
+        ///
+        /// 這條專治「綁在頭骨上、卻比頭還高」的角/花/髮飾:tail 排不掉它們的時候(tail 自己也高估),臉頂才是
+        /// 真正的顱頂。實測 Nerissa Ravencroft:tail 說 2.930,臉只到 2.500,中間那截是角(4.40)與花(3.03)。</summary>
+        public static bool TryFaceCrown(PmxLoader pmx, int headBone, out float crown)
+        {
+            crown = 0f;
+            if (pmx == null || pmx.Bones == null || headBone < 0 || headBone >= pmx.Bones.Count) return false;
+            if (pmx.Materials == null || pmx.Materials.Count == 0 || pmx.Indices == null || pmx.VertexCount == 0) return false;
+
+            var parent = new int[pmx.Bones.Count];
+            for (int i = 0; i < parent.Length; i++) parent[i] = pmx.Bones[i].Parent;
+            var inHead = Subtree(parent, headBone);
+            float headY = pmx.Bones[headBone].Position.y;
+
+            if (!TryMaterialSpan(pmx, inHead, headY, true, out float chin, out float faceTop)) return false;
+            if (!TryMaterialSpan(pmx, inHead, headY, false, out float eyeLo, out float eyeHi)) return false;
+
+            float eye = (eyeLo + eyeHi) * 0.5f;
+            float faceLen = eye - chin;                                             // 眼線到下巴 = 這顆頭的尺標
+            if (!(faceLen > 1e-4f)) return false;
+            if (faceTop - eye < FaceCrownTrustPerFace * faceLen) return false;      // 只切到髮際線的臉
+            crown = faceTop;
+            return true;
+        }
+
+        /// <summary>臉(<paramref name="face"/>=true)或眼球材質畫到、而且綁在頭骨子樹上的頂點,其 Y 範圍
+        /// (頭骨座標)。隱藏材質(alpha≈0)不算。</summary>
+        private static bool TryMaterialSpan(PmxLoader pmx, bool[] inHead, float headY, bool face, out float lo, out float hi)
+        {
+            lo = float.PositiveInfinity; hi = float.NegativeInfinity;
+            bool got = false;
+            foreach (var m in pmx.Materials)
+            {
+                if (m == null || m.Diffuse.a < HiddenAlpha) continue;
+                if (face ? !IsFaceMaterial(m.NameJp, m.NameEn) : !IsEyeMaterial(m.NameJp, m.NameEn)) continue;
+                int end = Mathf.Min(m.IndexStart + m.IndexCount, pmx.Indices.Length);
+                for (int i = Mathf.Max(0, m.IndexStart); i < end; i++)
+                {
+                    int v = pmx.Indices[i];
+                    if (v < 0 || v >= pmx.VertexCount) continue;
+                    int b = DominantBone(pmx.BoneIdx, pmx.BoneWt, v);
+                    if (b < 0 || b >= inHead.Length || !inHead[b]) continue;
+                    float y = pmx.Positions[v].y - headY;
+                    if (y < lo) lo = y;
+                    if (y > hi) hi = y;
+                    got = true;
+                }
+            }
+            return got;   // 一個頂點也算(眼球在合成模型裡可能只有一點)—— 空的才回 false
         }
 
         /// <summary>量幾何:綁在頭骨(或其子骨)上、**扣掉頭髮材質**的那一塊(<paramref name="headLocal"/>),
