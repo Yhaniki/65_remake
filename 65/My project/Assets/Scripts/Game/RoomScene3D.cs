@@ -382,7 +382,8 @@ namespace Sdo.Game
                 // dancers 1-5 hold the cat-0 standby idle; lookers 6-15 their distinct cat-0x21 WAITING pose. All female
                 // (default WOMAN). Desync the loop phase so same-clip avatars aren't in lockstep.
                 var slotMot = SdoRoomAvatar.LoadMot("MOTION/" + RoomLayout.SlotMotionName(slot, female: true) + ".MOT");
-                if (slotMot != null) { av.RestMot = slotMot; av.SetClip(slotMot); av.PhaseOffsetSec = slot * 0.31f; }
+                // PoseInitialClip 而不是 SetClip:一出現就是看戲姿勢,不從 Build 的站立 idle 混過去(同 SpawnRemote)。
+                if (slotMot != null) { av.RestMot = slotMot; av.PhaseOffsetSec = slot * 0.31f; av.PoseInitialClip(slotMot); }
 
                 Vector3 a = slot < RoomLayout.SeatCount
                     ? (di < dancerSpots.Length ? dancerSpots[di++] : RoomLayout.HostSpawn)   // dancers 1-5: random walkable
@@ -610,8 +611,10 @@ namespace Sdo.Game
             {
                 av.RestMot = r.Idle;
                 av.PhaseOffsetSec = (p.Seat + 1) * 0.37f;   // 同一段 clip 不要整齊得像複製人
-                av.PoseFrame(av.AutoLoopFrame);             // 上面 FeetYAt 把人停在第 0 幀 → 擺回迴圈當下(見換裝那條)
-                av.SetClip(r.Idle);
+                // 🔴 一出現在畫面上就是最終姿勢,**不混色**(使用者需求)。以前這裡是 SetClip:Build 內部掛的是站立 idle,
+                // 旁觀者的 cat-0x21 看戲姿勢會被當成換動作 → 進房間時看到「原本在旁觀的人從立正慢慢彎下去坐好」。
+                // (PoseInitialClip 也順便把 FeetYAt 留下的第 0 幀擺回迴圈當下。)
+                av.PoseInitialClip(r.Idle);
             }
 
             // 還沒收到他的位置之前先站在座位對應的固定點(每台算出來一樣),收到第一筆就會滑過去。
@@ -923,7 +926,9 @@ namespace Sdo.Game
             if (_avatar != null) MmdAvatarSwap.Register(_avatar);   // 設定裡開了 MMD 顯示 → 這隻換成 MMD 模型
             ApplyOutfitMotion();   // 飛行翅膀→flystay 浮空 idle;加速鞋→walkSpeed 5.0 (SpecialMotionItems)
             _feetY = GroundFeetY();                                               // 地板校正:一律拿地面站姿量(見 GroundFeetY)
-            if (_avatar != null && _idleMot != null) _avatar.SetClip(_idleMot);   // 從生成起就用對的 idle (flystay 也是,不必等走一步)
+            // 從生成起就用對的 idle (flystay 也是,不必等走一步),而且是**硬切**:自己以旁觀身分進房時
+            // _idleMot 是 cat-0x21 看戲姿勢,SetClip 會讓它從 Build 的站立 idle 混過去(同 SpawnRemote 那條)。
+            if (_avatar != null && _idleMot != null) _avatar.PoseInitialClip(_idleMot);
             _hoverCur = SpecialMotionItems.HoverY(_flying);                       // 一進房間就穿著翅膀 → 直接浮著,不從地面升起
             // Host spawn = (-100, 0, -26): the REAL fixed offline spawn, captured via Frida from the running official EXE
             // (the host avatar slot-0 object position) and then confirmed in the decompile — flat sdo_stand_alone.exe.c
@@ -984,7 +989,9 @@ namespace Sdo.Game
                     return;
                 }
             }
-            _avatar.SetClip(_idleMot);   // 一般:從生成起就用對的 idle(flystay 也是,不必等走一步)
+            // 一般:從生成起就用對的 idle(flystay 也是,不必等走一步),硬切 —— 重建那一瞬間畫面上的姿勢
+            // 是 Build 的站立 idle,站在旁觀席換裝時 SetClip 會從那裡混回看戲姿勢(= 換件衣服人就站起來再坐回去)。
+            _avatar.PoseInitialClip(_idleMot);
         }
 
         /// <summary>The model-space feet offset used to rest the avatar on <see cref="floorY"/> — ALWAYS measured on the

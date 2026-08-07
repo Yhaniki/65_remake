@@ -173,6 +173,38 @@ namespace Sdo.Game
             Pose(0f);               // display the idle now so the mesh is never left at the bind/T-pose
         }
 
+        /// <summary>
+        /// 把 <paramref name="mot"/> 當成「這隻角色本來就在播的動作」立刻擺好:設成作用中的 clip、
+        /// 同步 <c>_lastMot</c>(第一次 LateUpdate 不會偵測到切換 → **不混色**),並擺到迴圈當下那一格。
+        ///
+        /// 用在角色**剛出現在畫面上**的時候。<see cref="PoseInitialIdle"/> 只認 <see cref="RestMot"/>(而且是第 0 幀),
+        /// 所以建好之後才決定要播別支動作的路徑(房間旁觀者的 cat-0x21 看戲姿勢)以前是走 <see cref="SetClip"/> ——
+        /// 那會被當成換動作,從 Build 的站立 idle 混 <see cref="BlendSec"/> 過去:使用者看到的是
+        /// 「一進房間,原本在旁觀的人從立正慢慢彎下去坐好」。一進畫面就該是最終姿勢。
+        ///
+        /// 也把 <see cref="SnapNextClip"/>/<see cref="BlendNextClip"/> 的一次性旗標清掉 —— 這裡本來就是硬切,
+        /// 留著會被下一次真的換動作(開始走路)吃掉。
+        /// </summary>
+        /// <param name="frame">要擺哪一格;負數 = 迴圈當下那一格(<see cref="AutoLoopFrame"/>)。
+        /// 房間頭貼是鏡射本體的姿勢,傳本體那一格才不會第一幀對不上。</param>
+        public void PoseInitialClip(MotLoader mot, float frame = -1f)
+        {
+            if (_hrc == null || mot == null) return;
+            _mot = mot;
+            _lastMot = mot;
+            _blendStart = -1f;
+            _snapNextBlend = false; _blendNextSec = -1f;
+            Pose(frame >= 0f ? frame : AutoLoopFrame);   // 預設用迴圈當下那一格(不是第 0 幀:同一批人才不會整齊得像複製人,見 PhaseOffsetSec)
+        }
+
+        /// <summary>下一次 LateUpdate 會不會把現在掛著的 clip 當成「換了動作」(→ 混色)。
+        /// 測試用的觀測點:一進畫面就該擺好的姿勢不該留下這個待處理的切換。</summary>
+        public bool ClipSwitchPending => !ReferenceEquals(_mot, _lastMot);
+
+        /// <summary>還有沒有排著一次性的換動作設定(<see cref="SnapNextClip"/> 硬切 / <see cref="BlendNextClip"/> 指定長度)。
+        /// 測試用的觀測點:這種旗標沒被用掉就會留到**下一次**換動作才生效(走路那一下突然不混色)。</summary>
+        public bool OneShotBlendPending => _snapNextBlend || _blendNextSec >= 0f;
+
         public void Setup(HrcLoader hrc, MotLoader mot)
         {
             _hrc = hrc; _mot = mot;

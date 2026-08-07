@@ -80,6 +80,7 @@ namespace Sdo.Game
         private Renderer[] _hairRends;     // HAIR* only → 只用「髮頂」決定鏡頭上下,不影響頭的大小
         private MotLoader _walkMot, _idleMot;
         private bool _mirrorWalking;
+        private bool _mirrorPrimed;  // 已經接上本體姿勢了嗎(第一次是硬切,見 LateUpdate)
         private bool _male;          // 重挑鏡射 clip 要用(飛行↔地面切換,見 SetSpectating)
         private bool _wingFlying;    // 這身穿搭有飛行翅膀嗎(換裝才會變)
         private bool _flyClips;      // 現在鏡射的是不是飛行 clip(= _wingFlying 且不在旁觀席)
@@ -143,6 +144,7 @@ namespace Sdo.Game
             if (_avatar == null) { Destroy(parent); return false; }
             _avatar.DanceEnabled = () => false;
             _avatar.DanceTimeSec = () => -1f;
+            _mirrorPrimed = false;   // 新的頭貼 avatar → 第一次接上本體姿勢再硬切一次(見 LateUpdate)
             // MMD 顯示模式下頭貼也換成 MMD 模型 (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
             // sway is invisible, and the solver is the costliest part of an MMD rig — the hair just rides the head instead.
             // 🔴 別人的那幾格(結算列)一定要走 RegisterRemote —— 走本機那條的話,他們會全部戴上**我**選的模型。
@@ -260,7 +262,11 @@ namespace Sdo.Game
                 // the body's previous frame; that is one frame of lag on a breathing loop, i.e. invisible - and unlike
                 // the old mirror it cannot accumulate drift.
                 if (_chatActionUntil > 0f) { _avatar.ClearOneShot(); _chatActionUntil = -1f; }
-                _avatar.SetClip(body.CurrentClip);
+                // 🔴 **第一次**接上本體是硬切:頭貼自己建出來時掛的是站立 idle,本體卻可能已經在別的姿勢
+                // (以旁觀身分進房 → cat-0x21 看戲姿勢),SetClip 會讓頭貼從立正混 0.5 秒過去 = 一進畫面就晃一下。
+                // 之後照舊 SetClip —— 本體真的換動作(idle↔walk)時頭貼要跟著混,不然頭跟身體對不上。
+                if (!_mirrorPrimed) { _mirrorPrimed = true; _avatar.PoseInitialClip(body.CurrentClip, body.CurrentPoseTime); }
+                else _avatar.SetClip(body.CurrentClip);
                 _avatar.FrameOverride = body.CurrentPoseTime;
                 // keep the fallback path's latch in step, so if the body ever goes away mid-session the walk/idle
                 // mirror resumes with the right clip instead of the one it happened to hold before mirroring started
