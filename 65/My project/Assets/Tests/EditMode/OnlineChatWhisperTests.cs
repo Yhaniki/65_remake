@@ -203,6 +203,38 @@ namespace Sdo.Tests
             return chat.History[0];
         }
 
+        /// <summary>
+        /// 進舞台/回房要丟掉的「X 進入舞台遊戲」那幾行,連線時是**兩份**歷史各留一份
+        /// (離線實作 Emit 出來,又被轉進 OnlineChatService 自己那份)—— 只清一邊的話畫面讀的那份還在,
+        /// 回房就會整批重播。其餘訊息(這裡用系統提示行)必須留著。
+        /// </summary>
+        [Test]
+        public void ClearStageAnnouncementsDropsStageLinesFromBothHistories()
+        {
+            var net = new NetClient();
+            var local = new MockChatService(new ZeroClock(), simulateOthers: false);
+            var chat = new OnlineChatService(net, local);
+            try
+            {
+                chat.AnnounceStageEnter("小舞");
+                chat.SendSystem("系統提示");
+                Assert.AreEqual(2, chat.History.Count);
+
+                chat.ClearStageAnnouncements();
+
+                Assert.AreEqual(1, chat.History.Count, "只該剩下系統提示那一行");
+                Assert.IsTrue(chat.History[0].System);
+                foreach (var m in local.History)
+                    Assert.AreEqual(StageEventKind.None, m.Stage, "底下那份離線歷史也要清乾淨");
+            }
+            finally
+            {
+                net.Disconnect("test");
+            }
+        }
+
+        private sealed class ZeroClock : IClock { public double NowMs => 0; }
+
         /// <summary>只記錄有沒有被呼叫的假離線實作 —— 用來證明密語沒有再掉回本機那條路。</summary>
         private sealed class RecordingChatService : IChatService
         {
@@ -230,6 +262,8 @@ namespace Sdo.Tests
             public void AnnounceStageLeave(string name) { }
             public void SetScope(ChatScope scope, int roomId = 0) { }
             public void Clear() => _history.Clear();
+            public void ClearStageAnnouncements()
+                => _history.RemoveAll(m => m != null && m.Stage != StageEventKind.None);
             public void Tick() { }
 
             // 介面上的事件沒被用到時 C# 會警告;明確留一個沒人呼叫的觸發點避免那個警告。

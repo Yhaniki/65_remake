@@ -839,6 +839,10 @@ namespace Sdo.UI.Screens
             // 旗標會殘留到下一次進房 —— 那次是真的換場地,還是要清。
             bool sameRoomAsBefore = _chatScopeRoomId != 0 && _chatScopeRoomId == prevChatScopeRoomId;
             if (!_returnedFromStage || !sameRoomAsBefore) Ctx.Chat?.Clear();
+            // 留著訊息的那條路(打完一首回同一間房)要**單獨**把進出舞台廣播丟掉:
+            // 「X 進入舞台遊戲」是等待期間的即時提示,跳完一首回來早就過期了,重播一次只是洗版。
+            // (進舞台時已清過一次,這裡再清是為了涵蓋「在舞台上時房裡有人進出」新產生的那幾行。)
+            else Ctx.Chat?.ClearStageAnnouncements();
             Ctx.Chat?.SetScope(ChatScope.Room, _chatScopeRoomId);
             RebuildRoomChat();
             Render();
@@ -5398,6 +5402,8 @@ namespace Sdo.UI.Screens
             _starting = true;
             _returnedFromStage = true;
             // 🔴 進遊戲**不清**訊息欄歷史:清掉的話回房那次 RebuildRoomChat 就沒東西可重建了(見 OnShow)。
+            //    但進出舞台廣播是例外 —— 上了舞台就該消失(遊戲畫面本來就不顯示),回房也不重播。
+            Ctx.Chat?.ClearStageAnnouncements();
             UiSfx.Play(UiSfx.GameStart);
             StartCoroutine(FadeToStage());
         }
@@ -5693,6 +5699,7 @@ namespace Sdo.UI.Screens
             ResolveLocalRound();               // 離線沒有 server echo → 這一局的場景/隊形自己抽(房間設定不動)
             _starting = true;
             _returnedFromStage = true;         // 記住:待會回房的那次 OnShow 不再廣播「進入舞台遊戲」、訊息欄也不清
+            Ctx.Chat?.ClearStageAnnouncements();   // …但進出舞台廣播上舞台就丟掉(同 OnMatchStarting)
             UiSfx.Play(UiSfx.GameStart);       // 開始音效
             StartCoroutine(FadeToStage());     // 全螢幕 1 秒漸暗 → 才 StartGame 切舞台
         }

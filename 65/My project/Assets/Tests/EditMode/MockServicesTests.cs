@@ -534,6 +534,26 @@ namespace Sdo.Tests
             Assert.AreEqual("Neo", c.History[n0 + 1].Sender);
         }
 
+        // 進舞台/回房：只丟掉進出廣播，玩家講的話留著（回房後左下角還看得到進遊戲前聊的內容）。
+        [Test]
+        public void ClearStageAnnouncements_Drops_Only_Stage_Lines()
+        {
+            var c = new MockChatService(new FakeClock { Now = 0 }, simulateOthers: false);
+            c.SetScope(ChatScope.Room, 7);
+            c.Send("進遊戲前講的話");
+            c.AnnounceStageEnter("小舞");
+            c.SendSystem("系統提示");
+            c.AnnounceStageLeave("Neo");
+            Assert.AreEqual(4, c.History.Count);
+
+            c.ClearStageAnnouncements();
+
+            Assert.AreEqual(2, c.History.Count);
+            foreach (var m in c.History) Assert.AreEqual(StageEventKind.None, m.Stage);
+            Assert.AreEqual("進遊戲前講的話", c.History[0].Text);
+            Assert.IsTrue(c.History[1].System);
+        }
+
         [Test]
         public void Stage_Announcement_Ignores_Blank_Name()
         {

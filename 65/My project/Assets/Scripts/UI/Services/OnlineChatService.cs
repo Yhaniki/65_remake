@@ -169,6 +169,14 @@ namespace Sdo.UI.Services
             _local?.Clear();
         }
 
+        // 進出舞台廣播是離線那份產生的,但它 Emit 出來的行也被轉進**這一份**歷史(建構式掛的 Add),
+        // 所以兩邊都要清 —— 只清一邊的話畫面讀的那份還留著。
+        public void ClearStageAnnouncements()
+        {
+            _history.RemoveAll(m => m != null && m.Stage != StageEventKind.None);
+            _local?.ClearStageAnnouncements();
+        }
+
         public void Tick() => _local?.Tick();
 
         // ---- 收到 ----

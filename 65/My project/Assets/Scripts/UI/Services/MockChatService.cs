@@ -221,6 +221,10 @@ namespace Sdo.UI.Services
         // 換場地清空訊息歷史（畫面自行重繪即見空）。下一則 bot 訊息照常從新的空歷史累積。
         public void Clear() => _history.Clear();
 
+        // 只丟掉進出舞台廣播那幾行,其餘（聊天/密語/家族/系統）留著 —— 見 IChatService 上的說明。
+        public void ClearStageAnnouncements()
+            => _history.RemoveAll(m => m != null && m.Stage != StageEventKind.None);
+
         // 本機發言者名：active profile 的 id/名（跟頭頂名字一致）；沒給就回退 "我"。
         private string LocalSender()
         {

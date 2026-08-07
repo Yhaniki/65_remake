@@ -69,6 +69,10 @@ namespace Sdo.UI.Services
         // 設定目前作用域：之後送出的訊息會標記成大廳或該房間（密語除外，永遠跨場）。畫面在 OnShow 設定。
         void SetScope(ChatScope scope, int roomId = 0);
         void Clear();  // 清空訊息歷史（換場地時呼叫：大廳→房間、房間→遊戲、遊戲→房間）
+        // 只清掉進出舞台廣播（「X 進入舞台遊戲」/「X 離開舞台遊戲」），玩家講的話留著。
+        // 進舞台時呼叫一次、回房重建訊息欄前再呼叫一次 —— 那幾行是「誰還在房裡等」的即時提示,
+        // 打完一首回來早就過期了;不清的話回房 RebuildRoomChat 會把它們整批重播（使用者回報的症狀）。
+        void ClearStageAnnouncements();
         void Tick();   // drive scripted bot traffic (call each frame)
     }
 }
