@@ -63,6 +63,59 @@ namespace Sdo.Tests
             }
         }
 
+        // ---------------------------------------------------------------- 一包好幾個模型:是哪一個
+        [Test]
+        public void MmdFile_RoundTrips_SoTheOtherSideLoadsTheRightPmx()
+        {
+            // packId 是**整包**的指紋,而一包可以有好幾個 .pmx(角色 ＋ 武器 ＋ 影子)。
+            // 少了這個欄位,收端只能反推 —— 實測反推挑到那把槍,別人畫面上是一支黑色的槍在跳舞。
+            var look = new NetAvatarLook { MmdPack = GoodPack(), MmdFile = "nerissaravencroft.pmx" };
+            var back = NetAvatarLook.Decode(Node(look.Encode().Json()));
+
+            Assert.AreEqual("nerissaravencroft.pmx", back.MmdFile);
+            Assert.AreEqual(MmdModelRef.Join(look.MmdPack, "nerissaravencroft.pmx"), back.MmdRef());
+        }
+
+        [Test]
+        public void AnOldClientThatOnlySendsThePackId_IsStillUnderstood()
+        {
+            // 舊 client 不送 mmdFile。那不是壞資料,是「他沒說」→ 收端自己從包裡挑。
+            var look = NetAvatarLook.Decode(Node("{\"mmd\":\"" + GoodPack() + "\"}"));
+            Assert.AreEqual("", look.MmdFile);
+            Assert.AreEqual(look.MmdPack, look.MmdRef());
+        }
+
+        [Test]
+        public void HostileMmdFile_IsDropped_NotUsedToBuildAPath()
+        {
+            // 收端會拿它去 Combine 一個真實資料夾 → 路徑穿越就是任意檔案讀取。
+            // 丟掉的正確結果是「他沒說」(收端自己挑),不是把整個模型丟掉。
+            foreach (var bad in new[] { "../../../windows/system32/x.pmx", "/abs.pmx", "a.png", "x.pmx:s.pmx" })
+            {
+                var look = NetAvatarLook.Decode(Node("{\"mmd\":\"" + GoodPack() + "\",\"mmdFile\":\"" + bad.Replace("\\", "\\\\") + "\"}"));
+                Assert.AreEqual("", look.MmdFile, "危險的包內路徑被放行了:" + bad);
+                Assert.AreEqual(look.MmdPack, look.MmdRef(), "packId 本身還是要活著 —— 他確實穿著這一包");
+            }
+        }
+
+        [Test]
+        public void SwitchingToAnotherModelInTheSameFolder_IsAVisibleChange()
+        {
+            // 🔴 同一包裡換一個模型 → packId **一個字都不會變**。這裡不比的話:
+            //    ① setLook 判定「外觀沒變」不送出 → 換了模型別人完全不知道;
+            //    ② 遠端角色的比較鍵一樣 → 就算送到了也不重建。
+            string pack = GoodPack();
+            var a = new NetAvatarLook { MmdPack = pack, MmdFile = "nerissaravencroft.pmx" };
+            var b = new NetAvatarLook { MmdPack = pack, MmdFile = "shadow.pmx" };
+
+            Assert.AreEqual(a.MmdPack, b.MmdPack, "測試前提:同一包 → 同一個 packId");
+            Assert.AreNotEqual(a.Key(), b.Key());
+            Assert.IsFalse(a.SameAs(b));
+            Assert.AreEqual("", new NetAvatarLook { MmdPack = pack }.Clone().MmdFile);
+            Assert.AreEqual("shadow.pmx", b.Clone().MmdFile, "漏了它 → 別人看到的是同一包裡的另一個模型");
+            Assert.IsTrue(b.SameAs(b.Clone()));
+        }
+
         [Test]
         public void HostileMmdName_IsClipped()
         {
@@ -136,6 +189,7 @@ namespace Sdo.Tests
                 BodyIndex = 4,
                 Parts = new[] { "hair", "coat" },
                 MmdPack = GoodPack(),
+                MmdFile = "pmx/miku.pmx",
                 MmdName = "TestMiku",
             };
 
@@ -144,6 +198,7 @@ namespace Sdo.Tests
             Assert.AreEqual(src.BodyIndex, copy.BodyIndex);
             CollectionAssert.AreEqual(src.Parts, copy.Parts);
             Assert.AreEqual(src.MmdPack, copy.MmdPack, "漏了它 → 進遊戲之後每個人的模型都變回 SDO");
+            Assert.AreEqual(src.MmdFile, copy.MmdFile, "漏了它 → 進遊戲之後變成同一包裡的另一個模型");
             Assert.AreEqual(src.MmdName, copy.MmdName);
             Assert.IsTrue(src.SameAs(copy), "複製出來的必須與原件相等");
 
@@ -164,7 +219,7 @@ namespace Sdo.Tests
             {
                 UserId = 7,
                 Name = "穿模型的",
-                Look = new NetAvatarLook { Gender = 0, BodyIndex = 1, MmdPack = pack, MmdName = "TestMiku" },
+                Look = new NetAvatarLook { Gender = 0, BodyIndex = 1, MmdPack = pack, MmdFile = "miku.pmx", MmdName = "TestMiku" },
             };
 
             var snap = Sdo.Net.Server.NetMatchPlayerSnapshot.Capture(seat, 2);
@@ -173,6 +228,8 @@ namespace Sdo.Tests
             Assert.IsNotNull(snap.Look);
             Assert.AreEqual(pack, snap.Look.MmdPack,
                 "參賽者名單掉了 packId → 進遊戲之後別人的 MMD 全部變回 SDO 穿搭");
+            Assert.AreEqual("miku.pmx", snap.Look.MmdFile,
+                "參賽者名單掉了包內路徑 → 進遊戲之後別人變成同一包裡的另一個模型");
             Assert.AreEqual("TestMiku", snap.Look.MmdName);
         }
     }

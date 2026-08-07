@@ -299,6 +299,53 @@ namespace Sdo.Tests
             Assert.IsNull(MmdModelCatalog.PickPmx(new[] { "/m/readme.txt", "/m/model.pmd", "/m/tex.png" }));
         }
 
+        [Test]
+        public void KnowingTheSizes_ThePickIsTheCharacterNotTheProp()
+        {
+            // 實測那一包:NerissaRavencroft/ = 角色 10.8 MB + 影子 0.45 MB + 一把槍 0.46 MB。
+            // 傳出去的檔名是小寫的,而小寫之後 'nerissa_spear' 的 '_'(0x5F)排在 'nerissar…' 的
+            // 'r'(0x72)前面 —— 字典序挑到那把槍,別人畫面上就是一支黑色的槍在跳舞。
+            var files = new[] { "/m/nerissaravencroft.pmx", "/m/shadow.pmx", "/m/nerissa_spear.pmx" };
+            var size = new Dictionary<string, long>
+            {
+                { "/m/nerissaravencroft.pmx", 10857471 },
+                { "/m/shadow.pmx", 462636 },
+                { "/m/nerissa_spear.pmx", 468385 },
+            };
+
+            Assert.AreEqual("/m/nerissa_spear.pmx", MmdModelCatalog.PickPmx(files), "字典序就是挑到那把槍(所以才要看大小)");
+            Assert.AreEqual("/m/nerissaravencroft.pmx", MmdModelCatalog.PickPmx(files, f => size[f]));
+        }
+
+        [Test]
+        public void TheJapaneseVariantStillWins_EvenIfAnotherLanguageIsBigger()
+        {
+            // 語言版本優先於大小:MmdBoneMap 認的是日文骨名,拿 EN 那份解析得動但一根骨都對不上
+            // (模型會站著不動)。大小只在同一組裡比。
+            var files = new[] { "/m/miku-en.pmx", "/m/miku-jp.pmx" };
+            var size = new Dictionary<string, long> { { "/m/miku-en.pmx", 900 }, { "/m/miku-jp.pmx", 100 } };
+            Assert.AreEqual("/m/miku-jp.pmx", MmdModelCatalog.PickPmx(files, f => size[f]));
+        }
+
+        [Test]
+        public void AFolderNamedLikeALanguageTag_DoesNotMakeEveryFileJapanese()
+        {
+            // 語言標記只看檔名。整條路徑一起看的話,一個叫 "MMD_JPmodels" 的資料夾會讓底下每個檔
+            // 都被當成日文版 —— 而真正的日文版反而分不出來。
+            var files = new[] { "/MMD_JPmodels/b.pmx", "/MMD_JPmodels/a.pmx" };
+            Assert.AreEqual("/MMD_JPmodels/a.pmx", MmdModelCatalog.PickPmx(files));
+        }
+
+        [Test]
+        public void UnknownSizes_FallBackToTheDeterministicOrder()
+        {
+            // 問不出來(-1)時不能變成「隨列舉順序」。
+            var a = MmdModelCatalog.PickPmx(new[] { "/m/b.pmx", "/m/a.pmx" }, f => -1);
+            var b = MmdModelCatalog.PickPmx(new[] { "/m/a.pmx", "/m/b.pmx" }, f => -1);
+            Assert.AreEqual("/m/a.pmx", a);
+            Assert.AreEqual(a, b);
+        }
+
         /// <summary>The wiring the fake filesystem can't check: that <see cref="MmdAvatarSwap.ModelRoots"/> points at folders
         /// that actually exist on this machine and that the scan finds a real model there. Ignored on a checkout with no
         /// model installed (same contract as PmxLoaderTests' real-model smoke test).</summary>

@@ -321,23 +321,44 @@ namespace Sdo.Game
         ///
         /// 🔴 本機選的模型<b>不要</b>走這裡:一個資料夾可以有好幾個模型,那時 <see cref="Entry.PmxPath"/> 才是
         /// 答案,從資料夾反推只會永遠拿到同一個。</summary>
-        public static string PickPmx(IEnumerable<string> files)
+        public static string PickPmx(IEnumerable<string> files) => PickPmx(files, null);
+
+        /// <summary>
+        /// 同上,但知道每個檔多大時**先挑大的**(<paramref name="sizeOf"/> 回 &lt;0 = 問不出來)。
+        ///
+        /// 🔴 為什麼要看大小:一包裡的好幾個 .pmx 通常是「一個角色 ＋ 他的配件」(武器、影子、髮飾),
+        /// 而字典序完全不管誰是角色。實測踩過:<c>NerissaRavencroft/</c>(角色 10.8 MB、影子 0.45 MB、
+        /// 一把槍 0.46 MB)—— 檔名在傳輸清單裡是**小寫**的,而小寫之後 <c>nerissa_spear</c> 的 <c>'_'</c>
+        /// 排在 <c>nerissar…</c> 的 <c>'r'</c> 前面,於是別人畫面上是一支黑色的槍在跳舞。
+        /// 角色本體幾乎必然是包裡最大的那個 .pmx,所以這是比字典序好得多的猜法。
+        ///
+        /// 這只是**猜**:對面有講他穿哪一個時(<c>NetAvatarLook.MmdFile</c>)一律以他講的為準,
+        /// 這條路只服務「舊 client 沒講」與「講的那個檔不在」。語言版本仍然優先(日文骨名,見
+        /// <see cref="CollapseLanguageVariants"/>),大小只在同一組裡比。同大小 → 字典序,結果與列舉順序無關。
+        /// </summary>
+        public static string PickPmx(IEnumerable<string> files, Func<string, long> sizeOf)
         {
             string jp = null, best = null;
+            long jpSize = -1, bestSize = -1;
             if (files != null)
                 foreach (var f in files)
                 {
                     if (string.IsNullOrEmpty(f)) continue;
                     if (!f.EndsWith(".pmx", StringComparison.OrdinalIgnoreCase)) continue;
-                    string up = f.ToUpperInvariant();
-                    if (up.Contains("-JP") || up.Contains("_JP"))
-                    {
-                        if (jp == null || string.CompareOrdinal(f, jp) < 0) jp = f;
-                    }
-                    if (best == null || string.CompareOrdinal(f, best) < 0) best = f;
+                    long size = sizeOf != null ? sizeOf(f) : -1;
+                    // 語言標記只看**檔名**:整條路徑一起看的話,一個叫 "MMD_JPmodels" 的資料夾會讓底下每一個
+                    // 檔都被當成日文版(而真正的日文版反而分不出來)。
+                    string name = (LeafName(f) ?? "").ToUpperInvariant();
+                    bool japanese = name.Contains("-JP") || name.Contains("_JP");
+                    if (japanese && Better(f, size, jp, jpSize)) { jp = f; jpSize = size; }
+                    if (Better(f, size, best, bestSize)) { best = f; bestSize = size; }
                 }
             return jp ?? best;
         }
+
+        // 大的贏;一樣大(或都問不出來)就字典序小的贏 —— 與檔案系統的列舉順序無關。
+        private static bool Better(string f, long size, string cur, long curSize)
+            => cur == null || size > curSize || (size == curSize && string.CompareOrdinal(f, cur) < 0);
 
         /// <summary>The last path segment, tolerating a trailing separator ("a/b/" → "b").</summary>
         public static string LeafName(string dir)

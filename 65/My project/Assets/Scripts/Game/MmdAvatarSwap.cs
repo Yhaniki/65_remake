@@ -51,6 +51,9 @@ namespace Sdo.Game
             public bool Cloth = true;
             public bool Remote;          // 這一隻是別人(不是本機玩家)
             public string Pack = "";     // 遠端玩家身上的模型 packId(本機一律空)
+            public string PackFile = ""; // 那一包裡他穿的是哪一個 .pmx(相對包根;空 = 他沒講,收端自己猜)
+                                         // 🔴 一包可以有好幾個 .pmx,packId 是整包的指紋 —— 少了它會顯示成
+                                         // 同一包裡的另一個東西(實測:一支黑色的槍在跳舞)。見 MmdModelRef。
             public string BuiltFrom;     // 現在畫出來的這具身體是從哪個 .pmx 建的(換模型時比對用)
                                          // 🔴 是 .pmx 路徑不是資料夾:一個資料夾可以裝好幾個模型(見 MmdModelCatalog)
             public bool Shown;           // 上一次套用的結果是「畫 MMD」嗎(只有變了才寫 log)
@@ -214,6 +217,12 @@ namespace Sdo.Game
         /// invisible at that size and the cloth solver is the most expensive part of a rig).</summary>
         public static void Register(SdoAvatar avatar, bool cloth = true) => Register(avatar, false, "", cloth);
 
+        /// <summary>把一隻已登記的角色改成別的模型時,先看看有沒有變 —— 只有真的變了才重建。</summary>
+        private static bool SameModel(Reg r, bool remote, string pack, string file)
+            => r.Remote == remote
+            && string.Equals(r.Pack, pack, StringComparison.Ordinal)
+            && string.Equals(r.PackFile, file, StringComparison.Ordinal);
+
         /// <summary>
         /// 登記一隻**遠端**玩家的角色,連同他外觀宣告的模型 <paramref name="packId"/>。
         ///
@@ -222,24 +231,30 @@ namespace Sdo.Game
         /// 正確畫面天生就是他的穿搭,沒有空白、沒有替身。模型到了之後 <see cref="OnPackInstalled"/>
         /// 直接把身體換掉,**不重建**這隻角色(位置、朝向、正在播的動作全都留著)。
         /// </summary>
-        public static void RegisterRemote(SdoAvatar avatar, string packId, bool cloth = true)
-            => Register(avatar, true, packId ?? "", cloth);
+        /// <param name="modelRef">他外觀宣告的模型 —— <c>packId</c>,或 <c>packId|包內路徑</c>
+        /// (<see cref="Sdo.Osu.MmdModelRef"/>;一個資料夾可以有好幾個 .pmx,少了後半段會顯示成
+        /// 同一包裡的另一個東西)。專案內部把這兩個值當成一個不可分割的字串往下搬,見 <c>NetAvatarLook.MmdRef</c>。</param>
+        public static void RegisterRemote(SdoAvatar avatar, string modelRef, bool cloth = true)
+            => Register(avatar, true, modelRef ?? "", cloth);
 
-        private static void Register(SdoAvatar avatar, bool remote, string packId, bool cloth)
+        private static void Register(SdoAvatar avatar, bool remote, string modelRef, bool cloth)
         {
             if (avatar == null) return;
+            string packId = Sdo.Osu.MmdModelRef.PackOf(modelRef);
+            string packFile = Sdo.Osu.MmdModelRef.FileOf(modelRef);
             var inst = Ensure();
             inst._regs.RemoveAll(r => r.Avatar == null);   // drop destroyed dancers (scene changes / rebuilds)
             var existing = inst._regs.Find(r => r.Avatar == avatar);
             if (existing != null)
             {
-                if (existing.Remote == remote && string.Equals(existing.Pack, packId, StringComparison.Ordinal)) return;
+                if (SameModel(existing, remote, packId, packFile)) return;
                 existing.Remote = remote;
                 existing.Pack = packId;      // 同一隻改穿別的模型 → 重建它的身體(不動 SDO 驅動器)
+                existing.PackFile = packFile;
                 existing.Failed = false;
                 inst.DropBody(existing);
             }
-            else inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth, Remote = remote, Pack = packId ?? "" });
+            else inst._regs.Add(new Reg { Avatar = avatar, Cloth = cloth, Remote = remote, Pack = packId, PackFile = packFile });
 
             var reg = existing ?? inst._regs[inst._regs.Count - 1];
             // 這一隻根本不會用到 MMD(我沒選模型 / 他沒穿 / 我不看別人的)→ 什麼都別做,連 log 都不寫。
@@ -607,6 +622,25 @@ namespace Sdo.Game
             }
         }
 
+        /// <summary>
+        /// 「我身上穿的是這一包裡的**哪一個** .pmx」—— <c>setLook</c> 跟著 <see cref="LocalPackId"/> 一起送出去的值
+        /// (相對於包根、小寫、<c>/</c> 分隔;沒穿 / 不分享 → 空字串)。
+        ///
+        /// 🔴 <b>packId 是整包的指紋,一包可以有好幾個模型 —— 少了這個值,別人只能從資料夾反推。</b>
+        /// 反推挑的是「檔名排最前面 / 最大的那個」,而那不一定是我選的:實測 <c>NerissaRavencroft/</c>
+        /// 裡有角色本體、影子、一把槍,別人畫面上是那把槍在跳舞。
+        /// </summary>
+        public static string LocalPackFile
+        {
+            get
+            {
+                if (!UseLocalMmd || !RoomConfig.mmdShareModel) return "";
+                var e = Sel;
+                if (e == null || string.IsNullOrEmpty(e.PmxPath)) return "";
+                return Sdo.Osu.MmdModelRef.RelPathUnder(e.Root ?? e.Dir, e.PmxPath);
+            }
+        }
+
         /// <summary>The installed models, in panel order.</summary>
         public static IReadOnlyList<MmdModelCatalog.Entry> Models => _models;
 
@@ -785,8 +819,9 @@ namespace Sdo.Game
                 case MmdSource.RemoteModel:
                     string d = MmdModelStore.DirForPack(r.Pack, _models);
                     if (string.IsNullOrEmpty(d)) return;
-                    // .pmx 可能在包裡自己的一層(ラプラス:PMX/*.pmx)—— 見 MmdModelStore.FindPmx。
-                    string p = MmdModelStore.FindPmx(d);
+                    // 他宣告了包內是哪一個 .pmx 就用他講的(一包可以有好幾個模型);沒講才猜。
+                    // .pmx 也可能在包裡自己的一層(ラプラス:PMX/*.pmx)—— 見 MmdModelStore.PmxForPack。
+                    string p = MmdModelStore.PmxForPack(d, r.PackFile);
                     if (p == null) return;
                     // 貼圖先找 .pmx 同層,找不到退到整包(root)—— 那正是「.pmx 與貼圖分在不同樹枝」的包
                     // (PMX/ + sourceimages/)唯一找得到貼圖的方式。

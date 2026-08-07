@@ -180,7 +180,13 @@ namespace Sdo.UI.Core
             // 🔴 **穿搭一定要照送**,不能因為改用 MMD 就省掉。別人在模型下載完之前顯示的正是它,
             // 而且 MMD 模型本來就疊在 SDO 骨架上 —— 那具身體不是替身,它就是驅動器本人。
             look.MmdPack = MmdAvatarSwap.LocalPackId;
-            if (look.MmdPack.Length > 0) look.MmdName = MmdAvatarSwap.ModelName;
+            if (look.MmdPack.Length > 0)
+            {
+                look.MmdName = MmdAvatarSwap.ModelName;
+                // 🔴 packId 是**整包**的指紋,而一包可以有好幾個 .pmx(角色 ＋ 武器 ＋ 影子)。
+                // 少了這一行,別人只能從資料夾反推是哪一個 —— 反推挑錯的畫面是「他變成同一包裡的另一個東西」。
+                look.MmdFile = MmdAvatarSwap.LocalPackFile;
+            }
             return look;
         }
 

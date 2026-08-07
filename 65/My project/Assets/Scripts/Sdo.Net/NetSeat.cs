@@ -89,10 +89,33 @@ namespace Sdo.Net
         public string MmdPack = "";
 
         /// <summary>
+        /// <see cref="MmdPack"/> 那一包裡,他實際穿的是**哪一個 .pmx**(相對於包根、小寫、<c>/</c> 分隔);
+        /// 空 = 沒說,收端自己挑。
+        ///
+        /// 🔴 <b>一個資料夾可以有好幾個 .pmx,而 packId 是整包的指紋 —— 光憑它認不出是哪一個。</b>
+        /// 實測踩過:<c>NerissaRavencroft/</c> 裡有角色本體、一件影子、一把槍,收端照字典序反推挑到那把槍,
+        /// 於是「別人畫面上是一支黑色的槍在跳舞」。詳見 <see cref="Sdo.Osu.MmdModelRef"/>。
+        ///
+        /// 它與 <see cref="MmdName"/> 不同,是**參與判斷**的:換成同一包裡的另一個模型時 packId 一個字都不會變,
+        /// 所以 <see cref="Key"/> 與 <see cref="SameAs"/> 都要看它,否則「換了模型但沒人看得到」。
+        /// 別人送來的字串一律過 <see cref="Sdo.Osu.MmdModelRef.IsSafeFile"/>(收端會拿它去 Combine 真實路徑)。
+        /// </summary>
+        public string MmdFile = "";
+
+        /// <summary>
         /// 模型的顯示名稱(資料夾名),純粹給 UI 與 log 看 —— 「正在下載 XXX 的模型」比一串 hash 有用。
         /// **不參與任何判斷**:身分一律看 <see cref="MmdPack"/>,名字是上傳者自己填的、不可信。
         /// </summary>
         public string MmdName = "";
+
+        /// <summary>
+        /// 「他穿的是哪一個模型」的完整答案(packId ＋ 包內路徑),打包成單一字串。
+        ///
+        /// 專案內部把它當成一個不可分割的值往下搬(房間快照 → 遠端角色 → 頭貼)——
+        /// 兩個欄位分開搬的話,漏搬其中一個不會有任何編譯錯誤,而漏掉 <see cref="MmdFile"/> 的症狀
+        /// 是「顯示成同一包裡的另一個模型」,看起來像模型壞掉而不像少傳了一個欄位。
+        /// </summary>
+        public string MmdRef() => Sdo.Osu.MmdModelRef.Join(MmdPack, MmdFile);
 
         /// <summary>模型名稱的長度上限(它會被畫在 UI 上,而且是別人送來的字串)。</summary>
         public const int MaxMmdNameLength = 48;
@@ -103,6 +126,7 @@ namespace Sdo.Net
         {
             var o = JObj.New().Int("gender", Gender).Int("bodyIndex", BodyIndex);
             if (!string.IsNullOrEmpty(MmdPack)) o.Str("mmd", MmdPack);
+            if (!string.IsNullOrEmpty(MmdPack) && !string.IsNullOrEmpty(MmdFile)) o.Str("mmdFile", MmdFile);
             if (!string.IsNullOrEmpty(MmdName)) o.Str("mmdName", MmdName);
             var arr = JArr.New();
             if (Parts != null)
@@ -131,6 +155,10 @@ namespace Sdo.Net
             string mmd = NetJson.Str(node, "mmd");
             look.MmdPack = Sdo.Osu.SongPackId.IsWellFormed(mmd) ? mmd : "";
             look.MmdName = look.MmdPack.Length == 0 ? "" : ClipName(NetJson.Str(node, "mmdName"));
+            // 包內路徑:收端會拿它去 Combine 一個真實資料夾,所以走與傳檔清單同一道安全關。
+            // 不合格 → 當成「他沒指定」(收端自己挑),而不是把整個模型丟掉 —— 舊 client 本來就不送這個欄位。
+            string mmdFile = Sdo.Osu.SafeRelPath.Normalize(NetJson.Str(node, "mmdFile"));
+            look.MmdFile = look.MmdPack.Length != 0 && Sdo.Osu.MmdModelRef.IsSafeFile(mmdFile) ? mmdFile : "";
 
             int body = NetJson.Int(node, "bodyIndex");
             look.BodyIndex = body < 0 ? 0 : (body > 4 ? 4 : body);
@@ -165,6 +193,7 @@ namespace Sdo.Net
             BodyIndex = BodyIndex,
             Parts = Parts != null ? (string[])Parts.Clone() : null,
             MmdPack = MmdPack ?? "",
+            MmdFile = MmdFile ?? "",
             MmdName = MmdName ?? "",
         };
 
@@ -182,6 +211,8 @@ namespace Sdo.Net
             if (o == null) return false;
             if (Gender != o.Gender || BodyIndex != o.BodyIndex) return false;
             if (!string.Equals(MmdPack ?? "", o.MmdPack ?? "", System.StringComparison.Ordinal)) return false;
+            // 同一包裡換另一個模型 → packId 一個字都不會變,只有這裡看得出來(不比的話「換了沒人看得到」)。
+            if (!string.Equals(MmdFile ?? "", o.MmdFile ?? "", System.StringComparison.Ordinal)) return false;
             int a = Parts != null ? Parts.Length : 0;
             int b = o.Parts != null ? o.Parts.Length : 0;
             if (a != b) return false;
@@ -198,9 +229,10 @@ namespace Sdo.Net
         {
             var sb = new System.Text.StringBuilder(64);
             sb.Append(Gender).Append('/').Append(BodyIndex);
-            // MMD 模型換了也要讓遠端重建 —— 但**只有 packId 進鍵**,名字不進(名字是顯示用的,
-            // 它變了畫面上什麼都不會不同,卻會白白重建一隻角色)。
-            if (!string.IsNullOrEmpty(MmdPack)) sb.Append('#').Append(MmdPack);
+            // MMD 模型換了也要讓遠端重建 —— packId 與**包內是哪一個 .pmx** 兩個都進鍵(同一包裡換一個模型
+            // packId 不會變,少了後者畫面上就不會跟著換);名字不進(名字是顯示用的,它變了畫面上什麼都不會
+            // 不同,卻會白白重建一隻角色)。
+            if (!string.IsNullOrEmpty(MmdPack)) sb.Append('#').Append(MmdRef());
             if (Parts != null)
                 for (int i = 0; i < Parts.Length; i++) sb.Append('|').Append(Parts[i] ?? "");
             return sb.ToString();

@@ -40,9 +40,11 @@ namespace Sdo.Game
             public bool Male;
             public string[] Parts;     // null → 預設整套
             public int BodyIndex;
-            /// <summary>他外觀宣告的 MMD 模型(packId);空 = 就是上面那套 SDO 穿搭。
-            /// 本機沒有那份模型就維持穿搭,下載完當場換上(<c>MmdAvatarSwap.OnPackInstalled</c>)。</summary>
-            public string MmdPack;
+            /// <summary>他外觀宣告的 MMD 模型(<c>NetAvatarLook.MmdRef()</c> ＝ packId ＋ 包內是哪一個 .pmx);
+            /// 空 = 就是上面那套 SDO 穿搭。本機沒有那份模型就維持穿搭,下載完當場換上
+            /// (<c>MmdAvatarSwap.OnPackInstalled</c>)。
+            /// 🔴 一定要整個 ref,不能只搬 packId:一包可以有好幾個模型(見 <c>MmdModelRef</c>)。</summary>
+            public string MmdRef;
             /// <summary>0=A 1=B 2=C 3=自由。組隊模式的站位是照這個分的。</summary>
             public int Team;
         }
@@ -238,7 +240,7 @@ namespace Sdo.Game
                 if (sceneWorldMode) SetLayerRecursive(go, SceneLayer);
 
                 // 他穿 MMD 的話就換上(本機沒有那份模型 → 維持這套 SDO 穿搭,等下載完自己換上)。
-                MmdAvatarSwap.RegisterRemote(av, haveNames && i < netDancers.Length ? netDancers[i].MmdPack : "");
+                MmdAvatarSwap.RegisterRemote(av, haveNames && i < netDancers.Length ? netDancers[i].MmdRef : "");
 
                 _extraDancers.Add(av);
                 _extraRoots.Add(go.transform);

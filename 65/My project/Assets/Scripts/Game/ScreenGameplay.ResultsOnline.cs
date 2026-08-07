@@ -161,7 +161,7 @@ namespace Sdo.Game
                     portrait.fitHairTop = false;
                     // 這是**別人**的頭貼 → MMD 走他自己宣告的模型(空＝他沒穿,就照他的 SDO 穿搭)。
                     // 不設的話這一格會走「本機」那條,整排結算頭貼都會戴上我選的模型。
-                    portrait.remoteMmdPack = dancer.MmdPack ?? "";
+                    portrait.remoteMmdRef = dancer.MmdRef ?? "";
                     portrait.rtWidth = 192;
                     portrait.rtHeight = 216;
                     if (!portrait.Init(dancer.Male, dancer.Parts, dancer.BodyIndex))

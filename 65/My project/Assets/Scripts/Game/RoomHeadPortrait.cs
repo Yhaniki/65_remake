@@ -105,10 +105,11 @@ namespace Sdo.Game
         /// <summary>
         /// 這一格頭貼是**誰**的,決定 MMD 顯示走哪一條:
         ///   • <c>null</c>（預設）＝本機玩家自己 → 用我選的模型;
-        ///   • 非 null ＝別人 → 用他外觀宣告的那個 packId（空字串＝他沒穿 MMD，就照他的 SDO 穿搭）。
+        ///   • 非 null ＝別人 → 用他外觀宣告的那個模型（<c>NetAvatarLook.MmdRef()</c> ＝ packId ＋ 包內是哪一個
+        ///     .pmx;空字串＝他沒穿 MMD，就照他的 SDO 穿搭）。
         /// 結算列裡其他人的那幾格一定要設它，否則整排都會戴上我的模型。
         /// </summary>
-        public string remoteMmdPack;
+        public string remoteMmdRef;
 
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
@@ -148,8 +149,8 @@ namespace Sdo.Game
             // MMD 顯示模式下頭貼也換成 MMD 模型 (framing: MmdAvatar.TryHeadBounds). No cloth sim: at 192×152 the hair
             // sway is invisible, and the solver is the costliest part of an MMD rig — the hair just rides the head instead.
             // 🔴 別人的那幾格(結算列)一定要走 RegisterRemote —— 走本機那條的話,他們會全部戴上**我**選的模型。
-            if (remoteMmdPack == null) MmdAvatarSwap.Register(_avatar, cloth: false);
-            else MmdAvatarSwap.RegisterRemote(_avatar, remoteMmdPack, cloth: false);
+            if (remoteMmdRef == null) MmdAvatarSwap.Register(_avatar, cloth: false);
+            else MmdAvatarSwap.RegisterRemote(_avatar, remoteMmdRef, cloth: false);
             // mirror the room avatar's motion: same walk/idle clips, both loop on Time.time → the framed head matches
             // the avatar's live pose (官方頭像框跟著實際動作做動作). 穿飛行翅膀時比照房間 avatar 用 flystay 浮空 idle /
             // fly 前傾滑動,頭貼才跟著一樣做飛行動作 (使用者需求 #3;SpecialMotionItems 同一條規則)。

@@ -123,6 +123,10 @@ namespace Sdo.UI
             AspectController.Mode = (DisplaySettingsManager.Settings?.gameplay?.fullscreenFill ?? false)
                 ? AspectMode.Stretch : AspectMode.Pillarbox;
 
+            // 畫面亮度(設定面板「顯示」頁的 opt_brightness):蓋在所有畫面之上的全螢幕 overlay，DontDestroyOnLoad，
+            // 開機建一次就好；值它自己每幀讀設定，拖滑桿即時生效。
+            BrightnessOverlay.Ensure();
+
             // Fixed 800×600 (4:3) world-space canvas, framed by a camera the AspectController fits to the window
             // (stretched to fill by default) — same 4:3 frame as the play screen, so the whole app is consistent 4:3.
             var canvas = UIKit.CreateWorldCanvas("FrontendCanvas", new Vector2(800, 600), out _uiCam, 0);
@@ -1173,7 +1177,7 @@ namespace Sdo.UI
                     Male = p.Look != null && p.Look.Male,
                     Parts = p.Look != null ? p.Look.Parts : null,
                     BodyIndex = p.Look != null ? p.Look.BodyIndex : 0,
-                    MmdPack = p.Look != null ? p.Look.MmdPack : "",
+                    MmdRef = p.Look != null ? p.Look.MmdRef() : "",
                     Team = p.Team,
                 };
                 if (p.UserId == myUserId) localIdx = i;

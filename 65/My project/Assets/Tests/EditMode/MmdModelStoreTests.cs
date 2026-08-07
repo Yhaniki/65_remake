@@ -152,6 +152,100 @@ namespace Sdo.Tests
             Assert.IsNull(MmdModelStore.NetDirFor(null));
         }
 
+        // ---------------------------------------------------------------- 一包好幾個模型:載哪一個
+        /// <summary>
+        /// 實測那一包的形狀:<c>NerissaRavencroft/</c> ＝ 角色本體 10.8 MB ＋ <c>Shadow.pmx</c> 0.45 MB
+        /// ＋ <c>nerissa_spear.pmx</c>(一把槍)0.46 MB。傳出去的檔名是**小寫**的,而小寫之後
+        /// <c>nerissa_spear</c> 的 <c>'_'</c> 排在 <c>nerissar…</c> 的 <c>'r'</c> 前面。
+        /// </summary>
+        private string MakeMultiModelPack()
+        {
+            string dir = Path.Combine(_tmp, "nerissaravencroft");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "nerissaravencroft.pmx"), Fill(8192, 1));
+            File.WriteAllBytes(Path.Combine(dir, "shadow.pmx"), Fill(512, 2));
+            File.WriteAllBytes(Path.Combine(dir, "nerissa_spear.pmx"), Fill(600, 3));
+            return dir;
+        }
+
+        [Test]
+        public void PmxForPack_LoadsTheOneHeSaidHeIsWearing()
+        {
+            // 這就是修的那件事:一包裡有角色、影子、一把槍,他說的那個才是他。
+            string dir = MakeMultiModelPack();
+            Assert.AreEqual(Path.Combine(dir, "shadow.pmx"), MmdModelStore.PmxForPack(dir, "shadow.pmx"));
+            Assert.AreEqual(Path.Combine(dir, "nerissa_spear.pmx"), MmdModelStore.PmxForPack(dir, "nerissa_spear.pmx"));
+        }
+
+        [Test]
+        public void PmxForPack_GuessesTheBiggest_WhenHeDidNotSay()
+        {
+            // 舊 client 只送 packId。字典序會挑到那把槍(小寫的 '_' 排在 'r' 前面)——
+            // 角色本體幾乎必然是包裡最大的那一個,所以猜大的。
+            string dir = MakeMultiModelPack();
+            Assert.AreEqual(Path.Combine(dir, "nerissaravencroft.pmx"), MmdModelStore.PmxForPack(dir, ""));
+            Assert.AreEqual(Path.Combine(dir, "nerissaravencroft.pmx"), MmdModelStore.PmxForPack(dir, null));
+        }
+
+        [Test]
+        public void PmxForPack_FallsBackToTheGuess_WhenTheNamedFileIsGone()
+        {
+            // 他手動改過檔名 / 包被動過。退回猜一個仍然比「整個不顯示」好 —— 他本來就穿著這一包裡的某個模型。
+            string dir = MakeMultiModelPack();
+            Assert.AreEqual(Path.Combine(dir, "nerissaravencroft.pmx"), MmdModelStore.PmxForPack(dir, "nope.pmx"));
+        }
+
+        [Test]
+        public void PmxForPack_RefusesToLeaveThePack()
+        {
+            // 那個字串是別人送來的,而這裡會拿它去 Combine 一個真實資料夾。
+            string dir = MakeMultiModelPack();
+            string outside = Path.Combine(_tmp, "outside.pmx");
+            File.WriteAllBytes(outside, Fill(99999, 9));
+
+            string got = MmdModelStore.PmxForPack(dir, "../outside.pmx");
+            Assert.AreNotEqual(outside, got, "路徑穿越被放行了");
+            Assert.AreEqual(Path.Combine(dir, "nerissaravencroft.pmx"), got, "危險路徑應該當成『他沒說』");
+        }
+
+        [Test]
+        public void PmxForPack_MatchesTheLowercasedNameAgainstAnInstalledFolder()
+        {
+            // 傳輸清單一律小寫,但**使用者自己裝的**那一份是原始大小寫。同一份模型兩台都有時
+            // (零上傳的那條路),對得起來才不會白猜一個。
+            string dir = Path.Combine(_tmp, "Nerissa");
+            Directory.CreateDirectory(Path.Combine(dir, "PMX"));
+            File.WriteAllBytes(Path.Combine(dir, "PMX", "NerissaRavencroft.pmx"), Fill(256, 4));
+            File.WriteAllBytes(Path.Combine(dir, "PMX", "Nerissa_Spear.pmx"), Fill(4096, 5));
+
+            Assert.AreEqual(Path.Combine(dir, "PMX", "NerissaRavencroft.pmx"),
+                            MmdModelStore.PmxForPack(dir, "pmx/nerissaravencroft.pmx"),
+                            "大小寫不同就找不到 → 會退回猜,而這裡猜的是比較大的那把槍");
+        }
+
+        [Test]
+        public void DirForPack_ReturnsThePackRoot_NotTheFolderTheePmxSitsIn()
+        {
+            // packId 算在整包上,對方宣告的包內路徑也是相對於整包 —— 三者要對得起來就只能是同一個資料夾。
+            // (.pmx 在自己一層的包:ラプラス PMX/*.pmx + sourceimages/*.tga。)
+            string root = Path.Combine(_tmp, "laplus");
+            Directory.CreateDirectory(Path.Combine(root, "pmx"));
+            Directory.CreateDirectory(Path.Combine(root, "sourceimages"));
+            File.WriteAllBytes(Path.Combine(root, "pmx", "la.pmx"), Fill(1024, 6));
+            File.WriteAllBytes(Path.Combine(root, "sourceimages", "t.png"), Fill(2048, 7));
+
+            string pack = MmdModelStore.PackIdOf(root);
+            Assert.IsTrue(SongPackId.IsWellFormed(pack), "測試前提壞了:算不出 packId");
+            var installed = new[] { new MmdModelCatalog.Entry
+            {
+                Name = "la", Root = root,
+                Dir = Path.Combine(root, "pmx"), PmxPath = Path.Combine(root, "pmx", "la.pmx"),
+            } };
+
+            Assert.AreEqual(root, MmdModelStore.DirForPack(pack, installed));
+            Assert.AreEqual(Path.Combine(root, "pmx", "la.pmx"), MmdModelStore.PmxForPack(root, "pmx/la.pmx"));
+        }
+
         [Test]
         public void HasPmx_TellsAHalfDownloadedFolderFromARealOne()
         {

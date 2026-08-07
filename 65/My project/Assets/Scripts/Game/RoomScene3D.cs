@@ -413,10 +413,11 @@ namespace Sdo.Game
             /// </summary>
             public string LookKey;
 
-            /// <summary>他外觀宣告的 MMD 模型(packId);空 = 就是上面那套 SDO 穿搭。
-            /// 本機還沒有那份模型時這隻就停在 SDO 穿搭上,下載完 <c>MmdAvatarSwap.OnPackInstalled</c>
-            /// 會當場把身體換掉(不重建這隻角色)。</summary>
-            public string MmdPack;
+            /// <summary>他外觀宣告的 MMD 模型(<c>NetAvatarLook.MmdRef()</c> ＝ packId ＋ 包內是哪一個 .pmx);
+            /// 空 = 就是上面那套 SDO 穿搭。本機還沒有那份模型時這隻就停在 SDO 穿搭上,下載完
+            /// <c>MmdAvatarSwap.OnPackInstalled</c> 會當場把身體換掉(不重建這隻角色)。
+            /// 🔴 一定要整個 ref,不能只搬 packId:一包可以有好幾個模型(見 <c>MmdModelRef</c>)。</summary>
+            public string MmdRef;
         }
 
         /// <summary>一位遠端玩家在房間裡的執行期狀態(位置插值 + 走路/待機 clip)。</summary>
@@ -602,7 +603,7 @@ namespace Sdo.Game
                 Seat = p.Seat,
             };
             // 他穿 MMD 的話就換上(本機沒有那份模型 → 維持現在這套 SDO 穿搭,等下載完自己換上)。
-            MmdAvatarSwap.RegisterRemote(av, p.MmdPack);
+            MmdAvatarSwap.RegisterRemote(av, p.MmdRef);
             // 生出來就浮在該有的高度,不從地面升上去(同本機 BuildAvatar 的 _hoverCur 初始化)。
             // 換裝會重建這隻 Remote,所以「穿上翅膀慢慢升起」那段平滑在遠端看不到 —— 寧可如此,
             // 也不要每次重建都從地板彈上來。
