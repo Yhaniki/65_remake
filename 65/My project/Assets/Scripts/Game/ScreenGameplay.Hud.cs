@@ -410,8 +410,24 @@ namespace Sdo.Game
             // 同分時排第一的是**台上站最前面**那位(領隊格),不是座位序最小的 —— 見 RankingBoard 的
             // tie-break 說明。leader 由 server 推(frames 的 leaderUserId),所以兩台排出同一個人。
             int leaderUid = NetLeaderUserId != null ? NetLeaderUserId() : 0;
-            // 旁觀者不是參賽者 → 名單裡不能有自己。加了的話會多出一列 0 分的自己,而且它會跟著參與名次排序
-            // (「第 3 名」裡有一個根本沒下場的人)。
+            // 🔴 連線時名單的底稿是**這一場的座位表**(netDancers,matchStarting 就到齊了),不是「已經收到
+            //    分數的人」。照 frame 建的話別人的名字要等他那台真的開始送分數才出現 —— 使用者回報的
+            //    「進去只看得到自己,開場 5~6 秒別人的名字才一個個冒出來」就是它:名單只在每 8 拍結算時
+            //    重建(見 RefreshRanking 的呼叫點),慢歌一個 8 拍就是好幾秒。
+            //    旁觀者不是參賽者 → 名單裡不能有自己(localSeat < 0)。加了的話會多出一列 0 分的自己,
+            //    而且它會跟著參與名次排序(「第 3 名」裡有一個根本沒下場的人)。
+            if (netDancers != null && netDancers.Length > 0)
+            {
+                var seats = new RosterSeat[netDancers.Length];
+                for (int i = 0; i < netDancers.Length; i++)
+                    seats[i] = new RosterSeat(netDancers[i].UserId, netDancers[i].Name);
+                var live = new RosterScore[netOpp != null ? netOpp.Length : 0];
+                for (int i = 0; i < live.Length; i++)
+                    live[i] = new RosterScore(netOpp[i].UserId, netOpp[i].Name, netOpp[i].Score);
+                GameplayRoster.Build(_roster, seats, spectatorMode ? -1 : LocalSeatOrder,
+                                     localPlayerName, RosterLocalScore(netOpp), live, leaderUid, RosterRows);
+                return;
+            }
             if (!spectatorMode)
                 _roster.Add(new PlayerEntry(localPlayerName, RosterLocalScore(netOpp), true, LocalSeatOrder,
                                             leaderUid != 0 && leaderUid == LocalNetUserId));
