@@ -48,6 +48,23 @@ namespace Sdo.Ruleset
         /// <summary>True once HP hits the -150 death floor.</summary>
         public bool IsFailed => Health <= FloorHealth;
 
+        /// <summary>
+        /// 分數流送給**別台**的 hp 欄位(0..1):把 −150..1000 整段(含負緩衝)攤平,所以死亡剛好是 0,
+        /// 而活著的最小值是 1/1150 ≈ 8.7e-4(HP 的變動量都是整數)—— 收端就是靠這個間隙判「他死了」
+        /// (<c>Dead = hp &lt;= 1e-4</c>),而遠端的死亡停舞是**不可逆**的。
+        ///
+        /// 🔴 所以這條換算與收端的閾值是同一個約定,不要各寫一份:ShowTime 模式沒有血條(HP 整個
+        /// invincible),它送出的值必須恆為 1,否則別人畫面上的他會 miss 一多就站著不跳到曲末。
+        /// </summary>
+        public double NetNormalized
+        {
+            get
+            {
+                double v = (Health - FloorHealth) / (MaxHealth - FloorHealth);
+                return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+            }
+        }
+
         /// <param name="level">System health level 0/1/2 (DAT_00674f04+0x75). Clamped.</param>
         /// <param name="invincible">player[0x9d] flag: HP changes disabled when set.</param>
         /// <param name="lockOnDeath">

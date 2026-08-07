@@ -67,6 +67,45 @@ namespace Sdo.Tests
             Assert.IsFalse(h.IsFailed);
         }
 
+        // ---- 分數流送出去的 hp(遠端拿它判「他死了」,而遠端的死亡停舞不可逆)----
+
+        [Test]
+        public void NetNormalized_Maps_The_Whole_Range_Including_The_Negative_Buffer()
+        {
+            var h = new HealthProcessor(0);
+            Assert.AreEqual(1.0, h.NetNormalized, 1e-9);            // 滿血
+            for (int i = 0; i < 100 && !h.IsFailed; i++) h.Apply(Judgment.Miss);
+            Assert.AreEqual(0.0, h.NetNormalized, 1e-9);            // 死亡剛好 0
+        }
+
+        [Test]
+        public void An_Alive_Player_Never_Sends_A_Value_The_Receiver_Reads_As_Dead()
+        {
+            // 收端的判準是 hp <= 1e-4。活著的最小值 = 1/1150 ≈ 8.7e-4(HP 的變動量都是整數),
+            // 兩者之間的間隙就是這條協定成立的理由 —— 把它釘住。
+            var h = new HealthProcessor(0);
+            for (int i = 0; i < 500; i++)
+            {
+                h.Apply(Judgment.Miss);
+                if (h.IsFailed) break;
+                Assert.Greater(h.NetNormalized, 1e-4, "還活著就不能被收端判成死了(HP=" + h.Health + ")");
+            }
+            Assert.IsTrue(h.IsFailed);
+        }
+
+        [Test]
+        public void Showtime_Has_No_Hp_So_It_Always_Reports_Full_Health()
+        {
+            // ShowTime(集氣)模式沒有血條 → ScreenGameplay 用 invincible 建 HealthProcessor。
+            // 迴歸:整首都 miss 也要恆送 1,否則別台會把他判成死掉 → 他自己畫面上在跳,
+            // 別人畫面上的他卻整首站著(DanceGate.RemoteEnabled 的死亡停舞不可逆)。
+            var h = new HealthProcessor(0, invincible: true, lockOnDeath: true);
+            for (int i = 0; i < 500; i++) h.Apply(Judgment.Miss);
+            Assert.AreEqual(1.0, h.NetNormalized, 1e-9);
+            Assert.IsFalse(h.Dead);
+            Assert.IsFalse(h.IsFailed);
+        }
+
         // 完奏模式 (playFullSong): the song keeps going after HP-out, so HP must stay dead — no healing back up.
         [Test]
         public void LockOnDeath_Keeps_Hp_At_Floor_After_HpOut()

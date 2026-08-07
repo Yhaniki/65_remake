@@ -479,9 +479,9 @@ namespace Sdo.Game
                     s.Perfect = _score.PerfectCount; s.Cool = _score.CoolCount;
                     s.Bad = _score.BadCount; s.Miss = _score.MissCount;
                 }
-                double hp = _health != null ? _health.Health : HealthProcessor.MaxHealth;
-                s.Hp = Mathf.Clamp01((float)((hp - HealthProcessor.FloorHealth)
-                                             / (HealthProcessor.MaxHealth - HealthProcessor.FloorHealth)));
+                // 換算(與收端的「死了」閾值是同一個約定)在 HealthProcessor.NetNormalized。ShowTime 模式
+                // 的 _health 是 invincible → 這裡恆送 1,別台才不會把他判成死了而永久停舞。
+                s.Hp = (float)(_health != null ? _health.NetNormalized : 1.0);
                 return s;
             }
         }
@@ -1360,7 +1360,13 @@ namespace Sdo.Game
             // HP 歸零之後**還會繼續打**(完奏模式打到曲末;一般模式在連線時要打到房裡所有人都倒下 ——
             // 見 Update 的 GameOverGate.EliminatedNow) → HP 必須鎖死在地板，否則後面的 combo 會把血補回來。
             // 一般模式單人時死掉當場就出局、不再判定，這個 latch 對那條路是 no-op。
-            _health = new HealthProcessor(healthLevel, lockOnDeath: true);
+            // 🔴 ShowTime(集氣)模式**根本沒有血條** → HP 整個關掉(invincible),不是「照扣但不判死」。
+            //    照扣的話 HP 一樣會歸零,而分數流的 hp 欄位就是從 _health.Health 算出來送給**別台**的
+            //    (見 NetScore / FrontendApp 的 `Dead = Hp <= 1e-4`)—— 別人那邊會把他判成「死了」,
+            //    DanceGate.RemoteEnabled 的死亡停舞是**不可逆**的,於是 miss 一多之後,他自己畫面上還在跳,
+            //    別人畫面上的他卻整首站到曲末(使用者回報的症狀)。血條在這個模式沒有任何用途
+            //    (不顯示、不判失敗、結算 _gameOver 也看 _hpDead),所以直接不扣是最乾淨的一致解。
+            _health = new HealthProcessor(healthLevel, invincible: showtimeMode, lockOnDeath: true);
             _showtime.Reset();   // fresh ShowTime gauge/bonus per song
             _seam.Clear();                                        // clear the auto→manual handoff latches
             // 接縫寬限期 = 一個判定窗的寬度。視窗結束後這段時間內,提早落在 Miss 帶的按鍵只是被忽略(音符留著等你
