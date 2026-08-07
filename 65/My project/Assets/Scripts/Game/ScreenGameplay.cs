@@ -177,6 +177,9 @@ namespace Sdo.Game
             DisposeOsuKeysounds();
             AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigChanged;
             if (_noteVisualRoot) Destroy(_noteVisualRoot.gameObject);   // tear down the pooled note visuals (root-level like the old per-note objects) with this screen
+            // 遠端玩家的 ShowTime 光環是**根層級**的 GameObject(要跟著舞者走,不能當這個畫面的子物件),
+            // 所以中途 Esc 離開時不會被連帶銷毀 —— 一定要在這裡自己收掉。
+            ClearRemoteShowtimeFx();
         }
 
         /// <summary>
@@ -1067,6 +1070,9 @@ namespace Sdo.Game
         // ENERGY LEVEL (0→E, 1→N, 2→H — FUN_0092d3f0 @611772), NOT the song difficulty). Windows are pas-sized to
         // ~9.5/13.8/19.6s precisely so ONE break of the matching tier (~10/14/19s) fills the window.
         private readonly int[] _breakRolls = new int[3];
+        // 街舞 DPS 一經解析就留著:ComputeShowtimeWindowMs(按下 SPACE 那一幀)與 SwapToBreakdance 會各要一次同一支,
+        // 而 LoadAsset 沒有快取 → 沒有這張表的話,光是「按下去」就在同一幀讀了兩次磁碟 + 解析兩次。
+        private readonly Dictionary<string, DpsLoader> _breakDpsCache = new Dictionary<string, DpsLoader>();
         // OFFICIAL window duration (FUN_00643030 @348192-348202): accumulate WHOLE dance segments (pas) of chart time
         // until the tier budget (WindowDurationsMs = 8000/12000/18000 is a THRESHOLD, not the length) is reached ⇒
         // windowMs = ceil(budget / pasMs) × pasMs. Typical pas = 8 beats; Frida-measured 11.9s (lv0 @121bpm) and
@@ -1366,6 +1372,9 @@ namespace Sdo.Game
             _breakRolls[0] = UnityEngine.Random.Range(1, 7);
             _breakRolls[1] = UnityEngine.Random.Range(1, 9);
             _breakRolls[2] = UnityEngine.Random.Range(1, 9);
+            // 第一次按 SPACE 之所以會卡,是因為那一幀才第一次去讀街舞/特效/金色 note/音效。載入蓋板還在,
+            // 現在就把它們全部讀進快取(要在 _breakRolls 之後 —— 預熱的正是這場骰到的那三支街舞)。
+            if (showtimeMode && !editorMode) PrewarmShowtimeAssets();
             RefreshRanking();   // initial roster/rank (rank 1/N) before the first score commit
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
@@ -1732,6 +1741,7 @@ namespace Sdo.Game
             LoadBoardArt();
             PlaceReceptors(1f);   // re-size receptors for the 2D glyph (undo any 3D-skin receptor scaling)
             for (int c = 0; c < Keys; c++) _recDownStart[c] = -1f;   // snap receptors to idle (skins differ in keydown frame count)
+            var spritesDefault = Shader.Find("Sprites/Default");   // 迴圈外取一次:Shader.Find 不便宜,而換皮這一幀場上每條長條都要它
             // Heads re-read _noteFrames each frame, but a hold's Body texture + Tail sprite are bound ONCE at spawn — so
             // re-point already-spawned holds here, otherwise the long body + bottom cap keep the old skin until respawn.
             foreach (var n in _notes)
@@ -1742,7 +1752,7 @@ namespace Sdo.Game
                 if (n.Body && _holdTex[c] != null)
                 {
                     var mr = n.Body.GetComponent<MeshRenderer>();
-                    if (mr && mr.sharedMaterial) { mr.sharedMaterial.mainTexture = _holdTex[c]; var sd = Shader.Find("Sprites/Default"); if (sd) mr.sharedMaterial.shader = sd; }   // back to 2D alpha-blend
+                    if (mr && mr.sharedMaterial) { mr.sharedMaterial.mainTexture = _holdTex[c]; if (spritesDefault) mr.sharedMaterial.shader = spritesDefault; }   // back to 2D alpha-blend
                 }
                 if (n.Tail && _holdTail[c] != null)
                 {
@@ -5522,6 +5532,7 @@ namespace Sdo.Game
             if (!spectatorMode) UpdateDanceGate(now);   // dancer dance/stop decision (after judging, so this frame's misses count)
             TickRemoteGates(now);      // 遠端舞者各自的跳/停(從分數流推導,與本機同一個規則函式)
             TickRemotePresence(now);   // 死了 / 中途離場的遠端玩家當場停舞(分數流推不出這兩件事)
+            TickRemoteShowtime(now);   // 遠端玩家自己放的 ShowTime 視窗(光環 + 街舞;**要壓在 gate 之後**)
             RecordGate(now);        // log gate transitions for the result-screen background replay
             RecordLocalScoreSample(NetClockMs);   // 右側名單要把自己的分數倒帶到遠端那一刻(見 RosterLocalScore)
             // 長條按住期間 = 一直看得到爆發的圖(一輪播完再播一輪,見 UpdateFx)。那一發**就是長條頭判定時放的
@@ -6439,6 +6450,67 @@ namespace Sdo.Game
             if (!Mathf.Approximately(c.a, a)) { c.a = a; _board.color = c; }
         }
 
+        /// <summary>
+        /// 「ShowTime 第一次放的時候會卡一下」—— 釋放那一幀第一次碰到的每一份資產都是**同步**磁碟讀 + 解析:
+        /// 金色 note skin 的整組貼圖(含 alpha-bleed dilate)、三支 3D-EFT(光環 / 中心爆閃 / 兩側閃電柱)的貼圖與
+        /// xmesh、街舞 DPS 引用的每一支 .MOT、還有三顆 SE 的 wav 解碼。第二次以後不卡,正是因為那時全都在快取裡。
+        /// 所以把「第一次」搬到 loading 蓋板後面做掉,釋放那一幀就只剩指標搬移。
+        ///
+        /// 同 <see cref="PrewarmDpsMotions"/> 的理由:寧可載入多花幾百毫秒(那時畫面本來就蓋著),也不要在打歌中途卡。
+        /// </summary>
+        private void PrewarmShowtimeAssets()
+        {
+            float t0 = Time.realtimeSinceStartup;
+            // ① SE:PlaySeCo 第一次拿某個名字時才 MemoryAudio.Load(同步解碼),而釋放那一幀一次要三顆。
+            foreach (var se in new[] { seRelease, "electricity", seAnnounce, seArm, seWarn3s, seWarn07s })
+                PrewarmSe(se);
+            // ② 街舞:三個檔位的變體都在歌載入時骰定了,哪一檔先釋放不知道 → 三支都先解析 + 預讀它們的 .MOT。
+            for (int lvl = 0; lvl < 3; lvl++)
+            {
+                var bd = PickBreakDps(lvl);
+                if (bd != null) PrewarmDpsMotions(bd);
+            }
+            // ③ 3D-EFT:.EFT 本身 + 每個 emitter 的貼圖 / flipbook 每一幀 / xmesh。
+            PrewarmEft(showtimeAuraEft);
+            if (showtimeBoardBurst) { PrewarmEft(showtimeBurstCenterEft); PrewarmEft(showtimeBurstSideEft); }
+            // ④ 金色 note skin:貼圖與 alpha-bleed 都是 SdoExtracted 的 static 快取,載過一次就熱著。
+            PrewarmNoteDir(Path.Combine(SdoExtracted.Root, "NOTEIMAGE", "NOTEIMAGE_SHOWTIME"));
+            Debug.Log($"[showtime] prewarm {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms");
+        }
+
+        private void PrewarmSe(string name)
+        {
+            if (string.IsNullOrEmpty(name) || _seCache.ContainsKey(name)) return;
+            _seCache[name] = MemoryAudio.Load(Path.Combine(SdoExtracted.SeDir, name + ".wav"), name);
+        }
+
+        /// <summary>一支 .EFT 用得到的所有貼圖 / mesh 都先解析進 static 快取。emitter 的貼圖來源有三處:
+        /// 單張 <c>TexIdx</c>、flipbook 的每一幀 <c>FrameTex</c>、以及 trail 旗標(0x20000)才會用到的 xmesh
+        /// (<see cref="EftEffect"/> 的 meshOk 條件,非 trail 的 emitter 引擎根本不看 word[6],跟著它才不會
+        /// 白載一堆 mesh 又在 log 印缺檔警告)。</summary>
+        private void PrewarmEft(string name)
+        {
+            if (!TryLoadNamedEft(name, out var file) || file == null) return;
+            foreach (var em in file.Emitters)
+            {
+                if (em.HasTex) ResolveEftTex(em.TexIdx);
+                if (em.FrameTex != null) foreach (var idx in em.FrameTex) ResolveEftTex(idx);
+                if (em.MeshIdx > 0 && (em.Flags & 0x20000) != 0) ResolveEftMesh(em.MeshIdx);
+            }
+        }
+
+        /// <summary>把某個 note skin 資料夾的美術讀進快取後,再把現用的那份讀回來。走的就是換皮當下會走的
+        /// <see cref="LoadBoardArt"/>,所以不會有「預熱漏了某一張」的問題;而 <see cref="ApplyNoteDir"/> 的其餘動作
+        /// (receptor 重新擺放、已生成長條重新指材質)刻意**不**做 —— 這裡只是要暖快取,不該動畫面狀態。
+        /// 開場呼叫時音符的 visual 都還沒 Rent(Update 要等 _sceneBootDone),陣列被覆寫再覆寫回來沒有影響。</summary>
+        private void PrewarmNoteDir(string dir)
+        {
+            string cur = NoteDir;   // getter 會把預設 skin 填進 _noteDir
+            if (string.IsNullOrEmpty(dir) || dir == cur) return;
+            _noteDir = dir; LoadBoardArt();
+            _noteDir = cur; LoadBoardArt();
+        }
+
         // Entering the auto-PERFECT window: REPLACE the hit burst with the golden EFT_SHOWTIME flipbook (online: the
         // shared deque is swapped, not layered), swap the note board to NOTEIMAGE_SHOWTIME (offline-only — online keeps
         // the base skin; kept here as the requested "showtime note" look), fire the SHOW TIME banner + release SFX.
@@ -6503,8 +6575,12 @@ namespace Sdo.Game
             level = Mathf.Clamp(level, 0, 2);
             string tier = level == 0 ? "E" : level == 1 ? "N" : "H";
             int n = variant > 0 ? variant : 1;
-            var bd = LoadAsset("DANCE/BREAKING_" + tier + "_" + n + ".DPS", b => DpsLoader.Load(b));
-            return (bd != null && bd.Rows != null && bd.Rows.Length > 0) ? bd : null;
+            string rel = "DANCE/BREAKING_" + tier + "_" + n + ".DPS";
+            if (_breakDpsCache.TryGetValue(rel, out var hit)) return hit;
+            var bd = LoadAsset(rel, b => DpsLoader.Load(b));
+            bd = (bd != null && bd.Rows != null && bd.Rows.Length > 0) ? bd : null;
+            _breakDpsCache[rel] = bd;   // null 也記:缺檔就別每次釋放都重試一次磁碟
+            return bd;
         }
 
         // OFFICIAL window length (FUN_00643030 @348192-348202): the tier budget (8000/12000/18000ms) rounded UP to
