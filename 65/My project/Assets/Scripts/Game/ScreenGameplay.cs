@@ -773,7 +773,8 @@ namespace Sdo.Game
         public System.Action<int> onChatChannel;
         /// <summary>玩家從表情面板點了一個表情。</summary>
         public System.Action<int> onChatExpression;
-        /// <summary>正在用聊天框打字 —— 這期間 lane 鍵與所有遊戲熱鍵都要停掉(不然打「w」會踩到上鍵)。</summary>
+        /// <summary>正在用聊天框打字 —— 這期間所有**功能熱鍵**(F8/速度/相機/中離…)都停掉。
+        /// 🔴 **lane 鍵不在此列**:使用者指定打字中照樣判定,所以字母鍵位會同時打字又踩軌(見 HandleInput)。</summary>
         public bool ChatTyping => _chat != null && _chat.Typing;
         // ── 周邊 HUD 隨面板位置左右重排（大分數/名次/名單/LV·時間 不跟著 board 平移；置中時要讓開中央的 board）。官方
         // 向下置中 = 向上置中 的水平鏡射：分數/名次/名單這一坨與 LV·時間 互換左右邊。以下是設計px(800寬,置中 board≈242..557)
@@ -5557,7 +5558,8 @@ namespace Sdo.Game
             TickDancerSlots();  // 多人:每幀把舞者往該站的格子滑一步,並讓相機錨點跟著第一名
             if (_fpsText) _fpsText.text = "FPS " + Mathf.RoundToInt(_fps);
             // 遊戲中的聊天框:自己吃 Tab/滑鼠/文字輸入。**要在所有熱鍵之前** —— 這一幀它可能剛進入打字模式,
-            // 下面每一段都得看 ChatTyping 決定放不放行(打字時整片鍵盤都是文字,不是遊戲鍵)。
+            // 下面每一段功能熱鍵都得看 ChatTyping 決定放不放行(打字時 F8/速度/相機那些鍵是文字,不是遊戲鍵)。
+            // ⚠ lane 的判定不在這條規則裡:打字中照樣判定(使用者指定),見 HandleInput。
             _chat?.Tick();
             bool chatTyping = ChatTyping;
             // 測試用（已停用）：F4 開/關除錯滑桿面板
@@ -6471,9 +6473,9 @@ namespace Sdo.Game
 
         private void HandleInput(double now)
         {
-            // 聊天打字中:整片鍵盤都是文字,一顆 lane 鍵都不判定(「w」不能同時是上鍵)。這期間音符照掉、
-            // 長條會斷 —— 那是使用者選 Tab 開打字時就接受的代價(送出後自動退出正是為了縮短這段)。
-            if (ChatTyping) return;
+            // 🔴 **聊天打字中一樣照判定**(使用者指定:不要擋,全部都要)。所以 lane 鍵在打字期間沒有任何過濾 ——
+            // 綁在字母上的鍵位(預設 A S W D)按下去會**同時**打進輸入框又踩到那條 lane,那是使用者要的行為;
+            // 打字期間不想踩到就用方向鍵那半組。這裡刻意不看 ChatTyping(功能熱鍵/中離鍵仍然擋,見 Update 的熱鍵段)。
             int mask = 0;
             double press = PressTimeMs(now);
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
@@ -6883,7 +6885,7 @@ namespace Sdo.Game
         // frame the window ends, so a note the player pressed for near the handoff is judged instead of missed.
         private void ObserveShowtimeInput(double now)
         {
-            if (ChatTyping) return;   // 打字中的按鍵是文字,不能被記成「窗內按過這條 lane」
+            // 打字中一樣照記(與 HandleInput 同一條規則:lane 鍵不受打字影響),不然視窗尾巴按的那幾下補判會憑空少掉。
             double press = PressTimeMs(now);   // 與手動路徑同一個輪詢中點修正 —— 補判要用真實按下時刻才判得準
             var laneKeys = laneKeyOverride ?? DefaultLaneKeys;
             for (int lane = 0; lane < Keys; lane++)
@@ -7069,7 +7071,7 @@ namespace Sdo.Game
         // 編輯器不判定 → 不呼叫這裡,炸彈只是照 ScrollNotes 顯示/流過。
         private void TickBombs(double now, bool detonate)
         {
-            if (ChatTyping) detonate = false;   // 打字中按到的鍵是文字 —— 跟 F8 自動避雷同樣待遇,不引爆
+            // 打字中不特別處理:手指壓在該軌上就是壓著,照樣引爆(與 HandleInput 同一條規則)。
             double retire = _engine.Windows.MissBoundary;   // 退場邊界:過判定線這麼久才收掉(視覺續捲到此,不算 miss)
             if (!_bombPrevValid) { _bombPrevNow = now; _bombPrevValid = true; }   // 第一幀對齊:prev==now → 沒有任何跨線
             double prev = _bombPrevNow;

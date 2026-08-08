@@ -21,9 +21,10 @@ namespace Sdo.Game
     /// 所以連點擊命中也是自己用 bounds 做。
     ///
     /// 打字用 Tab 開(或滑鼠點輸入框),Enter 送出後**自動退出**回到打歌,Esc 取消。打字期間
-    /// <see cref="Typing"/> 為 true,<c>ScreenGameplay</c> 據此停掉 lane 鍵與所有熱鍵 —— 否則打「w」會
-    /// 同時踩到上鍵。中文輸入法也只在打字期間才開(<see cref="Input.imeCompositionMode"/>),不然 IME
-    /// 會把 ASWD 整個吃掉,連歌都打不了。
+    /// <see cref="Typing"/> 為 true,<c>ScreenGameplay</c> 據此停掉功能熱鍵(F8/速度/相機/中離…)。
+    /// 🔴 **lane 鍵不停** —— 使用者指定「不要擋,就是都要」:打字中每一顆 lane 鍵照樣判定,所以字母鍵位
+    /// 打「w」會同時進草稿又踩到上鍵。中文輸入法只在打字期間才開(<see cref="Input.imeCompositionMode"/>),
+    /// IME 組字時 ASWD 會被吃掉是輸入法自己的行為,不是這裡擋的。
     /// </summary>
     public sealed class GameplayChat
     {
@@ -120,6 +121,7 @@ namespace Sdo.Game
         private Label3D _draftLabel;
         private Label3D _measureLabel;   // 只拿來量字寬(不顯示):推訊息進來時先算它要折成幾列
         private SpriteRenderer _caret;
+        private SpriteRenderer _composeLine;   // IME 組字底線(還沒選字上屏的那一段)
 
         private readonly List<GameplayChatLine> _lines = new List<GameplayChatLine>();
         private readonly List<Row> _rows = new List<Row>();
@@ -183,6 +185,9 @@ namespace Sdo.Game
             _measureLabel.SetActive(false);
             _caret = NewSR("ChatCaret", WhitePixel(), OrderText);
             _caret.enabled = false;
+            // 組字底線:這裡的字是 legacy TextMesh(Label3D),富文字沒有 <u> 可用 → 自己擺一條 1px 白線。
+            _composeLine = NewSR("ChatComposeLine", WhitePixel(), OrderText);
+            _composeLine.enabled = false;
 
             for (int i = 0; i < GameplayChatLayout.MaxLines; i++) _rows.Add(NewRow(i));
 
@@ -399,10 +404,40 @@ namespace Sdo.Game
         private void RefreshDraftLabel()
         {
             if (_draftLabel == null) return;
-            if (!_typing) { _draftLabel.SetActive(false); if (_caret != null) _caret.enabled = false; return; }
-            _draftLabel.Text = ClipToWidth(_draft + (Input.compositionString ?? ""));
+            if (!_typing)
+            {
+                _draftLabel.SetActive(false);
+                if (_caret != null) _caret.enabled = false;
+                if (_composeLine != null) _composeLine.enabled = false;
+                return;
+            }
+            string composing = Input.compositionString ?? "";
+            string shown = ClipToWidth(_draft + composing);
+            _draftLabel.Text = shown;
             _draftLabel.SetColors(Color.white, Color.black);
             _draftLabel.SetActive(true);
+            UpdateComposeLine(shown, composing);
+        }
+
+        /// <summary>
+        /// 還沒選字上屏的那一段畫底線 —— 與房間左下/大廳的輸入框(TMP 自己包 <c>&lt;u&gt;</c>)、
+        /// 房間頭上打字泡同一種回饋;這裡的字是 legacy <c>TextMesh</c>,只能自己擺線(見 <see cref="ImeCompose"/>)。
+        /// 線的兩端就用 <c>Label3D</c> 量出來的字寬,和游標(<see cref="TickCaret"/>)走同一把尺 → 對得上。
+        /// </summary>
+        private void UpdateComposeLine(string shown, string composing)
+        {
+            if (_composeLine == null || _draftLabel == null) return;
+            int start = ImeCompose.ShownStart(shown != null ? shown.Length : 0,
+                                              composing != null ? composing.Length : 0);
+            int len = (shown != null ? shown.Length : 0) - start;
+            if (len <= 0) { _composeLine.enabled = false; return; }
+            float x0 = _draftLabel.PrefixWidth(start);
+            float w = _draftLabel.MeasuredWidth - x0;
+            if (w <= 0.5f) { _composeLine.enabled = false; return; }
+            _composeLine.enabled = true;
+            // y = 字的下緣(游標從 EditDy+1 站到 +13);線壓在那條下面一點,不吃到字。
+            SdoLayout.PlaceBox(_composeLine, _layout.BarItemX(GameplayChatLayout.EditDx) + x0,
+                               _layout.BarItemY(GameplayChatLayout.EditDy + 13f), w, 1f, -4f);
         }
 
         /// <summary>輸入框只有 <see cref="GameplayChatLayout.EditW"/> 這麼寬:太長就砍掉開頭、留尾巴(游標那一端)。</summary>

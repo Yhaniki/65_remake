@@ -2658,9 +2658,13 @@ namespace Sdo.UI.Screens
             caret = Mathf.Clamp(caret, 0, committed.Length);
             anchor = Mathf.Clamp(anchor, 0, committed.Length);
 
-            // IME 組字中：組字串插在游標處（不畫組字反白，組字回饋交給 IME 自己；只有下面的手動選取才反白）。
+            // IME 組字中：組字串插在游標處，**還沒選字上屏的那一段畫底線**（與左下輸入框一模一樣的回饋 ——
+            // 那邊是 TMP_InputField 自己包 <u>…</u>，泡這邊照抄，見 ImeCompose）。不畫組字反白（那是 IME 自己的事）；
+            // 只有下面的手動選取才反白。<u> 是標籤，不佔字元索引 → 泡內游標的 caretChar 不受影響。
             if (!string.IsNullOrEmpty(composition))
-                return EscapeTmp(committed.Substring(0, caret)) + EscapeTmp(composition) + EscapeTmp(committed.Substring(caret));
+                return EscapeTmp(committed.Substring(0, caret))
+                     + ImeCompose.Underline(EscapeTmp(composition))
+                     + EscapeTmp(committed.Substring(caret));
 
             int selStart = Mathf.Min(caret, anchor);
             int selEnd = Mathf.Max(caret, anchor);
