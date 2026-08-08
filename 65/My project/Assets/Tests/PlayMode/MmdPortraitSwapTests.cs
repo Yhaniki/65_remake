@@ -99,6 +99,55 @@ namespace Sdo.Tests
         }
 
         /// <summary>
+        /// 結算列(<c>boneFraming</c> = 固定取景)那幾格的 MMD 頭貼,相機**必須不動** —— 待機的擺動要在框內
+        /// 演出,才跟旁邊那幾格 SDO 一起擺。
+        ///
+        /// 病灶(使用者回報「遠端那個用 MMD 的,擺動跟其他人不同步」):MMD 分支本來一律用
+        /// <see cref="MmdAvatar.TryHeadBounds"/>(**活的**頭骨位置),那是房間頭貼要的(人會走動,相機得跟著頭);
+        /// 拿到結算列就變成相機**追著頭跑**,擺動被整個抵銷,那一格看起來就釘在中間不動。本機自己那一列
+        /// (ScreenGameplay.Hud.UpdateHeadPortraitCam)早就用 rest 框了 —— 所以症狀只出現在別人的那幾格。
+        /// </summary>
+        [UnityTest]
+        public IEnumerator ResultRowPortrait_MmdCamIsFixed_SoTheIdleSwayPlaysInFrame()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            MmdAvatarSwap.SetEnabled(true);
+
+            var host = new GameObject("ResultRowPortraitHost");
+            var portrait = host.AddComponent<RoomHeadPortrait>();
+            portrait.boneFraming = true;      // 結算列:固定取景(SDO 那幾格走 rest 頭骨位置)
+            portrait.groundClipsOnly = true;
+            portrait.rtWidth = 192; portrait.rtHeight = 216;
+            Assert.IsTrue(portrait.Init(male: false), "portrait avatar failed to load");
+            for (int i = 0; i < 5; i++) yield return null;
+
+            var driver = host.GetComponentInChildren<SdoAvatar>(true);
+            Assert.IsNotNull(MmdAvatarSwap.ActiveFor(driver), "the 結算頭貼 avatar did not swap to the MMD body");
+            var mmd = MmdAvatarSwap.ActiveFor(driver);
+            var cam = host.GetComponentInChildren<Camera>();
+
+            Vector3 cam0 = cam.transform.position, head0 = Vector3.zero;
+            float camMove = 0f, headMove = 0f;
+            bool haveHead = false;
+            for (int i = 0; i < 60; i++)
+            {
+                yield return null;
+                camMove = Mathf.Max(camMove, Vector3.Distance(cam.transform.position, cam0));
+                if (!mmd.TryHeadBounds(out var live)) continue;      // 活的頭框 = 待機真的把頭挪了多少
+                if (!haveHead) { head0 = live.center; haveHead = true; continue; }
+                headMove = Mathf.Max(headMove, Vector3.Distance(live.center, head0));
+            }
+
+            // 先確認這條測試量得到東西:待機真的有讓頭動(不然下面那條會空洞地通過)
+            Assert.Greater(headMove, 1e-3f, "待機沒有讓頭動 —— 這條測試量不到擺動");
+            Assert.Less(camMove, 1e-3f,
+                "結算列的頭貼相機在動:它追著活的頭框跑,把待機的擺動抵銷掉了 → 那一格不會跟其他人一起擺");
+
+            Object.Destroy(host);
+            yield return null;
+        }
+
+        /// <summary>
         /// <see cref="RoomHeadPortrait.clothSim"/> 這根開關真的接到 rig 上:打開才建布料。
         ///
         /// 出貨的頭貼**全部是關的**(布料是建一具 rig 最貴的一段,使用者指定不付這筆錢)—— 上面那條測試

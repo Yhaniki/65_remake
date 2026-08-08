@@ -311,10 +311,22 @@ namespace Sdo.Game
             // MMD 顯示模式:SDO 的臉/髮 part 被藏起來了,模型是一块 skinned mesh(沒有 FACE/HAIR 之分) → 改用 MMD rig
             // 自己量的頭框。它的框是「純頭」(下巴→顱頂,由「頭」骨的 tail 算出來,髮/角/帽子都不參與 ——
             // MmdHeadBounds),SDO 那個是頭+髮 → 高約 40%,所以常數也要用 MmdAvatar 自帶的。
+            //
+            // 🔴 <b>活的框 vs rest 的框,要跟這一格的取景模式一致</b>(使用者回報「遠端那個 MMD 的擺動跟其他人不同步」):
+            //   • 房間(boneFraming=false)= **跟著人**:人會在房間裡走動,相機每幀重新對準活的頭骨,頭才會一直
+            //     待在格子中間 → TryHeadBounds。
+            //   • 結算(boneFraming=true)= **固定取景**:整排的相機都不動(SDO 那幾格走的是 rest 頭骨位置),
+            //     待機的擺動就在框內演出 → TryHeadBoundsRest。用活的框的話相機會**追著頭跑**,擺動被抵銷掉,
+            //     那一格看起來就是「別人都在擺、只有他釘在中間」。本機自己那一列早就是 rest(見
+            //     ScreenGameplay.Hud 的 UpdateHeadPortraitCam)—— 所以症狀只出現在別人的那幾格。
             var mmdRig = MmdAvatarSwap.ActiveFor(_avatar);
-            if (mmdRig != null && mmdRig.TryHeadBounds(out var mb))
+            Bounds mb = default;
+            bool mmdBox = mmdRig != null &&
+                          (boneFraming ? mmdRig.TryHeadBoundsRest(out mb) : mmdRig.TryHeadBounds(out mb));
+            if (mmdBox)
                 // 世界單位的距離,跟 boneDistModel(模型單位)不同量 —— 這裡只寫進區域變數,不回寫任何共用欄位。
-                MmdAvatar.FramePortrait(mb, zoom, 0f, out target, out dist);
+                // aimX 也跟本機那一列同一個值(固定取景時把臉往側邊擺正),整排的臉才落在同一個水平位置。
+                MmdAvatar.FramePortrait(mb, zoom, boneFraming ? boneAimOffset.x : 0f, out target, out dist);
             else if (boneFraming)   // 只對頭骨:固定取景,不量 mesh、不跟頭(與本機結算頭貼同一條路)
                 HeadBoneFraming.Compute(t.TransformPoint(_headModelPos), avatarScale, zoom,
                                         boneAimOffset, boneDistModel, out target, out dist);
