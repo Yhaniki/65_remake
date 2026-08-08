@@ -477,16 +477,30 @@ namespace Sdo.Game
             if (_info) _info.text = (_failed ? "FAILED " : "") + $"P{_score.PerfectCount} C{_score.CoolCount} B{_score.BadCount} M{_score.MissCount}  x{_score.Combo}{camLbl}";
         }
 
+        /// <summary>combo 里程碑語音(decompiled):100→0008 200→0007 300→0006 400→0005 500→0004;其餘沒有。
+        /// 抽成函式是為了讓「播」和「預熱」讀同一張表 —— 見 <see cref="PrewarmComboBursts"/>。</summary>
+        public static string MilestoneVoice(int combo)
+        {
+            switch (combo)
+            {
+                case 100: return "VOICE_0008";
+                case 200: return "VOICE_0007";
+                case 300: return "VOICE_0006";
+                case 400: return "VOICE_0005";
+                case 500: return "VOICE_0004";
+                default: return null;
+            }
+        }
+
         private void SpawnMilestone(int combo)
         {
-            string v = null;   // combo voices (decompiled): 100→0008 200→0007 300→0006 400→0005 500→0004
-            switch (combo) { case 100: v = "VOICE_0008"; break; case 200: v = "VOICE_0007"; break; case 300: v = "VOICE_0006"; break; case 400: v = "VOICE_0005"; break; case 500: v = "VOICE_0004"; break; }
+            string v = MilestoneVoice(combo);
             if (v != null) PlaySe(v);
             // floor combo burst at every 100 (orig 100combo.eft..500combo.eft = 3DEft idx 0x13..0x17,
             // spawned at the dancer's pelvis-on-floor by Dancer_SpawnDirEffect_004a7680, uniform scale 30/20/30/30/35;
             // tiers clamp to 500. NB: the original fires these from authored chart events, not combo%100 — we
             // approximate with the milestone so the effect still plays at 100/200/...).
-            if (effectCharacter && combo % 100 == 0) SpawnComboBurst(Mathf.Clamp(combo / 100 - 1, 0, 4));   // 人物特效開關 (OPTION 遊戲頁)
+            if (effectCharacter && combo % 100 == 0) SpawnComboBurst(Mathf.Clamp(combo / 100 - 1, 0, ComboTierCount - 1));   // 人物特效開關 (OPTION 遊戲頁)
         }
 
         public float comboBurstSize = 1f, comboBurstBright = 1f;   // F4-tunable
@@ -494,20 +508,55 @@ namespace Sdo.Game
         // decompiled per-tier uniform effect scale (DAT_0054f228, Dancer_SpawnDirEffect_004a7680): 100..500 = 30/20/30/30/35
         private static readonly float[] ComboTierScale = { 30f, 20f, 30f, 30f, 35f };
         private static readonly Dictionary<int, EftFile> _eftCache = new Dictionary<int, EftFile>();
+
+        /// <summary>combo 檔位數(100..500COMBO,官方 3DEft idx 0x13..0x17)。以每檔縮放表為準 —— 加一檔就得
+        /// 同時給它縮放值,不然 <see cref="SpawnComboBurst(int,Transform)"/> 會索引到表外。</summary>
+        internal static int ComboTierCount => ComboTierScale.Length;
+
+        /// <summary>第 tier 檔(0-based)的特效檔名,3DEFT\ 底下。</summary>
+        public static string ComboEftFileName(int tier) => ((tier + 1) * 100) + "COMBO.EFT";
+
+        /// <summary>載入(並快取)某一檔的 &lt;tier&gt;COMBO.EFT。第一次呼叫是**同步**磁碟讀 + 解析,所以放特效與
+        /// 預熱都走這裡,兩邊不會用到不同的檔名規則。缺檔只警告一次性地跳過。</summary>
+        private static bool TryLoadComboEft(int tier, out EftFile file)
+        {
+            int effId = 0x13 + tier;                        // 官方 3DEft id
+            if (_eftCache.TryGetValue(effId, out file)) return file != null;
+            var path = Path.Combine(SdoExtracted.Root, "3DEFT", ComboEftFileName(tier));
+            if (!VfsFile.Exists(path)) { Debug.LogWarning("[combo] missing " + path); return false; }
+            file = EftFile.Load(VfsFile.ReadAllBytes(path));
+            _eftCache[effId] = file;
+            return file != null;
+        }
+
+        /// <summary>
+        /// 「第一次跳出 100 COMBO 會卡一下」跟 ShowTime 第一次釋放是同一個病:那一幀才第一次去讀
+        /// <c>&lt;tier&gt;COMBO.EFT</c>、它每個 emitter 的貼圖 / flipbook 每一幀 / xmesh,還有里程碑語音的 wav 解碼
+        /// —— 全部是主執行緒同步 I/O。第二次以後不卡,正是因為那時全都在快取裡。
+        ///
+        /// 所以開場(載入蓋板還在時)把五個檔位**全部**預熱掉:哪一檔會先出現不知道(斷連 combo 會直接跳到 200,
+        /// 線上別台的 combo 也會借同一份快取放),而五支加起來也只是幾百毫秒的載入時間,遠比打歌中途掉幀划算。
+        /// 同 <see cref="PrewarmDpsMotions"/> / <see cref="PrewarmShowtimeAssets"/> 的理由。
+        /// </summary>
+        internal void PrewarmComboBursts()
+        {
+            float t0 = Time.realtimeSinceStartup;
+            for (int tier = 0; tier < ComboTierCount; tier++)
+            {
+                if (TryLoadComboEft(tier, out var file)) PrewarmEftFile(file);
+                var v = MilestoneVoice((tier + 1) * 100);
+                if (v != null) PrewarmSe(v);        // PlaySeCo 第一次拿某個名字時才 MemoryAudio.Load(同步解碼)
+            }
+            Debug.Log($"[combo] prewarm {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms");
+        }
+
         // Faithful: load the actual <tier>COMBO.EFT and run it through the EftEffect interpreter (real emitters,
         // EMIT counts, start-delays, per-channel curves, ring geometry, additive) — no hand-tuned sprites.
         private void SpawnComboBurst(int tier) => SpawnComboBurst(tier, _ringTr);
         private void SpawnComboBurst(int tier, Transform anchor)
         {
-            tier = Mathf.Clamp(tier, 0, 4);
-            int effId = 0x13 + tier;
-            if (!_eftCache.TryGetValue(effId, out var file))
-            {
-                var path = Path.Combine(SdoExtracted.Root, "3DEFT", ((tier + 1) * 100) + "COMBO.EFT");
-                if (!VfsFile.Exists(path)) { Debug.LogWarning("[combo] missing " + path); return; }
-                file = EftFile.Load(VfsFile.ReadAllBytes(path));
-                _eftCache[effId] = file;
-            }
+            tier = Mathf.Clamp(tier, 0, ComboTierCount - 1);
+            if (!TryLoadComboEft(tier, out var file)) return;
             var go = new GameObject("ComboBurst" + ((tier + 1) * 100));
             // pelvis projected to floor (Dancer_SpawnDirEffect: Bip01_Pelvis x/z, y≈0.1); the yuanpan ground ring
             // already tracks the pelvis-on-floor, so reuse its transform as the follow anchor.

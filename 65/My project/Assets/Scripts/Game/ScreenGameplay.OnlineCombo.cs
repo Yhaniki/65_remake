@@ -47,7 +47,7 @@ namespace Sdo.Game
             if (effectCharacter && combo % 100 == 0)
             {
                 var anchor = GetRemoteComboAnchor(userId, root);
-                SpawnComboBurst(Mathf.Clamp(combo / 100 - 1, 0, 4), anchor);
+                SpawnComboBurst(Mathf.Clamp(combo / 100 - 1, 0, ComboTierCount - 1), anchor);
             }
         }
 

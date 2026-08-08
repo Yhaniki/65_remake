@@ -1397,6 +1397,9 @@ namespace Sdo.Game
             // 第一次按 SPACE 之所以會卡,是因為那一幀才第一次去讀街舞/特效/金色 note/音效。載入蓋板還在,
             // 現在就把它們全部讀進快取(要在 _breakRolls 之後 —— 預熱的正是這場骰到的那三支街舞)。
             if (showtimeMode && !editorMode) PrewarmShowtimeAssets();
+            // 同理:100/200/300… COMBO 的特效與語音也是「第一次放才去讀檔」→ 第一次達成 combo 里程碑的那一幀會掉。
+            // 趁蓋板還在把五個檔位全部讀進快取(關掉人物特效就沒東西可放,不必花這個時間)。
+            if (effectCharacter && !editorMode) PrewarmComboBursts();
             RefreshRanking();   // initial roster/rank (rank 1/N) before the first score commit
             _audio = gameObject.AddComponent<AudioSource>();
             _sfx = gameObject.AddComponent<AudioSource>();
@@ -6667,7 +6670,15 @@ namespace Sdo.Game
         /// 白載一堆 mesh 又在 log 印缺檔警告)。</summary>
         private void PrewarmEft(string name)
         {
-            if (!TryLoadNamedEft(name, out var file) || file == null) return;
+            if (!TryLoadNamedEft(name, out var file)) return;
+            PrewarmEftFile(file);
+        }
+
+        /// <summary>已經解析好的一支 .EFT → 把它的貼圖 / mesh 灌進快取。與 <see cref="PrewarmEft"/> 分開是因為
+        /// combo 那五支不是走具名快取(<see cref="TryLoadComboEft"/> 用官方的 3DEft id 當鍵)。</summary>
+        private static void PrewarmEftFile(EftFile file)
+        {
+            if (file == null) return;
             foreach (var em in file.Emitters)
             {
                 if (em.HasTex) ResolveEftTex(em.TexIdx);
