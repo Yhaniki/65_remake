@@ -33,8 +33,15 @@ namespace Sdo.Server.Net
         private readonly Dictionary<int, Dictionary<int, FrameSample>> _finalFrames
             = new Dictionary<int, Dictionary<int, FrameSample>>();
         /// <summary>roomCode to each user's last forwarded combo milestone in this match.</summary>
-        private readonly Dictionary<int, Dictionary<int, int>> _comboMilestones
-            = new Dictionary<int, Dictionary<int, int>>();
+        private readonly Dictionary<int, Dictionary<int, ComboMilestoneSample>> _comboMilestones
+            = new Dictionary<int, Dictionary<int, ComboMilestoneSample>>();
+
+        /// <summary>上一則放行的 combo 里程碑:值(去重用)與 server 收到的時刻(防洪用)。見 <see cref="OnComboMilestone"/>。</summary>
+        private struct ComboMilestoneSample
+        {
+            public int Combo;
+            public long At;
+        }
 
         /// <summary>roomCode → (userId → 上一則放行的 ShowTime 釋放是 server 的哪一刻)。防洪用,見 <see cref="OnShowtimeRelease"/>。</summary>
         private readonly Dictionary<int, Dictionary<int, long>> _showtimeReleases
@@ -161,7 +168,7 @@ namespace Sdo.Server.Net
                 case NetProto.SetPlayState: OnSetPlayState(conn, node, rq); break;
                 case NetProto.Frame: OnGameplayFrame(conn, node); break;
                 case NetProto.PlayFinished: OnPlayFinished(conn, node); break;
-                case NetProto.ComboMilestone: OnComboMilestone(conn, node); break;
+                case NetProto.ComboMilestone: OnComboMilestone(conn, node, now); break;
                 case NetProto.ShowtimeRelease: OnShowtimeRelease(conn, node, now); break;
 
                 case NetProto.ChatSay: OnChatSay(conn, node, now); break;
@@ -1357,15 +1364,18 @@ namespace Sdo.Server.Net
         /// <summary>
         /// Reliably forwards a one-shot combo effect. It cannot be inferred from 5 Hz
         /// snapshots because a receiver may see combo jump directly from 49 to 53.
+        ///
+        /// 🔴 去重規則是「與上一則不同的值」,**不是**「必須比上一則大」——— combo 會斷,斷完重爬的
+        /// 50/100/150 都是真的里程碑(理由與判準見 <see cref="ComboMilestoneRules.AcceptsCombo"/>)。
         /// </summary>
-        private void OnComboMilestone(Connection conn, object node)
+        private void OnComboMilestone(Connection conn, object node, long now)
         {
             var room = _rooms.RoomOf(conn.UserId);
             if (room == null || room.Match == null || room.State.Status != RoomStatus.Playing) return;
 
             long matchId = NetJson.Long(node, "matchId");
             int combo = NetJson.Int(node, "combo");
-            if (matchId != room.Match.MatchId || combo < 50 || combo > 1000000 || combo % 50 != 0) return;
+            if (matchId != room.Match.MatchId || !ComboMilestoneRules.IsValid(combo)) return;
 
             bool participant = false;
             var ids = room.Match.ParticipantUserIds;
@@ -1379,16 +1389,26 @@ namespace Sdo.Server.Net
 
             var seat = room.State.SeatOf(conn.UserId);
             if (seat == null || seat.PlayState != PlayState.Playing) return;
-            Dictionary<int, int> lastByUser;
+            Dictionary<int, ComboMilestoneSample> lastByUser;
             if (!_comboMilestones.TryGetValue(room.Code, out lastByUser))
             {
-                lastByUser = new Dictionary<int, int>();
+                lastByUser = new Dictionary<int, ComboMilestoneSample>();
                 _comboMilestones[room.Code] = lastByUser;
             }
 
-            int last;
-            if (lastByUser.TryGetValue(conn.UserId, out last) && combo <= last) return;
-            lastByUser[conn.UserId] = combo;
+            ComboMilestoneSample last;
+            if (lastByUser.TryGetValue(conn.UserId, out last) &&
+                (!ComboMilestoneRules.AcceptsCombo(last.Combo, combo) ||
+                 !ComboMilestoneRules.AcceptsAt(last.At, now)))
+            {
+                // 正常遊玩走不到這裡(兩則之間隔著 50 次判定,值也不會與上一則相同)。印出來是為了讓
+                // 「遠端的人 combo 特效沒出來」下次能直接在 server log 上證實或排除 ——
+                // 這條路徑本身就是那個 bug 的現場,靜靜地 return 等於沒有任何證據可查。
+                Log("房 " + room.Code + " user " + conn.UserId + " 的 combo 里程碑 " + combo
+                    + " 未轉發(上一則 " + last.Combo + ",距今 " + (now - last.At) + " ms)");
+                return;
+            }
+            lastByUser[conn.UserId] = new ComboMilestoneSample { Combo = combo, At = now };
             var bytes = JObj.New()
                 .Str(NetProto.FieldType, NetProto.ComboMilestone)
                 .Long("matchId", matchId)

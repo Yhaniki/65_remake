@@ -19,14 +19,17 @@ namespace Sdo.Game
         {
             if (judgment != Judgment.Perfect && judgment != Judgment.Cool) return;
             int combo = _score != null ? _score.Combo : 0;
-            if (combo >= 50 && combo % 50 == 0)
+            // combo 每次判定只 +1,所以每一個邊界都踩得到 —— 不會跳號。斷 combo 之後重爬到 50/100
+            // 照樣送(那是真的里程碑,本機也會各放一次特效);server 的去重規則配合這一點,見
+            // ComboMilestoneRules.AcceptsCombo。
+            if (Sdo.Net.ComboMilestoneRules.IsValid(combo))
                 LocalComboMilestone?.Invoke(combo);
         }
 
         /// <summary>Plays the remote dancer's exact 50/100-combo one-shot visuals.</summary>
         public void PlayRemoteComboMilestone(int userId, int combo)
         {
-            if (userId == 0 || combo < 50 || combo % 50 != 0) return;
+            if (userId == 0 || !Sdo.Net.ComboMilestoneRules.IsValid(combo)) return;
             // 🔴 擋的只有**已經離場**的人(人都回房間了,那則 milestone 是他走之前送出、路上還在飛的)。
             //
             // **死掉的人照冒表情與火** —— 完奏模式血用完歌不切斷,他還在打、combo 還在累積,

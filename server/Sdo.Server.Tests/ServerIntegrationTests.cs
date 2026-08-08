@@ -1535,15 +1535,28 @@ namespace Sdo.Tests
             Assert.AreEqual(a.UserId, NetJson.Int(milestone, "userId"));
             Assert.AreEqual(100, NetJson.Int(milestone, "combo"));
 
+            // 同一則被重送(值一模一樣)= 去重要擋掉,否則同一個特效會在別人畫面上放兩次。
             a.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.ComboMilestone)
                 .Long("matchId", matchId)
                 .Int("combo", 100));
+            Assert.IsNull(b.WaitFor(NetProto.ComboMilestone, 300), "同一則重送不可以再放一次特效");
+
+            // 🔴 combo **會斷**。打到 100 之後 Bad 一下歸零,再爬回 50 是一個**真的**里程碑 ——
+            //    本機那台確實會再放一次特效,所以場上其他人也必須看得到。
+            //    這裡以前的規則是「必須比上一則大」,於是斷 combo 之後重爬的那一整段
+            //    (50/100/150…直到超過斷掉前的最高點)在別人畫面上全部消失 ——
+            //    正是使用者回報的「遠端的人 combo 特效有時候沒出來」。
             a.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.ComboMilestone)
                 .Long("matchId", matchId)
                 .Int("combo", 50));
-            Assert.IsNull(b.WaitFor(NetProto.ComboMilestone, 300));
+            milestone = b.WaitFor(NetProto.ComboMilestone, 3000);
+            Assert.IsNotNull(milestone, "斷 combo 之後重爬的里程碑要照樣轉發");
+            Assert.AreEqual(50, NetJson.Int(milestone, "combo"));
+
+            // 真實遊玩兩則之間隔著 50 次判定(≥1 秒);這裡是人工連發,要讓開防洪門檻。
+            Thread.Sleep((int)ComboMilestoneRules.MinIntervalMs + 50);
 
             a.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.ComboMilestone)
