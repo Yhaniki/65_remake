@@ -405,8 +405,8 @@ namespace Sdo.UI
 
         // ---------------------------------------------------------------- songs: gn + ogg + preview + per-song DPS + dance clips
 
-        // Match a *.mot filename token anywhere in a DPS's bytes (version-agnostic — DpsLoader parses PAS00003 only,
-        // but 35 legacy PAS00002 charts also carry clip names we must keep). Bytes are treated as latin-1 text.
+        // Match a *.mot filename token anywhere in a DPS's bytes (version-agnostic — DpsLoader reads PAS00003 and the
+        // 44 legacy PAS00002 charts, and both carry clip names we must keep). Bytes are treated as latin-1 text.
         private static readonly Regex MotToken = new Regex(@"[0-9A-Za-z_]+\.mot", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private IEnumerator ProbeSongs()

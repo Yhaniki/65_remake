@@ -33,8 +33,9 @@ INDEX_REL = Path("DANCE") / "DPSINDEX.TXT"
 VERSION = 3                    # V3 = 開場之後的每一組也烘（G）；V2 = 只有開場且帶 frame range；V1 只有名字
 GROUP_MOTS = 3                 # 一組 = 三支不同的 mot，收到第 4 個就換下一組
 GROUP_MAX_ROWS = 40            # 一組的 row 上限（A/B 交替的譜可以拖很長）
-DPS_MAGIC = b"PAS00003"
-ROW_STRIDES = (305, 317)       # 引擎 DpsLoader 認得的兩種 row 間距
+# 引擎 DpsLoader 認得的兩個版本，各自的兩種 row 間距（sub-item / sub-item + 12 bytes item 表頭）。
+# PAS00002 的 sub-item 少一個尾端 byte，所以間距整組 -1；名字與 mid 的 244/248 偏移完全一樣。
+DPS_STRIDES = {b"PAS00003": (305, 317), b"PAS00002": (304, 316)}
 POOL_RE = re.compile(r"^wdance\d+\.mot$", re.IGNORECASE)
 # 這幾支不是「跳舞」：站姿待機（wrest）、輸／贏定格（wlost / wwin）、發招（fazhang_nan）。官方 .dps 會把它們
 # 夾在編舞裡（開場前的等待、段落間的喘息），但生成的舞是整首歌連著跳，抄到就變成舞者站著不動好幾拍。
@@ -65,7 +66,7 @@ def mot_frames(path: Path) -> int | None:
     return max(1, int(max_time) + 1)
 
 
-def dps_rows(data: bytes, limit: int | None = None):
+def dps_rows(data: bytes, strides, limit: int | None = None):
     """一支 .dps 的 row（limit=前幾個，None=整支）：(mot, startFrame, endFrame)。
 
     跟引擎一樣用 ".mot" 字串 + row 間距定位 row（row = preamble 12 + 名字 16 + mid），
@@ -83,7 +84,7 @@ def dps_rows(data: bytes, limit: int | None = None):
         rs = ns - 12
         if rs < 12 or rs + 28 + 256 > len(data):
             continue
-        if prev >= 0 and (rs - prev) not in ROW_STRIDES:
+        if prev >= 0 and (rs - prev) not in strides:
             continue                      # row 的 mid 區塊裡剛好有 ".mot" —— 不是 row 開頭
         prev = rs
         start, end = struct.unpack_from("<II", data, rs + 28 + 244)
@@ -103,8 +104,9 @@ def groups_of(path: Path, frames_of):
         data = path.read_bytes()
     except Exception:
         return [], 0
-    if not data.startswith(DPS_MAGIC):
-        return [], 0                      # 25 支 PAS00002 舊檔，引擎本來就不吃
+    strides = DPS_STRIDES.get(data[:8])
+    if strides is None:
+        return [], 0                      # 不是 .dps／更舊的 PAS00000-1，引擎也不吃
 
     out, dropped, ordinal = [], 0, 0
     cur, seen, ok = [], [], True
@@ -119,7 +121,7 @@ def groups_of(path: Path, frames_of):
             ordinal += 1
         cur, seen, ok = [], [], True
 
-    for name, start, end in dps_rows(data):
+    for name, start, end in dps_rows(data, strides):
         if name not in seen:
             if len(seen) == GROUP_MOTS:
                 close()                   # 第 4 個不同的 mot → 這組收尾，它是下一組的第一支

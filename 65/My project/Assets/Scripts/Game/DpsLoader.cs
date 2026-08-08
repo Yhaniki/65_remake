@@ -4,12 +4,19 @@ using System.Collections.Generic;
 namespace Sdo.Game
 {
     /// <summary>
-    /// Loads an SDO ".dps" dance script (PAS00003) — the per-song choreography that sequences motion
+    /// Loads an SDO ".dps" dance script — the per-song choreography that sequences motion
     /// SLICES along the music timeline. Ported from bms_sdo/dps_archive.py: rows are located by their
-    /// ".mot" filename (row_start = motNameOffset - 12), accepted only at the 305/317-byte strides (so a
+    /// ".mot" filename (row_start = motNameOffset - 12), accepted only at this version's two strides (so a
     /// ".mot" string inside a mid block is skipped). Each row: preamble(12) + name(16) + mid; the mid holds
     /// start_frame@244, end_frame@248, duration_sec@252. Rows play sequentially (time accumulates by dur).
     /// Sample(t) -> (motName, interpolated frame) drives the avatar in sync with the song.
+    ///
+    /// TWO versions ship in DATA/DANCE: 2445 files are PAS00003, and 44 of the oldest songs (10001..10056,
+    /// e.g. 10003) are PAS00002. The original engine reads both (sdo_stand_alone FUN_00407a30 has a branch
+    /// per magic), and the two sub-item loops are identical except for ONE trailing byte the v3 loop reads
+    /// into +0x3c (v2 hardcodes it to 0) — so v2's row is exactly one byte shorter and everything up to and
+    /// including the mid's 244/248/252 fields sits at the same offset. Rejecting PAS00002 left those 44 songs
+    /// with no choreography at all ("這首在遊戲裡面不會動").
     /// </summary>
     public sealed class DpsLoader
     {
@@ -19,7 +26,16 @@ namespace Sdo.Game
 
         public static DpsLoader Load(byte[] d)
         {
-            if (d == null || d.Length < 16 || Ascii(d, 0, 8) != "PAS00003") return null;
+            if (d == null || d.Length < 16) return null;
+            // Stride between two rows: the shorter one is the next sub-item of the same item, the longer one adds
+            // that item's 12-byte preamble (pre_a, pre_b, sub_count). PAS00002's sub-item is one byte shorter.
+            int subStride, itemStride;
+            switch (Ascii(d, 0, 8))
+            {
+                case "PAS00003": subStride = 305; itemStride = 317; break;
+                case "PAS00002": subStride = 304; itemStride = 316; break;
+                default: return null;
+            }
             var starts = new List<int>();
             for (int i = 0; i + 4 <= d.Length; i++)
             {
@@ -29,7 +45,7 @@ namespace Sdo.Game
                 if (ns == i) continue;                       // no name chars before ".mot"
                 int rs = ns - 12; if (rs < 12) continue;
                 if (starts.Count == 0) starts.Add(rs);
-                else { int gap = rs - starts[starts.Count - 1]; if (gap == 305 || gap == 317) starts.Add(rs); }
+                else { int gap = rs - starts[starts.Count - 1]; if (gap == subStride || gap == itemStride) starts.Add(rs); }
             }
             if (starts.Count == 0) return null;
 
@@ -38,7 +54,6 @@ namespace Sdo.Game
             for (int i = 0; i < starts.Count; i++)
             {
                 int rs = starts[i];
-                int rsz = (i + 1 < starts.Count) ? starts[i + 1] - rs : 317;
                 if (rs + 28 + 256 > d.Length) break;          // need room for v244/248/252
                 string mot = Ascii(d, rs + 12, 16).Split('\0')[0];
                 int midOff = rs + 28;
