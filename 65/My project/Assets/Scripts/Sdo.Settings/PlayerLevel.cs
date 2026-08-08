@@ -14,7 +14,7 @@ namespace Sdo.Settings
     public static class PlayerLevel
     {
         public const int MinLevel = 1;
-        public const int MaxLevel = 99;
+        public const int MaxLevel = 200;
         public const int PerLevel = 100;   // 升一級所需經驗 = PerLevel × 目前等級
 
         /// <summary>從 <paramref name="level"/> 升到下一級需要的經驗值；已滿級 → 0（＝不再升）。純函式。</summary>
@@ -49,7 +49,7 @@ namespace Sdo.Settings
             return int.TryParse(level, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) && v > 0 ? Clamp(v) : 0;
         }
 
-        /// <summary>等級字串正規化：去頭尾空白，是數字就夾進 1..99 後寫回標準寫法（"007" → "7"），
+        /// <summary>等級字串正規化：去頭尾空白，是數字就夾進 1..<see cref="MaxLevel"/> 後寫回標準寫法（"007" → "7"），
         /// 空的維持空（＝不顯示等級）。非數字的原樣留著（手改的怪東西不該被吃掉）。純函式。</summary>
         public static string CleanText(string level)
         {

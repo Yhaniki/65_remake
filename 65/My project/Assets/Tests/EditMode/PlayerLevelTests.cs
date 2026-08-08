@@ -21,6 +21,15 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void MaxLevel_Is200()
+        {
+            // 滿級是刻意選的數字(不是曲線推出來的),釘死在這裡：改它就是改遊戲的滿級。
+            Assert.AreEqual(200, PlayerLevel.MaxLevel);
+            Assert.AreEqual(200, PlayerLevel.Clamp(9999));
+            Assert.AreEqual(19900, PlayerLevel.ExpToNext(PlayerLevel.MaxLevel - 1));   // LV199→200 是最後一段
+        }
+
+        [Test]
         public void ParseOptional_ReadsLegacyConfigString_EmptyMeansUnset()
         {
             // 舊 config.ini 的 playerLevel 字串 → profile.json 的 int。留空＝沒設定(0)，不是 LV1 ——

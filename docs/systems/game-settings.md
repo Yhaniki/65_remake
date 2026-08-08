@@ -248,7 +248,7 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 不直接讀 `ProfileDefaults`。內層比外層多一個 `exp`。
 
 每局結算拿到的經驗值（`Sdo.Ruleset.Reward.Experience`，旁觀不給；自由模式只藏名次、獎勵照給）由 `ProfileManager.AddExperience` 加進
-角色自己的 `exp`，跨過門檻自動升等（曲線 `PlayerLevel`：升一級要 `100 × 目前等級`，上限 LV99）。第一次加經驗
+角色自己的 `exp`，跨過門檻自動升等（曲線 `PlayerLevel`：升一級要 `100 × 目前等級`，上限 LV200）。第一次加經驗
 會把共用預設等級落地成這個角色自己的 `level`，之後就跟外層那份脫鉤。等級也回頭餵給結算的 G幣/榮譽獎勵公式
 （`FrontendApp` 每局把 `ProfileManager.Level` 注入 `ScreenGameplay.playerLevel`）。
 
