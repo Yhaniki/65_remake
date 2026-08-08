@@ -254,6 +254,7 @@ namespace Sdo.Game
             _dancerCur = new Vector3[n];
             _dancerScores = new long[n];
             _dancerLeader = Sdo.Ruleset.FormationAssignment.LeaderSlot;
+            _dancerSlots = null;                        // 名次換位:從座位序起跳(開場大家 0 分)
             _dancerDancing = new bool[n];
             _dancerPrevCounts = new Sdo.Ruleset.DanceJudgeCounts[n];
             _dancerTracks = new List<(double tMs, bool on)>[n];
@@ -362,6 +363,15 @@ namespace Sdo.Game
         private int _dancerLeader;
 
         /// <summary>
+        /// 上一幀算出的站位。**兩種名次模式都要有狀態**,而且都是「以上一幀為基礎只做交換」:
+        /// Leader 換的是領隊格與第一名、Full 換的是相鄰名次。接上一幀才會讓「沒在爭名次的人不動」
+        /// —— 每幀從座位序重算的話,被擠掉的恆是座位序第 0 位那位(見 FormationAssignment.StableLeaderSlots)。
+        ///
+        /// null = 從座位序重新開始(開局、切模式、或人數變了 —— 那兩個函式自己會擋長度不符的那份)。
+        /// </summary>
+        private int[] _dancerSlots;
+
+        /// <summary>
         /// 每幀把每位舞者往它該站的格子收斂一步,並把相機錨點設成 slot 0 的占用者。
         ///
         /// 🔴 **搬既有的 transform,不重建角色。** avatar 的 Mesh/Texture/Material 是 per-instance
@@ -379,18 +389,27 @@ namespace Sdo.Game
             // 不是全場的。跨隊搬人在官方也不會發生。所以組隊時每個人待在自己隊的格子裡。
             // (「隊內也依分數換前後排」有可能是官方行為,但我沒有證據,所以不猜。)
             int[] slots;
-            if (TeamMode || !rankBasedFormation)
+            if (TeamMode || rankFormation == Sdo.Ruleset.FormationRankMode.Off)
             {
                 // 「依名次調整站位」關掉時走的也是這一條:每個人整場待在座位序的格子。
                 // (組隊模式本來就是這樣 —— 它的 base slot 已經是隊內位置,見上面那段。)
                 slots = _dancerBaseSlot;
+                _dancerSlots = null;                                        // 切回來時從座位序重新排,不要接一份舊狀態
             }
             else
             {
                 int authoritativeLeader = NetLeaderDancerIndex();
                 _dancerLeader = Sdo.Ruleset.FormationAssignment.ResolveLeader(
                     _dancerScores, _dancerLeader, authoritativeLeader);
-                slots = Sdo.Ruleset.FormationAssignment.SlotForDancer(_dancerScores, _dancerLeader);
+                // 兩種模式都接上一幀的站位再做交換 —— 這樣名次沒變的人一格都不動。
+                if (rankFormation == Sdo.Ruleset.FormationRankMode.Full)
+                    // 完整名次:只交換相鄰名次(帶防抖)。
+                    slots = _dancerSlots = Sdo.Ruleset.FormationAssignment.StableRankSlots(
+                        _dancerScores, _dancerSlots, _dancerLeader);
+                else
+                    // 官方行為:只把第一名與**當下站在領隊格的那位**對調。
+                    slots = _dancerSlots = Sdo.Ruleset.FormationAssignment.StableLeaderSlots(
+                        _dancerSlots, _dancerLeader, n);
             }
 
             for (int i = 0; i < n; i++)

@@ -57,10 +57,12 @@ namespace Sdo.Game
         // 純視覺（不改判定時間 —— 那是 GameplayClock.OffsetMs 的事）。預設 0 = 正中受擊線；用編輯器的打拍測試調。
         public float judgeOffsetY = Sdo.Settings.RoomConfig.judgeOffsetY;
 
-        // 依名次調整站位（config.ini [Room] rankBasedFormation，預設開）：開＝比賽中即時第一名滑進隊形的
-        // 領隊格（中央前排，導播鏡頭的錨點）；關＝每個人整場站在房間座位順序的格子，名次變動不換位。
+        // 依名次調整站位（config.ini [Room] rankBasedFormation，預設 leader＝官方行為）：
+        //   Leader＝比賽中即時第一名滑進隊形的領隊格（中央前排，導播鏡頭的錨點），跟他對調的是當下站在那格的人，
+        //           沒在爭第一名的人不動；Full＝第 k 名站第 k 格；Off＝整場站房間座位順序的格子。
         // 純視覺、每台各自生效（不進網路協定，也不影響判定/分數/名次）。見 TickDancerSlots。
-        public bool rankBasedFormation = Sdo.Settings.RoomConfig.rankBasedFormation;
+        public Sdo.Ruleset.FormationRankMode rankFormation =
+            Sdo.Ruleset.FormationAssignment.ParseMode(Sdo.Settings.RoomConfig.rankFormation);
 
         /// <summary>
         /// 單首歌的 offset（毫秒，<see cref="SongCatalog.Entry.offsetMs"/> ← song_table.csv）：補「這首譜跟音檔沒對齊」。
@@ -3681,7 +3683,11 @@ namespace Sdo.Game
         private double _musicRate = 1.0; // 同上,雙精度版(dsp 換算用)
         private bool _paused;            // \ 暫停:timeScale=0 且音樂 Pause(否則音樂會自己跑掉)
         private double _pauseChartSec;   // 暫停當下的譜面時間(秒)→ 恢復時用它重新錨定音訊
-        private const int SceneLayer = 4;             // the perspective stage layer
+        private const int SceneLayer = 4;             // the perspective stage layer — **人物**(舞者/手部光條/人物特效/星環)
+        // 舞台**背景**(SCENE.MSH、mapobj 道具、場景的人、場景 EFT/火焰/鬼火、燈、招牌)自己一層。分層的唯一理由是
+        // 「舞台背景亮度」(stageBrightness)要能把背景壓到全黑而人物不受影響：SceneCam 先畫這層 → 疊一張乘法暗幕 →
+        // 人物由 SceneCharCam(URP overlay，**不清深度**)畫上去，所以背景與人物的前後遮擋關係照舊。
+        private const int BackdropLayer = 6;          // "StageBackdrop" (TagManager)
         // The default camera is the AUTO-DIRECTOR (decompiled CameraSeq, a CAMERA/*.CDT shot list): a sequence of
         // shots, each a moving .cv dolly shown for its own durationMs, auto-cutting to the next and looping. F2
         // (gameplay cmd 0x3c) cycles AUTO(-1) -> these 6 FIXED cameras (0..5) -> back to AUTO.

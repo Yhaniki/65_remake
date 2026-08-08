@@ -225,8 +225,9 @@ Enhanced OPTION 里的流速开关 **Classic Profile 不出现**。
 │                              #   ＋ COMBO/判定字的大小(comboTextScale/judgeTextScale)、不透明度
 │                              #     (comboTextAlpha/judgeTextAlpha，預設 0.6，不擋住下落中的音符)、
 │                              #     打中彈跳峰值倍率(comboTextPop/judgeTextPop，官方 2.0，1.0=不彈跳)
-│                              #   ＋ 依名次調整站位(rankBasedFormation，預設 1=官方行為：當下第一名滑進
-│                              #     隊形中央前排；0=整場照房間座位順序站，不換位)
+│                              #   ＋ 依名次調整站位(rankBasedFormation，預設 leader=官方行為：只有當下第一名滑
+│                              #     進隊形中央前排，跟他對調的是當下站在那格的人，沒在爭第一名的人不動；
+│                              #     full=第 k 名站第 k 格；off=整場照房間座位順序站。舊檔的 0/1 仍相容)
 │     [Option]                 #   OPTION 對話框：音量、視窗大小/顯示模式/vsync/uiScale/語言、遊戲頁各開關
 ├── keymaps.ini                # ★ 鍵位（KeyMap）
 │     [Lane4]  primary / aux   #   4 鍵打擊鍵位（OPTION 鍵盤頁改完會寫回這裡）

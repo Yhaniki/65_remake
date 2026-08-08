@@ -3,6 +3,28 @@ using System.Collections.Generic;
 namespace Sdo.Ruleset
 {
     /// <summary>
+    /// 名次要怎麼影響站位(config.ini <c>[Room] rankBasedFormation</c>)。
+    /// </summary>
+    public enum FormationRankMode
+    {
+        /// <summary>不看分數:每個人整場站在座位序(組隊時是隊內序)的格子。</summary>
+        Off = 0,
+
+        /// <summary>
+        /// 官方行為(**預設**):只把當下第一名滑進領隊格,跟他對調的是**當下站在那一格的人**,其餘不動。
+        /// 每幀的路徑見 <see cref="FormationAssignment.StableLeaderSlots"/> —— 要接上一幀的站位,
+        /// 不然被擠掉的會恆是座位序第 0 位那位。
+        /// </summary>
+        Leader = 1,
+
+        /// <summary>
+        /// 完整名次:第 k 名站 slot k —— 連中段名次也跟著排(偏離官方,官方只動領隊格那一格)。
+        /// 見 <see cref="FormationAssignment.StableRankSlots"/>。
+        /// </summary>
+        Full = 2,
+    }
+
+    /// <summary>
     /// 「誰站哪一格」——**分數 → 隊形 slot** 的純規則。
     ///
     /// 官方行為(逐字對照 EXE:setup 在 <c>FUN_00471f20</c>、每幀在 <c>FUN_0046dd20</c>):
@@ -46,9 +68,11 @@ namespace Sdo.Ruleset
             => SlotForDancer(scores, TopScorer(scores));
 
         /// <summary>
-        /// 依已選定的 <paramref name="leader"/> 指派 slot。這個 overload 給有防抖狀態的即時多人站位用:
-        /// 分數只決定人數,領隊由 <see cref="SelectLeader"/> 決定,不能在這裡又重算一次最高分。
-        /// leader 不合法時才退回當下最高分。
+        /// 依已選定的 <paramref name="leader"/> 指派 slot。分數只決定人數,領隊由 <see cref="SelectLeader"/>
+        /// 決定,不能在這裡又重算一次最高分。leader 不合法時才退回當下最高分。
+        ///
+        /// ⚠️ **無狀態**版本 —— 每幀都從座位序重來,所以被擠掉的恆是座位序第 0 位那位(沒在爭名次的人也會
+        /// 一直被搬)。這是給一次性計算/測試用的;每幀跑的路徑要用 <see cref="StableLeaderSlots"/>。
         /// </summary>
         public static int[] SlotForDancer(IReadOnlyList<long> scores, int leader)
         {
@@ -71,15 +95,149 @@ namespace Sdo.Ruleset
         }
 
         /// <summary>
-        /// 依「是否啟用名次連動」指派 slot(config.ini 的 <c>rankBasedFormation</c>,見
-        /// <c>StartupConfigSchema</c>)。<paramref name="rankBased"/> 為 false 時**完全不看分數**:
-        /// 每個人整場站在自己座位序的格子(＝<see cref="SeatOrderSlots"/>),名次再怎麼變都不換位。
+        /// 依「名次怎麼影響站位」指派 slot(config.ini 的 <c>rankBasedFormation</c>,見
+        /// <c>StartupConfigSchema</c>)。
+        ///
+        /// <list type="bullet">
+        /// <item><see cref="FormationRankMode.Off"/> —— **完全不看分數**:每個人整場站自己座位序的格子
+        /// (＝<see cref="SeatOrderSlots"/>)。</item>
+        /// <item><see cref="FormationRankMode.Leader"/> —— 官方行為,見上面那個 overload。</item>
+        /// <item><see cref="FormationRankMode.Full"/> —— 第 k 名站 slot k。這個 overload 走的是**無防抖**的
+        /// <see cref="RankSlots"/>(給測試/一次性計算用);每幀跑的路徑要用 <see cref="StableRankSlots"/>,
+        /// 否則分數咬很緊時整排人會每幀抽動。</item>
+        /// </list>
         ///
         /// 這是純視覺偏好,每台各自生效 —— 它不進網路協定,也不影響名次/分數的計算。
-        /// (兩台設定不同時,只是「誰站中間」在各自畫面上不同,分數與判定仍然一致。)
+        /// (兩台設定不同時,只是「誰站哪格」在各自畫面上不同,分數與判定仍然一致。)
         /// </summary>
-        public static int[] SlotForDancer(IReadOnlyList<long> scores, int leader, bool rankBased)
-            => rankBased ? SlotForDancer(scores, leader) : SeatOrderSlots(scores != null ? scores.Count : 0);
+        public static int[] SlotForDancer(IReadOnlyList<long> scores, int leader, FormationRankMode mode)
+        {
+            switch (mode)
+            {
+                case FormationRankMode.Off: return SeatOrderSlots(scores != null ? scores.Count : 0);
+                case FormationRankMode.Full: return RankSlots(scores);
+                default: return SlotForDancer(scores, leader);
+            }
+        }
+
+        /// <summary>
+        /// **完整名次**站位:分數由高到低,第 k 名站 slot k(同分取索引小 —— 決定性,理由同
+        /// <see cref="SlotForDancer(IReadOnlyList{long}, int)"/>)。
+        ///
+        /// 與官方的 <see cref="FormationRankMode.Leader"/> 差在哪:官方只做「第一名 ↔ 領隊格占用者」一次互換,
+        /// 而領隊格的占用者恆是**座位序第 0 位**那位舞者 —— 所以第 2、3 名爭第一名的時候,被擠來擠去的是
+        /// 座位序第 0 位那位(就算他是最後一名),看起來像「沒在爭名次的人也一直在動」。
+        /// 這裡改成完整排序,每個名次固定一格:名次沒變的人就完全不動。
+        /// </summary>
+        public static int[] RankSlots(IReadOnlyList<long> scores)
+        {
+            int n = scores != null ? scores.Count : 0;
+            var slot = new int[n];
+            if (n == 0) return slot;
+
+            // 依分數降序、同分依索引升序排出名次順序(選擇排序 —— n ≤ 6,不值得配置額外容器)。
+            var order = new int[n];
+            for (int i = 0; i < n; i++) order[i] = i;
+            for (int a = 0; a < n - 1; a++)
+                for (int b = a + 1; b < n; b++)
+                    if (scores[order[b]] > scores[order[a]]) { int t = order[a]; order[a] = order[b]; order[b] = t; }
+
+            for (int r = 0; r < n; r++) slot[order[r]] = r;
+            return slot;
+        }
+
+        /// <summary>
+        /// 每幀用的完整名次站位:以**上一幀的站位**為基礎,只在後面那位領先前面那位達
+        /// <see cref="LeaderSwitchLead"/> 分時交換相鄰兩格。
+        ///
+        /// 為什麼不直接每幀跑 <see cref="RankSlots"/>:完整排序讓每個名次都是一格,於是**每一組相鄰名次**
+        /// 都會在分數咬緊時來回互換(官方模式只有領隊格那一格會抖)。所以防抖從「只保護領隊格」擴到全排:
+        /// 一次只做相鄰交換 → 一定還是排列(不會有人重複/漏格),而且反向換回也要再跨過同一條門檻。
+        /// 每幀一次 pass 就夠 —— 站位本來就是 <see cref="SlideStep"/> 慢慢滑過去的,差幾幀看不出來。
+        ///
+        /// <paramref name="prevSlots"/> 傳 null(或長度不符/不是排列 —— 例如中途有人離開)就從座位序重新開始。
+        /// <paramref name="leader"/> 有效時**釘死 slot 0**:線上的第一名是 server 權威的
+        /// (見 <see cref="ResolveLeader"/>),中段名次各台可能因分數的時間落差而不同,但中央前排那格
+        /// (導播鏡頭的錨點)必須每台一致。
+        /// </summary>
+        public static int[] StableRankSlots(IReadOnlyList<long> scores, IReadOnlyList<int> prevSlots, int leader)
+        {
+            int n = scores != null ? scores.Count : 0;
+            if (n == 0) return new int[0];
+
+            var order = OrderFromSlots(prevSlots, n);       // order[名次] = 舞者索引
+
+            // 相鄰交換:後面那位要領先前面那位達門檻才上去。
+            for (int r = 0; r + 1 < n; r++)
+            {
+                long ahead = scores[order[r]], behind = scores[order[r + 1]];
+                if (ahead > long.MaxValue - LeaderSwitchLead) continue;
+                if (behind >= ahead + LeaderSwitchLead) { int t = order[r]; order[r] = order[r + 1]; order[r + 1] = t; }
+            }
+
+            // 權威第一名釘在 slot 0,其餘保持相對順序。
+            if (leader >= 0 && leader < n && order[0] != leader)
+            {
+                int at = 0;
+                for (int r = 1; r < n; r++) if (order[r] == leader) { at = r; break; }
+                for (int r = at; r > 0; r--) order[r] = order[r - 1];
+                order[0] = leader;
+            }
+
+            var slot = new int[n];
+            for (int r = 0; r < n; r++) slot[order[r]] = r;
+            return slot;
+        }
+
+        /// <summary>
+        /// 每幀用的**領隊換位**站位:以**上一幀的站位**為基礎,把 <paramref name="leader"/> 與**當下站在
+        /// 領隊格的那位**互換。其餘的人一格都不動。
+        ///
+        /// 🔴 為什麼一定要吃 <paramref name="prevSlots"/>:無狀態的
+        /// <see cref="SlotForDancer(IReadOnlyList{long}, int)"/> 每幀都先把所有人放回座位序再交換一次,
+        /// 於是「被交換掉的那位」恆是**座位序第 0 位**。三個人時第 2、3 名互爭第一名,每換一次手就把座位序
+        /// 第 0 位那位在 slot1／slot2 之間丟來丟去 —— 就算他分數墊底、名次從頭到尾沒變過。
+        /// 接上一幀之後,交換的對象變成「上一次被擠上領隊格的那位」,爭第一名的兩個人自己換,
+        /// 沒在爭的人完全不動。座位序只在**開局**(大家都 0 分)決定一次初始位置,之後就只認格子。
+        ///
+        /// <paramref name="prevSlots"/> 傳 null(或長度不符/不是排列 —— 例如中途有人離開)就從座位序重新開始。
+        /// <paramref name="leader"/> 不合法(-1、超出範圍)時維持上一幀的站位不動。
+        /// </summary>
+        public static int[] StableLeaderSlots(IReadOnlyList<int> prevSlots, int leader, int count)
+        {
+            if (count <= 0) return new int[0];
+
+            var order = OrderFromSlots(prevSlots, count);   // order[slot] = 站在那一格的舞者
+            var slot = new int[count];
+            for (int s = 0; s < count; s++) slot[order[s]] = s;
+
+            if (count <= 1 || leader < 0 || leader >= count) return slot;
+            if (slot[leader] == LeaderSlot) return slot;    // 第一名已經在領隊格 → 全場不動
+
+            int holder = order[LeaderSlot];                 // 現在站在領隊格的那位,跟第一名對調
+            slot[holder] = slot[leader];
+            slot[leader] = LeaderSlot;
+            return slot;
+        }
+
+        /// <summary>
+        /// 把「舞者 → slot」翻回「名次 → 舞者」。<paramref name="slots"/> 不是 0..n-1 的排列(null、長度變了、
+        /// 有人重複)就回座位序 —— 壞掉的狀態要能自己走回一個合法的排列,不能讓兩個人疊在同一格。
+        /// </summary>
+        private static int[] OrderFromSlots(IReadOnlyList<int> slots, int n)
+        {
+            var order = new int[n];
+            for (int r = 0; r < n; r++) order[r] = -1;
+            if (slots == null || slots.Count != n) return SeatOrderSlots(n);
+
+            for (int i = 0; i < n; i++)
+            {
+                int s = slots[i];
+                if (s < 0 || s >= n || order[s] >= 0) return SeatOrderSlots(n);
+                order[s] = i;
+            }
+            return order;
+        }
 
         /// <summary>座位序站位:舞者 i → slot i。關掉名次連動時的目標格子。</summary>
         public static int[] SeatOrderSlots(int count)
@@ -88,6 +246,40 @@ namespace Sdo.Ruleset
             var slot = new int[count];
             for (int i = 0; i < count; i++) slot[i] = i;
             return slot;
+        }
+
+        /// <summary><c>rankBasedFormation</c> 寫進 config.ini 的三個值。</summary>
+        public const string ModeKeyOff = "off";
+        public const string ModeKeyLeader = "leader";
+        public const string ModeKeyFull = "full";
+
+        /// <summary>
+        /// 讀 config.ini 的 <c>rankBasedFormation</c>。**舊檔的 0/1 要照樣生效** —— 這個鍵在還是布林開關的
+        /// 那幾版寫的就是 0/1,玩家手上的 config.ini 不會自己改(0→Off、1→Leader)。認不出來的值(打錯字、空的)
+        /// → <paramref name="fallback"/>,預設是 <see cref="FormationRankMode.Leader"/>。
+        /// (canonical 值由 <c>RoomConfig.NormalizeRankFormation</c> 產生;兩邊各寫一份同樣的字串,有測試釘住一致。)
+        /// </summary>
+        public static FormationRankMode ParseMode(string s, FormationRankMode fallback = FormationRankMode.Leader)
+        {
+            if (string.IsNullOrEmpty(s)) return fallback;
+            switch (s.Trim().ToLowerInvariant())
+            {
+                case "0": case "off": case "false": case "no": case "seat": return FormationRankMode.Off;
+                case "1": case "on": case "true": case "yes": case "leader": return FormationRankMode.Leader;
+                case "2": case "full": case "rank": return FormationRankMode.Full;
+                default: return fallback;
+            }
+        }
+
+        /// <summary>寫回 config.ini 的字串。</summary>
+        public static string ModeKey(FormationRankMode mode)
+        {
+            switch (mode)
+            {
+                case FormationRankMode.Off: return ModeKeyOff;
+                case FormationRankMode.Full: return ModeKeyFull;
+                default: return ModeKeyLeader;
+            }
         }
 
         /// <summary>

@@ -1277,7 +1277,19 @@
   },
   {
    "k": "cfg.rank_based_formation.help",
-   "v": "In a multiplayer round: on (default, official behaviour) = whoever leads slides to the centre-front slot the camera is anchored on. Off = everyone keeps the room's seat order all round."
+   "v": "How the running score decides where people stand in a multiplayer round. Leader only (default) is the official behaviour: just the current leader slides into the centre-front slot the camera is anchored on, trading places with whoever is standing there - nobody else moves, so a dancer who is not contesting first place stays put. The room's seat order only sets the starting positions. Full rank puts the Kth place in the Kth slot, so the middle places shuffle too. Off keeps the room's seat order all round. Local and visual only: scores, judgement and the result screen are untouched."
+  },
+  {
+   "k": "cfg.rank_based_formation.leader",
+   "v": "Leader only (official)"
+  },
+  {
+   "k": "cfg.rank_based_formation.full",
+   "v": "Full rank order"
+  },
+  {
+   "k": "cfg.rank_based_formation.off",
+   "v": "Keep seat order"
   },
   {
    "k": "cfg.dance_ignore_miss.label",

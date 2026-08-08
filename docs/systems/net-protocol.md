@@ -196,6 +196,17 @@ A 的最新一筆可能是歌曲時間 10000ms 的、B 的是 9600ms 的 —— 
 > 振幅 = 時間落差 × 得分率,跟著 combo 一起長 —— 門檻永遠追不上,調大又會鎖死真正的超車。
 > 細節與取捨(為什麼取樣點用 max−window 而不是 min)寫在 `server/Sdo.Server/Net/LiveLeaderTracker.cs`。
 
+協定裡**只有領隊格是權威的**,這是刻意的:那一格是鏡頭錨點,每台必須一致。至於其餘名次要不要
+也連動站位,是純本機的視覺偏好(config.ini `rankBasedFormation`,見 `docs/systems/game-settings.md`):
+`full` 模式下第 k 名站第 k 格,中段名次由各台自己用手上的分數排(所以可能不一致 —— 那些格子不是
+鏡頭錨點,不一致看不出來),但 slot 0 仍然釘 `leaderUserId`(`FormationAssignment.StableRankSlots`
+的 `leader` 參數)。這個設定不進協定,兩台設不同值也不影響分數/判定/名次。
+
+`leader`(**預設**)模式下每台只認 `leaderUserId`:站位是「第一名 ↔ 當下站在 slot 0 的人」對調,
+其餘不動(`FormationAssignment.StableLeaderSlots`)。因為它接的是**上一幀的站位**,而不是每幀從座位序
+重算,所以兩台的站位一致靠的是「收到的 leader 序列一致」。leader 序列是 server 權威推的,中途插進來
+的旁觀者從座位序起跳、看到的中段站位可能與別台不同 —— 一樣不影響鏡頭錨定的 slot 0。
+
 ### 右側名單也要「同一時刻」
 
 `frames` 的三層規則(上一節)治的是 server 選領隊,**client 畫右側名單有同一個病**:

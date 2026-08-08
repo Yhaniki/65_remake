@@ -61,7 +61,7 @@ namespace Sdo.Tests
             RoomConfig.hasTextPopKeys = false;
             RoomConfig.scrollBaseBpm = 130f;
             RoomConfig.hasScrollBaseBpmKey = false;
-            RoomConfig.rankBasedFormation = true;
+            RoomConfig.rankFormation = RoomConfig.rankFormationLeader;
             RoomConfig.laneCover = RoomConfig.laneCoverNone;
             RoomConfig.laneCoverAmount = 0f;
         }
@@ -115,20 +115,57 @@ namespace Sdo.Tests
         }
 
         [Test]
-        public void RankBasedFormation_Defaults_On_Parses_And_RoundTrips()
+        public void RankBasedFormation_Defaults_To_Official_Parses_And_RoundTrips()
         {
-            Assert.IsTrue(RoomConfig.rankBasedFormation, "預設＝官方行為（第一名滑進中央前排）");
+            Assert.AreEqual(RoomConfig.rankFormationLeader, RoomConfig.rankFormation,
+                            "預設＝官方行為（只有第一名滑進中央前排）");
 
-            RoomConfig.ParseInto("[Room]\nrankBasedFormation=0\n");
-            Assert.IsFalse(RoomConfig.rankBasedFormation);
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=full\n");
+            Assert.AreEqual(RoomConfig.rankFormationFull, RoomConfig.rankFormation);
 
             string ini = RoomConfig.Serialize();
             Reset();
             RoomConfig.ParseInto(ini);
-            Assert.IsFalse(RoomConfig.rankBasedFormation, "關掉之後要存得回來");
+            Assert.AreEqual(RoomConfig.rankFormationFull, RoomConfig.rankFormation, "選了完整名次要存得回來");
+
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=off\n");
+            Assert.AreEqual(RoomConfig.rankFormationOff, RoomConfig.rankFormation);
+        }
+
+        [Test]
+        public void RankBasedFormation_Still_Reads_The_Old_Boolean_Values()
+        {
+            // 🔴 這個鍵在前幾版是布林開關（0/1）。玩家手上的 config.ini 不會自己改，舊值一定要照樣生效
+            //    —— 認不出來就會默默跳回預設，等於偷偷把人家關掉的設定又打開。
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=0\n");
+            Assert.AreEqual(RoomConfig.rankFormationOff, RoomConfig.rankFormation, "舊的 0 ＝ 不換位");
 
             RoomConfig.ParseInto("[Room]\nrankBasedFormation=1\n");
-            Assert.IsTrue(RoomConfig.rankBasedFormation);
+            Assert.AreEqual(RoomConfig.rankFormationLeader, RoomConfig.rankFormation, "舊的 1 ＝ 官方行為");
+
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=2\n");
+            Assert.AreEqual(RoomConfig.rankFormationFull, RoomConfig.rankFormation);
+
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=  FULL \n");
+            Assert.AreEqual(RoomConfig.rankFormationFull, RoomConfig.rankFormation, "大小寫與空白都要吃掉");
+
+            // 手改打錯字 / 空的 → 回預設（官方行為），不是留著一個誰都不認的值。
+            RoomConfig.ParseInto("[Room]\nrankBasedFormation=banana\n");
+            Assert.AreEqual(RoomConfig.rankFormationLeader, RoomConfig.rankFormation);
+        }
+
+        [Test]
+        public void RankBasedFormation_Sanitize_Collapses_To_Canonical_Values()
+        {
+            // 值也可能是別的路徑塞進來的（開場設定面板、舊 ini 的搬遷）→ Sanitize 一律收成 off/leader/full，
+            // 否則 Serialize 會把一個面板選不到的值寫回 config.ini。
+            RoomConfig.rankFormation = "2";
+            RoomConfig.Sanitize();
+            Assert.AreEqual(RoomConfig.rankFormationFull, RoomConfig.rankFormation);
+
+            RoomConfig.rankFormation = "";
+            RoomConfig.Sanitize();
+            Assert.AreEqual(RoomConfig.rankFormationLeader, RoomConfig.rankFormation, "空的 → 預設");
         }
 
         [Test]

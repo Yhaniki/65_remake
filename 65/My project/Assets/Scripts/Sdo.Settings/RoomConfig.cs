@@ -59,12 +59,33 @@ namespace Sdo.Settings
         // 只影響「看起來要打在哪」，不影響判定時間（那是 globalOffsetMs 的事）。同樣用打拍測試調。
         public static float judgeOffsetY = 0f;
 
-        // 依名次調整站位（多人同場）：1=開(預設，官方行為)、0=關。
-        // 開＝比賽中即時第一名會滑進隊形的領隊格（中央前排，也是導播鏡頭的錨點），被擠掉的人退回自己原本的格子；
-        // 關＝所有人整場固定站在「房間座位順序」對應的格子，名次再怎麼變都不換位（鏡頭仍錨在領隊格上的那個人）。
-        // 純視覺偏好、每台各自生效，不影響判定/分數/名次計算；組隊模式本來就不跨隊換位，這個開關對它沒有作用。
-        // 見 FormationAssignment.SlotForDancer 與 ScreenGameplay.TickDancerSlots。
-        public static bool rankBasedFormation = true;
+        // 依名次調整站位（多人同場）：leader(預設，官方行為) / full / off。
+        //   leader＝官方行為：只有當下第一名會滑進隊形的領隊格（中央前排，也是導播鏡頭的錨點），跟他對調的是
+        //           **當下站在那一格的人**；沒在爭第一名的人一格都不動。座位順序只在開局（大家 0 分）
+        //           決定一次初始位置，之後就只認格子。
+        //   full  ＝完整名次：第 k 名站 slot k（連中段名次都跟著排，偏離官方）。
+        //   off   ＝所有人整場固定站在「房間座位順序」對應的格子，名次再怎麼變都不換位。
+        // 純視覺偏好、每台各自生效，不影響判定/分數/名次計算；組隊模式本來就不跨隊換位，這個設定對它沒有作用。
+        // 舊檔寫的 0/1 照樣生效（0→off、1→leader）。見 FormationAssignment 與 ScreenGameplay.TickDancerSlots。
+        public const string rankFormationOff = "off";
+        public const string rankFormationLeader = "leader";
+        public const string rankFormationFull = "full";
+        public static string rankFormation = rankFormationLeader;
+
+        /// <summary>把 <see cref="rankFormation"/> 的值收成三個 canonical 字串之一。
+        /// 舊檔的 0/1（那幾版它是布林開關）與 2 都認；認不出來的（打錯字、空的）→ 預設
+        /// <see cref="rankFormationLeader"/>。
+        /// 🔴 別名清單要與 <c>Sdo.Ruleset.FormationAssignment.ParseMode</c> 一致（Sdo.Settings 不參照 Sdo.Ruleset，
+        /// 兩邊各寫一份 —— FormationAssignmentTests 有一條測試釘住它們同義）。</summary>
+        public static string NormalizeRankFormation(string s)
+        {
+            switch ((s ?? "").Trim().ToLowerInvariant())
+            {
+                case "0": case "off": case "false": case "no": case "seat": return rankFormationOff;
+                case "2": case "full": case "rank": return rankFormationFull;
+                default: return rankFormationLeader;
+            }
+        }
 
         // 外部歌曲（osu / StepMania / Malody）載入總開關：1=載入(預設)、0=完全不碰。關掉的話開機不掃任何歌資料夾、
         // 不建 <ADDON> 那幾個資料夾，開場那張進度條載入畫面也不出現（沒有慢的掃描要等），選歌畫面的「資料夾」頁籤
@@ -588,7 +609,7 @@ namespace Sdo.Settings
                     case "judgeLevel": judgeLevel = ParseInt(val, judgeLevel); break;
                     case "globalOffsetMs": globalOffsetMs = ParseFloat(val, globalOffsetMs); break;
                     case "judgeOffsetY": judgeOffsetY = ParseFloat(val, judgeOffsetY); break;
-                    case "rankBasedFormation": rankBasedFormation = ParseBool(val, rankBasedFormation); break;
+                    case "rankBasedFormation": rankFormation = NormalizeRankFormation(val); break;
                     case "LoadExternalSongs": loadExternalSongs = ParseBool(val, loadExternalSongs); break;
                     case "AdditionalSongFolders": additionalSongFolders = ParseStringList(val); break;
                     case "AddonFolder": addonFolder = NormalizeFolder(val); break;
@@ -699,6 +720,7 @@ namespace Sdo.Settings
             judgeTextAlpha = Mathf.Clamp01(judgeTextAlpha);
             comboTextPop = Mathf.Clamp(comboTextPop, 1f, 4f);                // 1=不彈跳；>4 峰值會衝出面板
             judgeTextPop = Mathf.Clamp(judgeTextPop, 1f, 4f);
+            rankFormation = NormalizeRankFormation(rankFormation);            // 只認 off / leader / full（舊檔的 0/1 也在裡面轉掉）
             laneCover = (laneCover ?? "").Trim();
             if (laneCover.Length == 0) laneCover = laneCoverNone;             // 空＝不使用（清單的第一個選項）
             laneCoverAmount = Mathf.Clamp(laneCoverAmount, 0f, 100f);        // %：0＝沒有擋板，100＝一路蓋到受擊線
@@ -795,10 +817,12 @@ namespace Sdo.Settings
             sb.Append("globalOffsetMs=").Append(globalOffsetMs.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("# 判定線視覺偏移（設計 px，畫面高 600）：完美時機的音符會落在受擊線 + 這個位移處。0 = 正中受擊線。\n");
             sb.Append("judgeOffsetY=").Append(judgeOffsetY.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
-            sb.Append("# 依名次調整站位（多人同場）：1=開(預設，官方行為) 0=關。\n");
-            sb.Append("# 開＝比賽中即時第一名會滑到隊形的中央前排（導播鏡頭錨定的那一格），被擠掉的人退回原位。\n");
-            sb.Append("# 關＝整場固定站在房間座位順序的位置，名次再怎麼變都不換位。純視覺，不影響判定/分數/名次。\n");
-            sb.Append("rankBasedFormation=").Append(B(rankBasedFormation)).Append('\n');
+            sb.Append("# 依名次調整站位（多人同場）：leader=官方行為(預設) full=完整名次 off=不換位。\n");
+            sb.Append("# leader＝只有當下第一名會滑到隊形的中央前排（導播鏡頭錨定的那一格），跟他對調的是當下站在\n");
+            sb.Append("#         那一格的人；沒在爭第一名的人一格都不動。房間座位順序只決定開局的初始位置。\n");
+            sb.Append("# full  ＝第 k 名站第 k 格，連中段名次也跟著排（偏離官方）。\n");
+            sb.Append("# off   ＝整場固定站在房間座位順序的位置。三者都是純視覺，不影響判定/分數/名次。（舊檔 0/1 仍相容）\n");
+            sb.Append("rankBasedFormation=").Append(NormalizeRankFormation(rankFormation)).Append('\n');
             sb.Append("# 外部歌曲（osu/StepMania/Malody）載入總開關：1=載入(預設) 0=完全不碰。\n");
             sb.Append("# 關掉後：開機不掃歌資料夾、不建 ADDON 那幾個資料夾、開場的載入進度畫面不出現，\n");
             sb.Append("# 選歌畫面的「資料夾」頁籤也不再開分類瀏覽面板 —— 只剩官方歌。下面四個設定都只在開著時有意義。\n");

@@ -401,9 +401,14 @@ namespace Sdo.Settings
             });
             f.Add(new ConfigField
             {
-                Key = "rankBasedFormation", Category = CatPlay, Kind = ConfigFieldKind.Toggle,
+                Key = "rankBasedFormation", Category = CatPlay, Kind = ConfigFieldKind.Choice,
                 LabelKey = "cfg.rank_based_formation.label", HelpKey = "cfg.rank_based_formation.help",
-                Get = () => B(RoomConfig.rankBasedFormation), Set = v => RoomConfig.rankBasedFormation = ParseBool(v),
+                Choices = new[] { RoomConfig.rankFormationLeader, RoomConfig.rankFormationFull, RoomConfig.rankFormationOff },
+                ChoiceLabelKeys = new[] { "cfg.rank_based_formation.leader",
+                                          "cfg.rank_based_formation.full",
+                                          "cfg.rank_based_formation.off" },
+                Get = () => RoomConfig.NormalizeRankFormation(RoomConfig.rankFormation),
+                Set = v => RoomConfig.rankFormation = RoomConfig.NormalizeRankFormation(v),
             });
             // 擋板（lane cover）：選哪一張 + 伸出來多長。純本機顯示，不傳給同房的人。
             f.Add(new ConfigField
