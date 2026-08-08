@@ -38,6 +38,53 @@ namespace Sdo.Game
         }
     }
 
+    /// <summary>一份**別人的**模型現在該怎麼上身。</summary>
+    public enum MmdBuildPlan
+    {
+        /// <summary>這一輪什麼都別做。</summary>
+        Skip,
+        /// <summary>直接建 —— 只剩骨架＋布料,實測 11~26 ms。</summary>
+        BuildNow,
+        /// <summary>先分幀預熱(解析 .pmx、一幀一張貼圖、共用材質/mesh),之後才建。</summary>
+        Stage,
+    }
+
+    /// <summary>
+    /// 別人的模型「這一輪直接建,還是先分幀預熱」。
+    ///
+    /// 🔴 <b>一份冷的模型絕對不能在一幀裡建起來。</b>量過(初音):.pmx 解析 89 ms ＋ 共用資產 1438 ms
+    /// (其中十張 2048² PNG 的解碼佔 1401 ms)。本機自己那一個靠開機的 <c>PrewarmCo</c> 把這 1.5 秒藏在
+    /// 載入畫面後面,但**別人的模型是遊戲中途才到的** —— 那時沒有載入畫面,畫面就是整個凍住。
+    ///
+    /// 而且不只是難看:ping 是主執行緒排隊送的,主執行緒凍住 ping 就停,而 server 判死看的是
+    /// 「多久沒收到這條連線的東西」(<c>NetLimits.PingTimeoutMs</c> 15 秒)——
+    /// 一份大模型、一顆慢磁碟、或同時到了好幾份,就足以讓一個還活著的玩家被踢掉。
+    /// (那一半由 <c>NetConnection</c> 的 writer thread 自己補心跳擋掉;這裡是另一半:別讓畫面凍。)
+    ///
+    /// 反過來說,<b>暖的就要當場建</b>:那只剩骨架＋布料(11~26 ms),走預熱只會讓他晚三幀才出現,
+    /// 而同房第二個人穿同一份模型時走的正是這條路。
+    /// </summary>
+    public static class MmdStagingPolicy
+    {
+        /// <param name="modelReady">本機已經有這份模型、而且找得到要載的 .pmx 了嗎
+        /// (還在下載 / 他沒穿 / 我不看別人的 → false)。</param>
+        /// <param name="alreadyStaging">這份模型已經有一趟預熱在跑了嗎(同一包可能有好幾隻在等)。</param>
+        /// <param name="sharedAssetsWarm">這份模型的共用 mesh/材質/貼圖已經在快取裡了嗎
+        /// (<c>MmdAvatar.IsWarm</c>;**還沒解析過 .pmx 就算冷的** —— 解析本身就要幾十到幾百 ms)。</param>
+        /// <param name="onStage">本機現在在舞台上打歌嗎。<b>打歌中一律不開始新的預熱</b> ——
+        /// 即使已經分幀,一張 2048² 的 <c>Apply</c> 仍有 20~30 ms,連續十幾幀正是節奏遊戲最不能有的東西。
+        /// 模型晚幾分鐘上身沒有代價:歌一結束,補建迴圈(0.25 秒一輪)就會把它接上去。
+        /// 反過來,**已經是暖的就照建** —— 那只剩 11~26 ms 的骨架,而且遠端舞者一上台就需要它,
+        /// 拖到歌尾只會讓他整首歌都是 SDO 穿搭。</param>
+        public static MmdBuildPlan For(bool modelReady, bool alreadyStaging, bool sharedAssetsWarm, bool onStage = false)
+        {
+            if (alreadyStaging) return MmdBuildPlan.Skip;   // 已經在預熱了 —— 再排一趟只是重複付錢
+            if (!modelReady) return MmdBuildPlan.Skip;      // 還沒東西可建(這不是失敗,他就先維持 SDO 穿搭)
+            if (sharedAssetsWarm) return MmdBuildPlan.BuildNow;
+            return onStage ? MmdBuildPlan.Skip : MmdBuildPlan.Stage;
+        }
+    }
+
     /// <summary>一具 MMD 身體「多大、布料什麼手感」的那四個數值。</summary>
     public struct MmdRigTuning
     {

@@ -656,10 +656,26 @@ namespace Sdo.Game
         /// </summary>
         public static Texture2D LoadTga(byte[] d, bool sdoRowOrder, bool readable = false)
         {
+            var px = TgaPixels(d, sdoRowOrder, out int w, out int h);
+            if (px == null) return null;
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            tex.SetPixels32(px); tex.Apply(false, !readable);
+            return tex;
+        }
+
+        /// <summary>
+        /// <see cref="LoadTga(byte[], bool, bool)"/> 的**前半**:解到 <c>SetPixels32</c> 要的那個列序為止,
+        /// 不建 <see cref="Texture2D"/>。純 <c>byte[] → Color32[]</c>,**可以在背景執行緒跑** ——
+        /// MMD 模型分幀上身時,「讀檔＋解碼」就是靠這個離開主執行緒的(見 <c>MmdTextureDecode</c>)。
+        /// 解不了(不支援的 TGA 變體)回 null。
+        /// </summary>
+        public static Color32[] TgaPixels(byte[] d, bool sdoRowOrder, out int w, out int h)
+        {
+            w = h = 0;
             if (d == null || d.Length < 18) return null;
             int idLen = d[0], cmapType = d[1], imgType = d[2];
             int cmapLen = d[5] | (d[6] << 8), cmapEntBits = d[7];
-            int w = d[12] | (d[13] << 8), h = d[14] | (d[15] << 8);
+            w = d[12] | (d[13] << 8); h = d[14] | (d[15] << 8);
             int bpp = d[16], desc = d[17];
             if (w <= 0 || h <= 0 || (bpp != 24 && bpp != 32)) return null;
             if (imgType != 2 && imgType != 10) return null;   // only true-colour (uncompressed / RLE)
@@ -709,9 +725,7 @@ namespace Sdo.Game
                 int dst = (reverse ? (h - 1 - y) : y) * w;
                 Array.Copy(lin, y * w, px, dst, w);
             }
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
-            tex.SetPixels32(px); tex.Apply(false, !readable);
-            return tex;
+            return px;
         }
 
         // BC1: 8-byte blocks (c0,c1 565 + 16×2-bit indices). c0>c1 → 4 opaque colours; c0≤c1 → 3 colours + a 4th

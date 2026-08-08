@@ -480,8 +480,21 @@ namespace Sdo.Game
             return list.ToArray();
         }
 
+        /// <summary>
+        /// 這個模型的共用資產(mesh／材質／貼圖)已經在快取裡了嗎 —— 也就是「現在建一隻 rig 只要十幾毫秒,
+        /// 還是要先付整份模型的解碼成本」。
+        ///
+        /// 呼叫端是 <c>MmdAvatarSwap</c>:冷的模型要走背景讀取＋分幀預熱(<c>StageCo</c>),不能在一幀裡整包建起來。
+        /// 判斷條件與 <see cref="GetShared"/> 的快取命中條件必須**一模一樣**(含 <see cref="UseLilToon"/>)——
+        /// 兩邊不一致的話,這裡說「暖的」而 GetShared 決定重建,那一幀就是原本要避開的那個凍結。
+        /// </summary>
+        public static bool IsWarm(PmxLoader pmx)
+            => pmx != null && _sharedByModel.TryGetValue(pmx, out var s) && s.Mesh != null && s.Materials != null
+            && s.Materials.Length > 0 && s.Materials[0] != null && s.LilToon == UseLilToon;
+
         // ---- shared per-model assets: built for the first rig, reused by every rig after it ----
-        private static Shared GetShared(PmxLoader pmx, string textureDir, string searchRoot)
+        private static Shared GetShared(PmxLoader pmx, string textureDir, string searchRoot,
+                                        Vector2[] alphaOverride = null)
         {
             if (_sharedByModel.TryGetValue(pmx, out var s) && s.Mesh != null && s.Materials != null &&
                 s.Materials.Length > 0 && s.Materials[0] != null && s.LilToon == UseLilToon)
@@ -492,7 +505,7 @@ namespace Sdo.Game
 
             var t0 = Time.realtimeSinceStartup;
             s = new Shared();
-            s.Materials = BuildMaterials(pmx, textureDir, s, searchRoot);   // sets s.Hide (+ the sphere/toon/edge lists)
+            s.Materials = BuildMaterials(pmx, textureDir, s, searchRoot, alphaOverride);   // sets s.Hide (+ the sphere/toon/edge lists)
             var tMat = Time.realtimeSinceStartup;
             s.Mesh = BuildMesh(pmx, s);                         // skips the hidden submeshes
             var tMesh = Time.realtimeSinceStartup;
@@ -525,10 +538,26 @@ namespace Sdo.Game
 
         /// <summary>Build this model's shared mesh/materials/textures WITHOUT building a rig — so the cost is paid once,
         /// on the boot loading screen, instead of on the first room/song entry. No-op when they are already cached.
-        /// See <c>MmdAvatarSwap.PrewarmCo</c>.</summary>
-        public static void Prewarm(PmxLoader pmx, string textureDir, string searchRoot = null)
+        /// See <c>MmdAvatarSwap.PrewarmCo</c>.
+        /// <paramref name="alphaOverride"/> ＝ 已經算好的逐材質 alpha 統計(<see cref="MeasureUvForMaterial"/>,
+        /// 分幀上身時在背景執行緒算的);null ＝ 在這裡當場量(每張貼圖一次 <c>GetPixels32</c>)。</summary>
+        public static void Prewarm(PmxLoader pmx, string textureDir, string searchRoot = null,
+                                   Vector2[] alphaOverride = null)
         {
-            if (pmx != null && !string.IsNullOrEmpty(textureDir)) GetShared(pmx, textureDir, searchRoot);
+            if (pmx != null && !string.IsNullOrEmpty(textureDir)) GetShared(pmx, textureDir, searchRoot, alphaOverride);
+        }
+
+        /// <summary>
+        /// 一個材質在**它自己貼到的那塊 UV** 上的 (半透明佔比, 洞佔比) —— <see cref="MeasureMaterialAlpha"/>
+        /// 的內圈,但像素由呼叫端給。純函式(只用到 <c>Mathf</c>/陣列),<b>可以在背景執行緒跑</b>。
+        ///
+        /// 分幀上身走這條:貼圖的像素本來就在背景執行緒上解好了,順手把統計也算完 ——
+        /// 否則主執行緒得對每一張 2048² 再做一次 <c>GetPixels32</c>(一張 16 MB 的複製)。
+        /// </summary>
+        public static Vector2 MeasureUvForMaterial(Color32[] px, int w, int h, PmxLoader pmx, int materialIndex)
+        {
+            if (pmx == null || materialIndex < 0 || materialIndex >= pmx.Materials.Count) return Vector2.zero;
+            return MeasureUvRegion(px, w, h, pmx, pmx.Materials[materialIndex]);
         }
 
         /// <summary>Decode ONE of the model's textures into the shared cache. The measured cost of building a model's
@@ -545,6 +574,17 @@ namespace Sdo.Game
 
         /// <summary>How many textures <see cref="PrewarmTexture"/> can be called for (＝ the model's texture table).</summary>
         public static int TextureCount(PmxLoader pmx) => pmx?.TexturePaths?.Length ?? 0;
+
+        /// <summary>
+        /// 這個模型的第 <paramref name="index"/> 張貼圖在磁碟上的路徑(找不到 null)。
+        /// <b>主執行緒專用</b> —— 它會在第一次呼叫時建立整包的貼圖索引(寫靜態字典)。
+        /// 分幀上身要先在主執行緒把整份清單解出來,才能把「讀檔＋解碼」整段丟到背景執行緒。
+        /// </summary>
+        public static string TexturePathAt(PmxLoader pmx, int index, string textureDir, string searchRoot)
+        {
+            if (pmx?.TexturePaths == null || index < 0 || index >= pmx.TexturePaths.Length) return null;
+            return ResolveTexturePath(textureDir, (pmx.TexturePaths[index] ?? "").Replace('\\', '/'), searchRoot);
+        }
 
         // ---- mesh ----
         private static Mesh BuildMesh(PmxLoader pmx, Shared sh)
@@ -589,7 +629,8 @@ namespace Sdo.Game
         // ---- materials (MMD shader: authored alpha chooses visibility; texture alpha chooses opaque/cutout/blend) ----
         // Built with every effect ON; MmdAvatarSwap re-applies config.ini's [Mmd] toggles to each rig right after it is built,
         // and since the materials are shared those writes land on the same materials for all of them.
-        private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh, string searchRoot)
+        private static Material[] BuildMaterials(PmxLoader pmx, string dir, Shared sh, string searchRoot,
+                                                 Vector2[] alphaOverride = null)
         {
             // 兩個著色後端共用這一整段：貼圖是同一批、alpha 分類是同一套、三個顯示開關記的也是同一份清單。
             // 分岔只在「拿哪支 shader、把這些值寫進哪些屬性」——見 MmdLilToon。
@@ -603,7 +644,12 @@ namespace Sdo.Game
             var shader = Shader.Find("Sdo/MmdModel") ?? Shader.Find("Unlit/Texture");
             var mats = new Material[pmx.Materials.Count];
             var _hide = sh.Hide = new bool[pmx.Materials.Count];
-            var alpha = MeasureMaterialAlpha(pmx, dir, searchRoot);   // 逐材質、只看它自己的 UV 區(見 MeasureMaterialAlpha)
+            // 逐材質、只看它自己的 UV 區(見 MeasureMaterialAlpha)。
+            // alphaOverride ＝ 分幀上身時**在背景執行緒**就順手算好的那一份(見 MmdAvatarSwap.StageCo):
+            // 走這條就不必在主執行緒上對每一張 2048² 做 GetPixels32(一張 16 MB 的複製)。
+            var alpha = alphaOverride != null && alphaOverride.Length == pmx.Materials.Count
+                      ? alphaOverride
+                      : MeasureMaterialAlpha(pmx, dir, searchRoot);
             for (int i = 0; i < pmx.Materials.Count; i++)
             {
                 var pm = pmx.Materials[i];
@@ -865,22 +911,71 @@ namespace Sdo.Game
             // The same model is now built several times over (stage dancer, room walker, room 頭貼, 結算頭貼, both gender
             // previews) — decode each texture once and share it, or every extra rig re-reads the whole texture set.
             if (_texCache.TryGetValue(path, out var hit) && hit != null) return hit;
-            byte[] b; try { b = File.ReadAllBytes(path); } catch { return null; }
-            string ext = Path.GetExtension(path).ToLowerInvariant();
+            return CommitTexture(ReadAndDecode(path));   // 同步版:讀+解+建,全在主執行緒上
+        }
+
+        /// <summary>一張貼圖「讀完、解完、還沒變成 <see cref="Texture2D"/>」的中間狀態。</summary>
+        public sealed class TexturePrep
+        {
+            public string Path;
+            /// <summary>解好的像素。null ＝ 這個格式(JPG / 16-bit PNG / 隔行 PNG)只有主執行緒的
+            /// <c>LoadImage</c> 解得動,位元組留在 <see cref="Encoded"/> 裡。</summary>
+            public MmdDecodedImage Img;
+            /// <summary>還沒解的原始位元組(<see cref="Img"/> 為 null 時才有)。</summary>
+            public byte[] Encoded;
+        }
+
+        /// <summary>
+        /// 一張貼圖的「讀檔 ＋ 解碼」—— <b>這個函式可以在背景執行緒上跑</b>(沒有任何 UnityEngine 呼叫,
+        /// <see cref="Color32"/> 只是 struct)。分幀上身的重點就在這裡:主執行緒剩下的只有
+        /// <see cref="CommitTexture"/> 的 <c>SetPixels32 + Apply</c>。
+        ///
+        /// 🔴 <b>路徑必須先在主執行緒解好</b>(<see cref="ResolveTexturePath"/>)—— 那條路會建立
+        /// 整包的貼圖索引並寫進靜態字典,在背景執行緒上做就是資料競爭。
+        /// </summary>
+        public static TexturePrep ReadAndDecode(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            byte[] b;
+            try { b = File.ReadAllBytes(path); } catch { return null; }
+            var img = MmdTextureDecode.TryDecode(b, Path.GetExtension(path));
+            return new TexturePrep { Path = path, Img = img, Encoded = img == null ? b : null };
+        }
+
+        /// <summary>
+        /// <see cref="ReadAndDecode"/> 的另一半 —— <b>只能在主執行緒</b>:把像素變成 Texture2D 放進共用快取。
+        /// 已經在快取裡就直接回那一份(分幀路徑與同步路徑可能都碰到同一張)。
+        /// </summary>
+        public static Texture2D CommitTexture(TexturePrep prep)
+        {
+            if (prep == null || string.IsNullOrEmpty(prep.Path)) return null;
+            if (_texCache.TryGetValue(prep.Path, out var cached) && cached != null) return cached;
+
             Texture2D tex = null;
             try
             {
-                // sdoRowOrder:false ＝ 與 LoadImage 同向(見上面);readable:true ＝ 留著 CPU 那一份,
-                // MeasureMaterialAlpha 要 GetPixels32 才分得出不透明/裁切/半透明(不可讀 → 整批誤判成不透明)。
-                if (ext == ".tga") tex = DdsLoader.LoadTga(b, sdoRowOrder: false, readable: true);
-                else if (b.Length > 2 && b[0] == 'B' && b[1] == 'M') tex = DecodeBmp(b);
-                else
+                if (prep.Img != null)
                 {
+                    var img = prep.Img;
+                    // 不透明的 PNG 建 RGB24 —— 與 LoadImage 對同一個檔的選擇一致(2048² 省 4 MB)。
+                    // TGA/BMP 一律 RGBA32(原本就是),別在這裡「順手統一」。
+                    var fmt = img.ForceRgba32 || img.HasAlpha ? TextureFormat.RGBA32 : TextureFormat.RGB24;
+                    var t = new Texture2D(img.Width, img.Height, fmt, img.MipChain) { wrapMode = img.Wrap };
+                    t.SetPixels32(img.Pixels);
+                    // readable(不 makeNoLongerReadable):MeasureMaterialAlpha 要 GetPixels32 才分得出
+                    // 不透明/裁切/半透明,不可讀就整批誤判成不透明。
+                    t.Apply(img.MipChain, false);
+                    tex = t;
+                }
+                else if (prep.Encoded != null)
+                {
+                    // 解不動的格式(JPG…)→ 原本那條路,主執行緒的 LoadImage。
                     var t = new Texture2D(2, 2, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Repeat };
-                    tex = t.LoadImage(b) ? t : null;
+                    tex = t.LoadImage(prep.Encoded) ? t : null;
                 }
             }
             catch { return null; }
+
             if (tex != null)
             {
                 // Pin it: SceneManager.LoadScene (結算「重玩」走那條) runs Resources.UnloadUnusedAssets, and a
@@ -889,10 +984,14 @@ namespace Sdo.Game
                 // 「換場景又要重讀一次」that this cache exists to prevent. There is one set per installed model and
                 // it is meant to live for the process, so never unloading it is the intent, not a leak.
                 tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
-                _texCache[path] = tex;
+                _texCache[prep.Path] = tex;
             }
             return tex;
         }
+
+        /// <summary>這張貼圖已經解好在共用快取裡了嗎(分幀路徑拿它跳過重複的工作)。</summary>
+        public static bool IsTextureCached(string path)
+            => !string.IsNullOrEmpty(path) && _texCache.TryGetValue(path, out var t) && t != null;
 
         /// <summary>
         /// PMX 裡的一條貼圖路徑 → 磁碟上真正的檔案(找不到 null)。三段:
@@ -978,25 +1077,6 @@ namespace Sdo.Game
             SdoLog.Note("mmd", $"[mmd] 貼圖索引 '{searchRoot}': {n} 個圖檔");
             _packIndex[searchRoot] = index;
             return index;
-        }
-
-        private static Texture2D DecodeBmp(byte[] d)
-        {
-            if (d == null || d.Length < 54 || d[0] != 'B' || d[1] != 'M') return null;
-            int dataOff = BitConverter.ToInt32(d, 10), w = BitConverter.ToInt32(d, 18), h = BitConverter.ToInt32(d, 22);
-            int bpp = BitConverter.ToUInt16(d, 28), comp = BitConverter.ToInt32(d, 30);
-            if (comp != 0 || (bpp != 24 && bpp != 32) || w <= 0 || h == 0) return null;
-            bool topDown = h < 0; int H = Mathf.Abs(h), bpe = bpp / 8, stride = ((w * bpe + 3) / 4) * 4;
-            if (dataOff + stride * H > d.Length) return null;
-            var px = new Color32[w * H];
-            for (int y = 0; y < H; y++)
-            {
-                int srcRow = dataOff + (topDown ? (H - 1 - y) : y) * stride, dstRow = y * w;
-                for (int x = 0; x < w; x++) { int s = srcRow + x * bpe; byte a = bpe == 4 ? d[s + 3] : (byte)255; px[dstRow + x] = new Color32(d[s + 2], d[s + 1], d[s], a); }
-            }
-            var tex = new Texture2D(w, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat };
-            tex.SetPixels32(px); tex.Apply(false);
-            return tex;
         }
 
         private static void SetLayer(GameObject go, int layer) { go.layer = layer; foreach (Transform c in go.transform) SetLayer(c.gameObject, layer); }

@@ -210,6 +210,11 @@ namespace Sdo.Game
             var go = new GameObject("MmdAvatarSwap");
             DontDestroyOnLoad(go);
             _inst = go.AddComponent<MmdAvatarSwap>();
+            // 上一個實例(播放模式重進 / 測試)身上的預熱協程跟著它一起沒了 —— 沒清的話那些 packId
+            // 會永遠留在集合裡,而 Staging() 會讓那幾隻角色**再也**接不上模型,畫面上是安靜的沒反應。
+            _staging.Clear();
+            _stageQueue.Clear();
+            _stageBusy = false;
             return _inst;
         }
 
@@ -272,7 +277,9 @@ namespace Sdo.Game
             Log($"[mmd] registered dancer '{avatar.name}'"
                 + (reg.Remote ? " (別人的模型 " + Short(reg.Pack) + ")" : " (我自己選的模型)")
                 + $" — now {inst._regs.Count} swappable");
-            inst.Apply(reg);
+            // 遠端的走分幀那條 —— 進房間時同時有三、四個人穿著本機沒預熱過的模型,一隻一隻同步建
+            // 會把進房那一幀拉成好幾秒(見 StageCo)。本機自己那個開機就預熱過了,直接建。
+            if (reg.Remote) inst.ApplyRemote(reg); else inst.Apply(reg);
         }
 
         /// <summary>packId 的短寫法(log 用) —— 完整的 40 字在一行 log 裡只會擋住真正要看的東西。</summary>
@@ -306,14 +313,268 @@ namespace Sdo.Game
             if (_inst == null || string.IsNullOrEmpty(packId)) return;
             MmdModelStore.Forget(MmdModelStore.NetDirFor(packId));
             _inst._regs.RemoveAll(r => r.Avatar == null);
-            int n = 0;
             foreach (var r in _inst._regs)
+                if (r.Remote && string.Equals(r.Pack, packId, StringComparison.Ordinal)) r.Failed = false;
+            _inst.BeginStaging(packId, "剛下載完");
+        }
+
+        // ---------------------------------------------------------------- 別人的模型:背景讀取 + 分幀上身
+        //
+        // 🔴 **一個冷的模型絕對不能在一幀裡建起來。** 量過(初音):.pmx 解析 89 ms + 共用資產 1438 ms
+        // (其中十張 2048² PNG 的解碼就佔 1401 ms)。本機自己那個模型靠開機的 PrewarmCo 把這 1.5 秒
+        // 藏在載入畫面後面,但**別人的模型是遊戲中途才到的** —— 那時沒有載入畫面,整個畫面就是凍住。
+        //
+        // 而且它不只是難看:ping 是主執行緒排隊的,主執行緒凍住 ping 就停,server 的 SweepDeadConnections
+        // 看的是「多久沒收到這條連線的東西」(PingTimeoutMs 15 秒)—— 一份大模型、一顆慢磁碟、或同時
+        // 到了好幾份,就會讓一個還活著的玩家被踢掉。(那一半已經在 NetConnection 的 writer thread 補上
+        // 心跳擋掉了;這裡是問題的另一半:別讓畫面凍。)
+        //
+        // 分成「背景做得到的」與「非主執行緒不可的」兩半:
+        //   • 背景(Task.Run):讀 .pmx ＋ 解析、讀每一張貼圖 ＋ 解碼成像素(見 MmdTextureDecode ——
+        //     PNG 自己解就是為了這個,Texture2D.LoadImage 只能在主執行緒)。
+        //   • 主執行緒:SetPixels32 ＋ Apply(mipmap ＋ 上傳 GPU)一幀一張 → 共用材質/mesh → 一幀接一隻角色。
+        // 剩在主執行緒的每張約 20~30 ms,而不是 140 ms;整包也不再是一次 1.5~3 秒的凍結。
+        //
+        // 開機那條(PrewarmCo)刻意用**時間預算**而不是一幀一張,因為開機那幾幀本來就長達 500 ms
+        // (掃歌),讓一幀的代價是半秒;房間裡的幀是 16 ms,讓一幀幾乎免費 —— 兩邊的取捨相反。
+
+        /// <summary>正在(或排隊等著)分幀預熱的 packId。<see cref="Update"/> 的補建迴圈與 <see cref="Register"/>
+        /// 都要跳過它們,否則它們會搶在協程前面把整包建起來 —— 那正是要避開的那一幀。</summary>
+        private static readonly HashSet<string> _staging = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>還沒輪到的預熱。<b>同時只跑一趟</b> —— 背景執行緒會讀 <c>MmdAvatar</c> 的貼圖索引/快取,
+        /// 兩趟並行就是資料競爭;而且兩份模型同時解碼只會讓每一幀更長,不會更快。</summary>
+        private static readonly List<string> _stageQueue = new List<string>();
+        private static bool _stageBusy;
+
+        /// <summary>這一隻在等的模型正在預熱中嗎(＝這一輪別碰它)。</summary>
+        private static bool Staging(Reg r) => r.Remote && !string.IsNullOrEmpty(r.Pack) && _staging.Contains(r.Pack);
+
+        /// <summary>
+        /// <b>本機現在在舞台上打歌嗎</b>(由 <c>FrontendApp</c> 每幀寫入)。
+        ///
+        /// 打歌中一律不開始新的預熱:即使已經分幀,一張 2048² 的 <c>Apply</c> 仍有 20~30 ms,
+        /// 連續十幾幀就是節奏遊戲最不能有的東西。模型晚幾分鐘上身完全沒有代價 —— 歌一結束,
+        /// 補建迴圈(0.25 秒一輪)就會把它接上去。<c>NetModelTransfer</c> 也讀這個值來決定
+        /// 「這時候不要開新的傳輸」。
+        /// </summary>
+        public static bool OnStage { get; set; }
+
+        /// <summary>遠端角色要上身了 —— 決策在 <see cref="MmdStagingPolicy"/>(純函式),這裡只執行。</summary>
+        private void ApplyRemote(Reg r)
+        {
+            ResolveModel(r, out _, out string pmxPath, out _);
+            bool warm = pmxPath != null && _parsed.TryGetValue(pmxPath, out var pmx) && MmdAvatar.IsWarm(pmx);
+            switch (MmdStagingPolicy.For(pmxPath != null, Staging(r), warm, OnStage))
             {
-                if (r.Mmd != null || !r.Remote || !string.Equals(r.Pack, packId, StringComparison.Ordinal)) continue;
-                r.Failed = false;
-                if (_inst.Apply(r)) n++;
+                case MmdBuildPlan.BuildNow: Apply(r); break;
+                case MmdBuildPlan.Stage: BeginStaging(r.Pack, "第一次要用這份模型"); break;
             }
-            if (n > 0) Log($"[mmd] 模型 {Short(packId)} 裝好了 → {n} 隻角色當場換上(沒有重建)");
+        }
+
+        /// <summary>這一包建不起來 —— 在等它的那幾隻就停在自己的 SDO 穿搭上(那是正確的降級),
+        /// 而且**不再重試**:補建迴圈每 0.25 秒回頭問一次,不標死就是每 0.25 秒重跑一次同樣的失敗。</summary>
+        private void FailPack(string packId, string why)
+        {
+            int n = 0;
+            foreach (var r in _regs)
+                if (r.Remote && string.Equals(r.Pack, packId, StringComparison.Ordinal)) { r.Failed = true; n++; }
+            _lastError = why;
+            Log($"[mmd] ✗ 模型 {Short(packId)} 用不了({why})—— {n} 隻角色維持 SDO 穿搭,不再重試");
+            Debug.LogWarning("[mmd] " + why);
+        }
+
+        private void BeginStaging(string packId, string why)
+        {
+            if (string.IsNullOrEmpty(packId) || !_staging.Add(packId)) return;
+            Log($"[mmd] 模型 {Short(packId)} 排入預熱({why})—— 期間那幾隻維持 SDO 穿搭");
+            _stageQueue.Add(packId);
+            if (!_stageBusy) StartCoroutine(StagePumpCo());
+        }
+
+        /// <summary>一次跑一趟預熱,跑完接下一個(見 <see cref="_stageQueue"/> 為什麼不能並行)。</summary>
+        private System.Collections.IEnumerator StagePumpCo()
+        {
+            _stageBusy = true;
+            try
+            {
+                while (_stageQueue.Count > 0)
+                {
+                    string pack = _stageQueue[0];
+                    _stageQueue.RemoveAt(0);
+                    yield return StageCo(pack);
+                }
+            }
+            finally { _stageBusy = false; }
+        }
+
+        private System.Collections.IEnumerator StageCo(string packId)
+        {
+            float t0 = Time.realtimeSinceStartup;
+            int textures = 0;
+            try
+            {
+                yield return null;   // 先讓「搬檔案/驗 packId」那一幀過去
+
+                // 這一包要載哪一個 .pmx —— 隨便一隻在等它的角色都問得出來(同一個 packId 就是同一份)。
+                string dir = null, pmxPath = null, root = null;
+                _regs.RemoveAll(r => r.Avatar == null);
+                foreach (var r in _regs)
+                {
+                    if (!r.Remote || r.Mmd != null || !string.Equals(r.Pack, packId, StringComparison.Ordinal)) continue;
+                    ResolveModel(r, out dir, out pmxPath, out root);
+                    if (pmxPath != null) break;
+                }
+                if (pmxPath == null)
+                {
+                    Log($"[mmd] 模型 {Short(packId)} 預熱取消 —— 現在沒有人在等它(他走了 / 換了模型)");
+                    yield break;
+                }
+
+                // ① 讀 .pmx ＋ 解析 —— 整段在背景執行緒(PmxLoader 是純 managed,不碰 engine)。
+                var parse = ParsePmxAsync(pmxPath);
+                while (!parse.IsCompleted) yield return null;
+                var pmx = TakeParsed(pmxPath, parse);
+                if (pmx == null)
+                {
+                    // 🔴 一定要把在等它的那幾隻標成 Failed。不標的話,補建迴圈每 0.25 秒會看到
+                    // 「檔案在、但不是暖的」→ 再排一趟預熱 → 又解析失敗,永遠繞下去
+                    // (舊版是 Apply 自己踩到解析失敗當場標的,搬到協程之後這一步就漏了)。
+                    FailPack(packId, "解析不了 " + pmxPath);
+                    yield break;
+                }
+
+                // ② 貼圖:路徑要在主執行緒解(會建整包的貼圖索引,見 MmdAvatar.TexturePathAt),
+                //    「讀檔 ＋ 解碼成像素 ＋ 逐材質的 alpha 統計」丟背景,
+                //    主執行緒只留 SetPixels32 ＋ Apply,一幀一張。
+                textures = MmdAvatar.TextureCount(pmx);
+                var pathOf = new string[textures];
+                for (int i = 0; i < textures; i++) pathOf[i] = MmdAvatar.TexturePathAt(pmx, i, dir, root);
+
+                // 這個檔被哪幾個材質用到 —— 條件與 MeasureMaterialAlpha 一字不差(被藏起來的材質不量、
+                // 沒貼圖的不量),否則背景算出來的那份與主執行緒那份會在少數材質上不一致。
+                var users = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+                for (int m = 0; m < pmx.Materials.Count; m++)
+                {
+                    var pm = pmx.Materials[m];
+                    if (pm.Diffuse.a < 0.05f) continue;
+                    if (pm.TextureIndex < 0 || pm.TextureIndex >= textures) continue;
+                    string p = pathOf[pm.TextureIndex];
+                    if (p == null) continue;
+                    if (!users.TryGetValue(p, out var list)) users[p] = list = new List<int>();
+                    list.Add(m);
+                }
+
+                var want = new List<string>();   // 要讀的檔(去重、跳過已在快取的)
+                for (int i = 0; i < textures; i++)
+                {
+                    string p = pathOf[i];
+                    if (p != null && !MmdAvatar.IsTextureCached(p) && !want.Contains(p)) want.Add(p);
+                }
+
+                var alpha = new Vector2[pmx.Materials.Count];
+                var decoded = new HashSet<string>(StringComparer.Ordinal);   // 這一趟真的在背景解出像素的
+                if (want.Count > 0)
+                {
+                    var ready = new System.Collections.Concurrent.ConcurrentQueue<MmdAvatar.TexturePrep>();
+                    var read = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        foreach (var p in want)
+                        {
+                            MmdAvatar.TexturePrep prep = null;
+                            try { prep = MmdAvatar.ReadAndDecode(p); } catch { }
+                            // 像素就在手上 → 順手把用到它的材質的 alpha 統計算完,
+                            // 免得主執行緒等一下對每張 2048² 再做一次 GetPixels32(一張 16 MB 的複製)。
+                            if (prep != null && prep.Img != null && users.TryGetValue(p, out var mats))
+                                foreach (int mi in mats)
+                                    alpha[mi] = MmdAvatar.MeasureUvForMaterial(prep.Img.Pixels,
+                                                                               prep.Img.Width, prep.Img.Height, pmx, mi);
+                            ready.Enqueue(prep);
+                        }
+                    });
+                    // 背景在解下一張的同時,主執行緒把上一張上傳掉 —— 兩邊重疊,不是接力。
+                    int done = 0;
+                    while (done < want.Count)
+                    {
+                        if (ready.TryDequeue(out var prep))
+                        {
+                            done++;
+                            // 解不動的格式(JPG…)只能在主執行緒 LoadImage —— 那張的 alpha 統計就沒算到。
+                            if (prep != null && prep.Img != null) decoded.Add(prep.Path);
+                            MmdAvatar.CommitTexture(prep);
+                        }
+                        else if (read.IsCompleted && ready.IsEmpty) break;   // 背景掛了/提早結束
+                        yield return null;
+                    }
+                    while (!read.IsCompleted) yield return null;
+                }
+
+                // 🔴 只要有一張用得到的貼圖沒在背景算到,**整份統計就不能用**。半份 alpha 統計 =
+                // 那幾個材質被當成全不透明,而那正是「紗裙/頭髮變成硬邊」那一類最難查的症狀
+                // (見 MmdAvatar.MeasureMaterialAlpha 的說明)。寧可退回主執行緒整份重量一次。
+                bool alphaComplete = true;
+                foreach (var key in users.Keys) if (!decoded.Contains(key)) { alphaComplete = false; break; }
+
+                MmdAvatar.Prewarm(pmx, dir, root, alphaComplete ? alpha : null);   // 材質 + mesh(貼圖此時全在快取裡)
+                // 同上的防繞圈:預熱完了卻還不算暖(材質建不出來),那就是這份模型有問題,
+                // 不標的話下一輪又會被判成「冷的」再排一趟。
+                if (!MmdAvatar.IsWarm(pmx)) { FailPack(packId, "共用材質/mesh 建不起來"); yield break; }
+                yield return null;
+            }
+            finally { _staging.Remove(packId); }
+
+            // 預熱完了才把身體接上去,一幀一隻(rig ＋ 布料,實測 11~26 ms)。
+            int n = 0;
+            for (int i = 0; i < _regs.Count; i++)
+            {
+                var r = _regs[i];
+                if (r.Avatar == null || r.Mmd != null || !r.Remote) continue;
+                if (!string.Equals(r.Pack, packId, StringComparison.Ordinal)) continue;
+                if (Apply(r)) n++;
+                yield return null;
+            }
+            Log($"[mmd] 模型 {Short(packId)} 上身完成({(Time.realtimeSinceStartup - t0) * 1000f:F0} ms," +
+                $"{textures} 張貼圖走背景解碼)→ {n} 隻角色換上(沒有重建)");
+        }
+
+        /// <summary>
+        /// 在背景執行緒讀 .pmx 並解析。已經解析過就回一個已完成的工作(<c>_parsed</c> 快取)。
+        ///
+        /// <see cref="PmxLoader"/> 是純 managed 的解析器(只用到 <c>Vector3</c> 這類 struct),
+        /// 所以整段可以離開主執行緒 —— 實測初音 89 ms,大一點的模型好幾百。
+        /// </summary>
+        private static System.Threading.Tasks.Task<PmxLoader> ParsePmxAsync(string pmxPath)
+        {
+            if (_parsed.TryGetValue(pmxPath, out var hit))
+                return System.Threading.Tasks.Task.FromResult(hit);
+            if (_parseFailed.Contains(pmxPath))
+                return System.Threading.Tasks.Task.FromResult<PmxLoader>(null);
+            return System.Threading.Tasks.Task.Run(() =>
+            {
+                try { return PmxLoader.Load(File.ReadAllBytes(pmxPath)); }
+                catch { return null; }
+            });
+        }
+
+        /// <summary>背景解析的結果收進快取(<b>主執行緒</b>:<c>_parsed</c>/<c>_parseFailed</c> 只有它在寫)。</summary>
+        private static PmxLoader TakeParsed(string pmxPath, System.Threading.Tasks.Task<PmxLoader> task)
+        {
+            PmxLoader pmx = null;
+            try { pmx = task.Result; } catch { pmx = null; }
+            if (pmx == null)
+            {
+                _parseFailed.Add(pmxPath);
+                _status = "parse fail";
+                _lastError = "read/parse fail: " + pmxPath;
+                return null;
+            }
+            _parsed[pmxPath] = pmx;
+            _status = "parsed";
+            _lastError = "";
+            Log($"[mmd] parsed {Path.GetFileName(pmxPath)} 在背景執行緒上 " +
+                $"({pmx.VertexCount} verts, {pmx.Materials.Count} mats, {pmx.Bones.Count} bones, " +
+                $"{pmx.RigidBodies.Count} 剛體 → {(pmx.RigidBodies.Count > 0 ? "用模型自帶物理" : "退回內建碰撞體")})");
+            return pmx;
         }
 
         /// <summary>
@@ -484,8 +745,11 @@ namespace Sdo.Game
                 if (r.Mmd != null) { if (probe) HideSdoBody(r); else EnforceSdoHidden(r); continue; }
                 if (r.Failed || !r.Avatar.gameObject.activeInHierarchy) continue;
                 if (r.Remote && !probe) continue;  // 遠端那條要 Directory.Exists → 節流(本機那條每幀都跑)
+                // 別人的模型走分幀那條(它自己會判斷「還沒到」「正在預熱」「已經是暖的」)——
+                // 在這裡直接 Apply 的話,一份冷的模型就會整包建在這一幀裡,那正是要避開的凍結。
+                if (r.Remote) { ApplyRemote(r); continue; }
                 ResolveModel(r, out _, out string want, out _);
-                if (want == null) continue;        // 沒東西可建(沒選模型 / 別人沒穿 / 他的模型還沒到)
+                if (want == null) continue;        // 沒東西可建(沒選模型 / 他的模型還沒到)
                 Apply(r);
             }
         }
@@ -764,7 +1028,9 @@ namespace Sdo.Game
             foreach (var r in inst._regs)
             {
                 if (which != null && !which(r)) continue;
-                inst.Apply(r);
+                // 遠端的一律走分幀那條:換著色後端(lilToon)會讓每一份模型的共用材質同時作廢,
+                // 同房四個人四份模型在這裡一起重建就是好幾秒的凍結。
+                if (r.Remote) inst.ApplyRemote(r); else inst.Apply(r);
             }
         }
 

@@ -167,6 +167,13 @@ namespace Sdo.UI.Core
             // 歌永遠優先(見類別說明)。
             if (NetSongTransfer.Active) return;
 
+            // 🔴 **本機在舞台上打歌時不開新的傳輸。** 位元組本身是背景執行緒在搬,但收尾那一段不是:
+            // 驗 packId、搬檔案就位、然後把模型讀上身(一張 2048² 貼圖上傳 20~30 ms)——
+            // 全都落在打歌的幀上。模型晚幾分鐘到完全沒有代價,節奏遊戲掉幀有。
+            // 已經在傳的那一趟**不擋**(上面 _fx 那段先跑完):半路停下只會撞停滯逾時,
+            // 白白重來一趟。收模型這件事就只在房間/大廳做。
+            if (MmdAvatarSwap.OnStage) return;
+
             var net = ctx.Net;
             if (!net.IsConnected || !net.InRoom) return;
 
@@ -296,6 +303,9 @@ namespace Sdo.UI.Core
             Log("開始下載別人的模型 " + want + " → " + dest);
         }
 
+        /// <summary>正在背景重算 packId 的那一趟(見 <see cref="FinishDownload"/>)。</summary>
+        private static System.Threading.Tasks.Task<string> _verify;
+
         /// <summary>
         /// 下載的位元組都落地了 → 驗一次它真的是一份模型,然後把在等它的角色接上去。
         ///
@@ -310,7 +320,19 @@ namespace Sdo.UI.Core
             string tmp = fx.DestFolder;                     // 位元組落在暫存目錄
             string dir = MmdModelStore.NetDirFor(pack);     // 驗過才搬到這裡
 
-            string got = ModelPackId.ForFolder(tmp);
+            // 🔴 重算 packId 要把整包讀過一遍再 SHA-256(10 MB 約 30 ms,但一包可以到 1 GB,
+            // 而且剛寫完的檔在慢磁碟上是冷的)。它是純 IO＋CPU、零 UnityEngine(見 ModelPackId 的說明),
+            // 所以丟到背景執行緒 —— 在主執行緒上做的話,這一幀的凍結會直接接在下一段的模型預熱前面,
+            // 而主執行緒凍住 = ping 停 = server 有機會把一個還活著的玩家當成斷線。
+            if (_verify == null)
+            {
+                _verify = System.Threading.Tasks.Task.Run(() => ModelPackId.ForFolder(tmp));
+                return;
+            }
+            if (!_verify.IsCompleted) return;
+            string got = _verify.Status == System.Threading.Tasks.TaskStatus.RanToCompletion ? _verify.Result : "";
+            _verify = null;
+
             if (!string.Equals(got, pack, StringComparison.Ordinal))
             {
                 Log("✗ 下載回來的內容與宣稱的 packId 不符,丟掉:" + pack);
@@ -417,6 +439,7 @@ namespace Sdo.UI.Core
         public static void Reset()
         {
             if (_fx != null) { _fx.Cancel("離開房間"); _fx.Dispose(); _fx = null; }
+            _verify = null;
             _serverHas.Clear();
             _queriedPack = null;
             _lastQueryAt = -99f;
@@ -434,6 +457,9 @@ namespace Sdo.UI.Core
         private static void Clear()
         {
             if (_fx != null) { _fx.Dispose(); _fx = null; }
+            // 還在背景跑的重算就讓它跑完自己消失 —— 但**這一趟的答案不能再用**:
+            // 下一份模型會走 FinishDownload 的第一條路重開一趟(見那裡)。
+            _verify = null;
         }
     }
 }

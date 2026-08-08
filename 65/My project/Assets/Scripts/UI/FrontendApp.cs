@@ -594,6 +594,10 @@ namespace Sdo.UI
             TickNetGameplay();   // 遊玩中每 200ms 把本機成績送上去(見那邊的註解)
             // 缺歌傳檔:同樣要在遊戲中也繼續跑 —— 下載可能跨過「別人在打歌、我留在房間」那段。
             NetSongTransfer.Tick(_ctx, this);
+            // 「本機在舞台上打歌」是 MMD 那一整條的煞車:不開新的模型傳輸、也不開始把冷模型讀上身
+            // (每張貼圖上傳仍有 20~30 ms,連續十幾幀會直接吃掉節奏遊戲的手感)。
+            // 收模型只在房間/大廳做,歌一結束補建迴圈就會把它接上去。見 MmdStagingPolicy。
+            Sdo.Game.MmdAvatarSwap.OnStage = _activeGame != null;
             NetModelTransfer.Tick(_ctx);   // MMD 模型:推自己的、拉別人的(歌沒在傳時才動,見那裡的說明)
 
             // 名字被佔用 / 中途斷線 → 已退回單機,告知玩家一次(「連不上」不在此列,見 LoginCo 尾端)。
