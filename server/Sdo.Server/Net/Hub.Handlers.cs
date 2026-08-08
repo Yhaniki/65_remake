@@ -344,8 +344,13 @@ namespace Sdo.Server.Net
                     // 那 4 列要寫出來。🔴 那個框開的時候人**還沒進房**,roomSnapshot 只發給房裡的人,
                     // 所以這份列表是它唯一拿得到玩家名字的地方(以前沒送 → 那 4 列永遠空白)。
                     .Put("members", SeatMembers(s))
-                    .Int("capacity", s.Capacity)
+                    // 🔴 分母是**開著的座位數**,不是座位陣列長度(s.Capacity 恆為 6)——
+                    //    房主雙擊頭貼鎖格子時只有 seat.State 變 Closed。送 Capacity 的話症狀是
+                    //    「房主把房間關到剩兩格,大廳外面還是寫 1/6」,而房裡看起來是對的。
+                    .Int("capacity", s.OpenSeatCount)
                     .Int("spectators", s.Spectators != null ? s.Spectators.Length : 0)
+                    // 旁觀上限:房主在右側面板調得動(0..10),「房間信息」的觀戰欄是「現有/上限」。
+                    .Int("lookerCount", s.Settings.LookerCount)
                     .Int("mode", s.Settings.GameMode)
                     .Str("songTitle", s.Song != null ? s.Song.Title : "")
                     // 譜面難度。大廳的「房間信息」那格官方寫成「歌名 (9級)」—— 沒有這個欄位就只能顯示歌名。
@@ -518,8 +523,14 @@ namespace Sdo.Server.Net
             if (!_moves.TryGetValue(room.Code, out byUser) || byUser.Count == 0) return;
 
             var arr = JArr.New();
+            int rows = 0;
             foreach (var mv in byUser)
-                if (mv.Key != conn.UserId) arr.Add(mv.Value.Encode(mv.Key));
+                if (mv.Key != conn.UserId && mv.Value.Slot == CurrentSlotOf(room, mv.Key))
+                {
+                    arr.Add(mv.Value.Encode(mv.Key));
+                    rows++;
+                }
+            if (rows == 0) return;   // 沒有一筆還有效 → 不送空快照(收端會照 fallback 點畫,與現在一樣)
 
             conn.Send(JObj.New()
                 .Str(NetProto.FieldType, NetProto.Moves)
@@ -538,7 +549,7 @@ namespace Sdo.Server.Net
         {
             var left = _rooms.Leave(userId);
             if (left.Room == null) return;
-            DropRoomMoves(left.Room.Code);
+            DropUserMove(left.Room.Code, userId);
 
             if (left.RoomClosed)
             {
@@ -561,7 +572,7 @@ namespace Sdo.Server.Net
         private void AfterImplicitLeave(LeaveResult left, int userId)
         {
             if (left.Room == null) return;
-            DropRoomMoves(left.Room.Code);
+            DropUserMove(left.Room.Code, userId);
             if (left.RoomClosed)
             {
                 var evicted = left.EvictedUserIds;
@@ -617,9 +628,9 @@ namespace Sdo.Server.Net
             var op = _rooms.SetRoomSettings(conn.UserId, NetJson.Sub(node, "settings"), out room, out kickedSpecs);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
 
-            if (kickedSpecs.Length != 0) DropRoomMoves(room.Code);
             for (int i = 0; i < kickedSpecs.Length; i++)
             {
+                DropUserMove(room.Code, kickedSpecs[i]);
                 SendKicked(kickedSpecs[i], NetProto.KickedRoomClosed);
             }
             BroadcastRoomState(room);
@@ -916,7 +927,7 @@ namespace Sdo.Server.Net
             var op = _rooms.KickUser(conn.UserId, target, out room, out left);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "目標 user " + target); return; }
 
-            DropRoomMoves(room.Code);
+            DropUserMove(room.Code, target);
             SendKicked(target, NetProto.KickedByHost);
             if (left.RoomClosed) { DropRoomScratch(room.Code); return; }
             BroadcastRoomState(room);
@@ -936,7 +947,7 @@ namespace Sdo.Server.Net
             // 關閉有人的座位 → 那個人先被踢出去(需求 12)。
             if (kicked != 0)
             {
-                DropRoomMoves(room.Code);
+                DropUserMove(room.Code, kicked);
                 SendKicked(kicked, NetProto.KickedSeatClosed);
             }
             BroadcastRoomState(room);
@@ -972,11 +983,15 @@ namespace Sdo.Server.Net
             AfterImplicitLeave(left, conn.UserId);
 
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op, "房 " + code); return; }
-            DropRoomMoves(room.Code);
+            // 只清**自己**那筆:切旁觀會把自己搬到旁觀席,舊座標不能留;別人的位置與這件事無關。
+            DropUserMove(room.Code, conn.UserId);
             // 座位有 log、旁觀沒有 → 實機驗證時「他到底進去了沒」只能用猜的。補上。
             Log("房 " + room.Code + " 旁觀  user " + conn.UserId + "「" + conn.Name
                 + "」(座位 " + room.State.SeatedCount + " 人)");
             BroadcastRoomState(room);
+            // 從房間列表以旁觀身分進來的人,與座位加入者一樣需要「大家站在哪裡」的第一發
+            // (房內切旁觀的人本來就有,重送一次也無害 —— 這條訊息是冪等的位置快照)。
+            SendMoveSnapshot(conn, room);
         }
 
         private void OnStopSpectate(Connection conn, int rq)
@@ -985,7 +1000,7 @@ namespace Sdo.Server.Net
             int seat;
             var op = _rooms.TryUnspectate(JoinUserOf(conn), out room, out seat);
             if (op != NetRoomOp.Ok) { SendOpError(conn, rq, op); return; }
-            DropRoomMoves(room.Code);
+            DropUserMove(room.Code, conn.UserId);   // 同上:回座位是自己被搬動,別人的位置不動
             BroadcastRoomState(room);
         }
 
@@ -1121,12 +1136,8 @@ namespace Sdo.Server.Net
                 || NetJson.Int(node, "roomRev", -1) != room.State.Rev) return;
 
             // 座位 ↔ 旁觀切換後，舊畫面可能還有一筆 move 排在 socket/actor queue 裡。
-            // 用 server 目前認定的 slot 擋掉它，否則 DropRoomMoves 清完後它又會把舊座標塞回來。
-            int seat = room.State.SeatIndexOf(conn.UserId);
-            int spectator = room.State.SpectatorIndexOf(conn.UserId);
-            int expectedSlot = seat >= 0 ? seat
-                : spectator >= 0 ? 1000 + spectator
-                : -1;
+            // 用 server 目前認定的 slot 擋掉它，否則 DropUserMove 清完後它又會把舊座標塞回來。
+            int expectedSlot = CurrentSlotOf(room, conn.UserId);
             if (expectedSlot < 0 || NetJson.Int(node, "slot", -1) != expectedSlot) return;
 
             Dictionary<int, MoveSample> byUser;
@@ -1163,7 +1174,14 @@ namespace Sdo.Server.Net
                 if (!_movesDirty.Contains(kv.Key)) continue;
 
                 var arr = JArr.New();
-                foreach (var mv in byUser) arr.Add(mv.Value.Encode(mv.Key));
+                int rows = 0;
+                foreach (var mv in byUser)
+                    if (mv.Value.Slot == CurrentSlotOf(room, mv.Key))
+                    {
+                        arr.Add(mv.Value.Encode(mv.Key));
+                        rows++;
+                    }
+                if (rows == 0) continue;
 
                 var bytes = JObj.New()
                     .Str(NetProto.FieldType, NetProto.Moves)
@@ -1181,15 +1199,36 @@ namespace Sdo.Server.Net
                 for (int i = 0; i < emptied.Count; i++) _moves.Remove(emptied[i]);
         }
 
+        /// <summary>
+        /// 房間裡某個人**現在**佔的格子:座位 = 0..5,旁觀 = 1000 + 名單序號,不在房裡 = -1。
+        /// 與 client 的 <c>NetClient.SnapshotSlot</c> 是同一份定義(兩邊算不一樣的話 move 會被全數丟棄)。
+        /// </summary>
+        private static int CurrentSlotOf(NetRoom room, int userId)
+        {
+            if (room == null || userId == 0) return -1;
+            int seat = room.State.SeatIndexOf(userId);
+            if (seat >= 0) return seat;
+            int spectator = room.State.SpectatorIndexOf(userId);
+            return spectator >= 0 ? 1000 + spectator : -1;
+        }
+
         /// <summary>房間裡某個人的最新位置。<c>W</c> = 正在走(收端用它決定播走路還是待機 clip)。</summary>
         private struct MoveSample
         {
             public float X, Z, Facing;
             public bool W;
 
+            /// <summary>
+            /// 回報當下他佔的格子。留著是為了讓**旁觀名單壓縮**自動作廢過期的座標:
+            /// 前面的旁觀者離開時,後面的人 index 會往前挪,收端會把他搬到新的旁觀錨點 ——
+            /// 那一刻這筆座標就不是他站的地方了。推送時比對 <see cref="CurrentSlotOf"/>,不符就不送。
+            /// </summary>
+            public int Slot;
+
             public static MoveSample Decode(object node)
             {
                 var m = new MoveSample();
+                m.Slot = NetJson.Int(node, "slot", -1);
                 m.X = (float)NetJson.Num(node, "x");
                 m.Z = (float)NetJson.Num(node, "z");
                 m.Facing = (float)NetJson.Num(node, "f");
@@ -1235,10 +1274,25 @@ namespace Sdo.Server.Net
             _liveLeaders.Remove(roomCode);
         }
 
-        private void DropRoomMoves(int roomCode)
+        /// <summary>
+        /// 忘掉**一個人**在某房裡的最新位置(他離開了 / 被踢了 / 座位↔旁觀被搬動了)。
+        ///
+        /// 🔴 這裡刻意**不是**整房清空。位置表是「房裡每個人現在站在哪裡」的唯一記憶,而 client
+        /// 站著不動時永不回報(<c>MoveThrottle</c> 規則 ①)—— 整房清掉的話,那些站著的人的位置
+        /// 就**永久**消失了,而不是「下一筆補回來」。症狀正是使用者回報的:
+        /// 有人進出過的房間,後面進來的人看到所有人站在座位 fallback 點,
+        /// 直到那個人自己走動一步才突然瞬移到對的位置。
+        /// </summary>
+        private void DropUserMove(int roomCode, int userId)
         {
-            _moves.Remove(roomCode);
-            _movesDirty.Remove(roomCode);
+            Dictionary<int, MoveSample> byUser;
+            if (userId == 0 || !_moves.TryGetValue(roomCode, out byUser)) return;
+            if (!byUser.Remove(userId)) return;
+            if (byUser.Count == 0)
+            {
+                _moves.Remove(roomCode);
+                _movesDirty.Remove(roomCode);
+            }
         }
 
         private void OnGameplayFrame(Connection conn, object node)

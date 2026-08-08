@@ -1238,6 +1238,64 @@ namespace Sdo.Tests
             Assert.AreEqual(30, NetJson.Num(MoveOf(current, second.UserId), "x"), 0.001);
         }
 
+        [Test]
+        public void Someone_Leaving_Does_Not_Erase_Everyone_Elses_Position()
+        {
+            // 站著不動的人**永不**回報位置(MoveThrottle 規則 ①),所以 server 那張表是唯一的記憶。
+            // 曾經是「房裡任何人離開就整房清空」,症狀:有人進出過的房間,後面進來的人看到所有人
+            // 站在座位 fallback 點上,直到那個人自己走一步才突然瞬移到對的位置。
+            var host = Connect("走到定點的房主");
+            int code = CreateRoom(host, "有人來過的房");
+            host.Send(JObj.New().Str(NetProto.FieldType, NetProto.SetRoomName)
+                .Int(NetProto.FieldRequest, 2230).Str("name", "有人來過的房-2"));
+            var hostState = WaitForState(host, s => s.Name == "有人來過的房-2", "取得房主的 revision");
+
+            host.Send(RoomMoveMsg(code, hostState.Rev, 0, 12.5, 34.5));
+            Assert.IsNotNull(host.WaitFor(NetProto.Moves), "房主的位置進了 server 的表");
+
+            var passerby = Connect("路過的人");
+            JoinRoom(passerby, code);
+            WaitForState(host, s => s.SeatIndexOf(passerby.UserId) == 1, "路人坐下");
+            passerby.Send(JObj.New().Str(NetProto.FieldType, NetProto.LeaveRoom));
+            WaitForState(host, s => s.SeatIndexOf(passerby.UserId) < 0, "路人走了");
+
+            var latecomer = Connect("後來的人");
+            JoinRoom(latecomer, code);
+            WaitForState(latecomer, s => s.SeatIndexOf(latecomer.UserId) >= 0, "後來的人進房");
+
+            var snapshot = latecomer.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(snapshot, "房主一直站著沒動 —— 他的位置只可能從這份快照來");
+            var hostMove = MoveOf(snapshot, host.UserId);
+            Assert.IsNotNull(hostMove, "快照裡要有房主那一筆");
+            Assert.AreEqual(12.5, NetJson.Num(hostMove, "x"), 0.001);
+            Assert.AreEqual(34.5, NetJson.Num(hostMove, "z"), 0.001);
+        }
+
+        [Test]
+        public void Spectator_Entry_Also_Receives_The_Move_Snapshot()
+        {
+            // 座位加入者拿得到、旁觀者拿不到的話,旁觀畫面上的每個人都站在 fallback 點。
+            var host = Connect("站著的房主");
+            int code = CreateRoom(host, "旁觀也要看到站位");
+            host.Send(JObj.New().Str(NetProto.FieldType, NetProto.SetRoomName)
+                .Int(NetProto.FieldRequest, 2231).Str("name", "旁觀也要看到站位-2"));
+            var hostState = WaitForState(host, s => s.Name == "旁觀也要看到站位-2", "取得房主的 revision");
+
+            host.Send(RoomMoveMsg(code, hostState.Rev, 0, 7.5, 9.5));
+            Assert.IsNotNull(host.WaitFor(NetProto.Moves));
+
+            var watcher = Connect("旁觀的人");
+            watcher.Send(JObj.New().Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 2232).Int("code", code));
+            WaitForState(watcher, s => s.SpectatorIndexOf(watcher.UserId) >= 0, "旁觀進房");
+
+            var snapshot = watcher.WaitFor(NetProto.Moves);
+            Assert.IsNotNull(snapshot, "旁觀進房也要拿到「大家站在哪裡」");
+            var hostMove = MoveOf(snapshot, host.UserId);
+            Assert.IsNotNull(hostMove);
+            Assert.AreEqual(7.5, NetJson.Num(hostMove, "x"), 0.001);
+        }
+
         // ================= 開場的完整流程 =================
 
         [Test]

@@ -994,6 +994,8 @@ namespace Sdo.UI.Screens
             ClearRemoteNamePlates();
             _remoteAvatarRev = -1;
             _localMoveSlot = int.MinValue;
+            // 回房時房裡的人全是「新面孔」→ 自己的位置會重送一次(見 RepublishMoveForNewcomers)。
+            _knownRoomUsers.Clear();
             // A real leave clears the transfer's room-song latch. Without this, rejoining a room that
             // selected the same external pack can retain _handledPack from the previous visit and never
             // retry availability/download. Entering gameplay keeps Net.Room, so an in-flight host upload
@@ -4864,6 +4866,7 @@ namespace Sdo.UI.Screens
             {
                 if (_remoteAvatarRev != -1) { _scene.SyncRemotePlayers(null); ClearRemoteNamePlates(); _remoteAvatarRev = -1; }
                 _localMoveSlot = int.MinValue;
+                _knownRoomUsers.Clear();
                 return;
             }
             if (snap.Rev == _remoteAvatarRev) return;
@@ -4928,6 +4931,7 @@ namespace Sdo.UI.Screens
                 }
 
             PadDevRoomAvatars();   // DEV only:SDO_ROOMAVATARS 才會動(量 6 座位 + 10 旁觀 = 16 隻的成本)
+            RepublishMoveForNewcomers();
             _scene.SyncRemotePlayers(_remoteBuf);
             SyncRemoteNamePlates(snap, me);
             AnnounceRemoteComings(snap, me);
@@ -5192,6 +5196,29 @@ namespace Sdo.UI.Screens
 
         private readonly Sdo.Net.MoveThrottle _moveThrottle = new Sdo.Net.MoveThrottle();
         private int _localMoveSlot = int.MinValue;
+
+        /// <summary>上一份快照裡房間有誰(自己不算)。給 <see cref="RepublishMoveForNewcomers"/> 認新面孔。</summary>
+        private readonly HashSet<int> _knownRoomUsers = new HashSet<int>();
+
+        /// <summary>
+        /// 房裡出現新面孔 → 把自己的位置**重送一次**。
+        ///
+        /// 為什麼需要:站著不動的人永不回報(<c>MoveThrottle</c> 規則 ①),所以新進來的人只能靠
+        /// server 那份位置快照認識我站在哪裡。那一發只要因為任何理由沒到(server 忘了我的位置、
+        /// 快照與 roomState 的競態、重連),他就會把我畫在座位 fallback 點上,而且**永遠**停在那裡 ——
+        /// 直到我下次走動。重送一筆是最便宜的收斂:每次有人進房才一筆,節流器其餘規則不受影響。
+        /// </summary>
+        private void RepublishMoveForNewcomers()
+        {
+            bool newcomer = false;
+            for (int i = 0; i < _remoteBuf.Count; i++)
+                if (!_knownRoomUsers.Contains(_remoteBuf[i].UserId)) { newcomer = true; break; }
+
+            _knownRoomUsers.Clear();
+            for (int i = 0; i < _remoteBuf.Count; i++) _knownRoomUsers.Add(_remoteBuf[i].UserId);
+
+            if (newcomer) _moveThrottle.Reset();
+        }
 
         // 泡鏈排版用的可重用暫存(見 PlaceRoomChatBubbles 的註解:一幀會被呼叫多次)。
         private readonly List<RoomBubbleLayoutNode> _bubbleNodes = new List<RoomBubbleLayoutNode>();
