@@ -135,7 +135,8 @@ namespace Sdo.Game
 
         private void BuildRankingUi()
         {
-            _finalEst = Math.Max(20000L, (long)_map.TotalNotes * 68L);   // ≈ all-perfect ServerScore ceiling
+            // ≈ all-perfect ceiling: every note in one unbroken run → 68 each, then the ×1.04 display scale.
+            _finalEst = Math.Max(20000L, (long)_map.TotalNotes * 68L * 26L / 25L);
             var arrowDir = Path.Combine(SdoExtracted.Root, "UI", "ARROW");
             _arrowFrames = new Sprite[9];
             for (int i = 0; i < 9; i++) _arrowFrames[i] = SdoExtracted.LoadImage(arrowDir, i.ToString("D3") + ".PNG");
