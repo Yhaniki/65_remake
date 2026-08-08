@@ -184,6 +184,9 @@ namespace Sdo.Game
             // 頭上名字牌會從翅膀裡透出來。補一份只寫深度的分身(排在所有衣物色彩批之後,外觀不受影響)。
             // 🔴 Portrait 系(頭貼/商城卡)不掛:那是不透明合成到透明 RT,多一份深度只會有害無益。
             if (style != SkinStyle.Portrait) AvatarTranslucentDepth.Attach(parent);
+            // 🔴 跨角色的半透明排序 (AvatarTransparentRank) **不**掛在這裡:商城/儲物櫃一次會建 8 張卡 + 左側預覽,
+            //    那是 9 個各自渲染到自己 RT 的獨立角色,把它們排進同一個名冊只會讓 queue 每幀亂跳。只有「多個角色
+            //    同框」的畫面才需要 —— 掛在 ScreenGameplay 的舞者與 SdoRoomAvatar 的房間路徑上。
             return res;
         }
 

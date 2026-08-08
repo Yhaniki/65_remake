@@ -166,6 +166,51 @@ namespace Sdo.Tests
             Assert.Greater(comp.TwinCount, 0);
         }
 
+        /// <summary>
+        /// 使用者問「金姬兰 這件衣服因為透明度沒有深度…是否是舞台的位置沒有修正深度問題」。
+        ///
+        /// 遊戲舞台的舞者走的是 <see cref="SdoAvatarBuilder.LoadParts"/>(SkinStyle.Gameplay);房間那條
+        /// (SdoRoomAvatar 自帶迴圈)是另一支。真正要保證的**不是**「有沒有分身」,而是「這件衣服有沒有進深度
+        /// 緩衝」—— 有兩條路都算數:
+        ///   ① 材質自己 ZWrite ON(<see cref="SdoAvatarBuilder.ApplySheerMaterialState"/> 對紗與實心去背布料
+        ///      **都**打開,金姬兰 18 段紗走的就是這條);
+        ///   ② ZWrite OFF 的(翅膀那種 alpha-blend)→ 補只寫深度的分身。
+        /// 所以斷言是「沒有任何一段是『既不寫深度、又沒有分身』」。日後若有人把 ZWrite 關掉又忘了補分身,
+        /// 這條就會紅 —— 那正是名牌會從裙子裡透出來的狀態。
+        /// </summary>
+        [Test]
+        public void The_Reported_OnePiece_024976_IsInTheDepthBuffer_OnTheStagePath()
+        {
+            const string one = "AVATAR/024976_WOMAN_ONE.MSH";
+            var probe = SdoAvatarBuilder.ResolveAvatarFile(one);
+            if (string.IsNullOrEmpty(probe) || !System.IO.File.Exists(probe))
+                Assert.Ignore("AVATAR data root not found — 這條需要真實遊戲資料(data_root.txt)");
+
+            var root = Track(new GameObject("jinjilanAvatar"));
+            var built = SdoAvatarBuilder.LoadParts(root, null, new[] { one }, SdoAvatarBuilder.SkinStyle.Gameplay);
+            Assert.AreEqual(1, built.Parts, "金姬兰 mesh 沒載進來");
+
+            var comp = root.GetComponent<AvatarTranslucentDepth>();
+            int twins = comp != null ? comp.TwinCount : 0;
+            var orphan = new System.Text.StringBuilder();
+            int translucent = 0, selfDepth = 0;
+            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>(true))
+                foreach (var m in mr.sharedMaterials)
+                {
+                    if (m == null || m.mainTexture == null) continue;
+                    if (m.renderQueue < 3000 || m.renderQueue >= AvatarTranslucentDepth.DepthQueue) continue;
+                    translucent++;
+                    if (m.HasProperty("_ZWriteMode") && m.GetFloat("_ZWriteMode") >= 0.5f) { selfDepth++; continue; }
+                    if (twins == 0) orphan.Append($"\n  q={m.renderQueue} {m.shader?.name} '{m.name}'");
+                }
+            Assert.Greater(translucent, 0, "金姬兰一段半透明材質都沒有 → 這件的透明度整個沒生效,測試的前提已經不成立");
+            Assert.AreEqual(0, orphan.Length,
+                "這些段既不自己寫深度、又沒有深度分身 → 後面那個人的名牌會從裙子裡透出來:" + orphan);
+            // 記錄實測結果:這件的深度來自材質自己的 ZWrite,不是分身(所以它本來就沒有 AvatarTranslucentDepth 元件)。
+            Assert.AreEqual(translucent, selfDepth,
+                "金姬兰改成靠分身提供深度了?那不是壞事,但這條測試的敘述要跟著更新");
+        }
+
         /// <summary>頭貼/商城卡(Portrait)刻意不掛:那是不透明合成到透明 RT,多一份深度只會有害無益。</summary>
         [Test]
         public void The_Portrait_Path_Gets_No_Twin()

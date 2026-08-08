@@ -239,6 +239,8 @@ namespace Sdo.Game
             // 也在 SetLayerRecursive 之後(分身抄 layer;它在角色階層外面,SetLayerRecursive 掃不到它)。
             // 頭貼那條(PortraitHead:不透明合成到透明 RT)不掛。
             if (mode == RenderMode.Scene) AvatarTranslucentDepth.Attach(parent);
+            // 跨角色的半透明先後(房間裡也會兩個人疊在一起):見 AvatarTransparentRank。
+            if (mode == RenderMode.Scene) AvatarTransparentRank.Attach(parent);
             return av;
         }
 

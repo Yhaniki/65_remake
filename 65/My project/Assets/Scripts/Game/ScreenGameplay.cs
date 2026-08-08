@@ -3620,6 +3620,10 @@ namespace Sdo.Game
             Bounds bounds = built.Bounds; bool any = built.Any; int parts = built.Parts;
             if (!any) { Debug.LogWarning("[avatar] no parts loaded"); return; }
             Debug.Log($"[avatar] {(localPlayerMale ? "MAN" : "WOMAN")}: {parts} parts, skeleton={(hrc != null ? hrc.Names.Length + " bones" : "none")}, mot={(mot != null ? mot.MaxTime + 1 + " frames" : "none")}");
+            // 跨角色的半透明先後:站在後面的人先畫,否則他的裙子會蓋到前面那個人的翅膀上
+            // (使用者:「後面有一個人穿了金姬兰,但是衣服卻畫在前面的人的翅膀再更前面」)。見 AvatarTransparentRank。
+            AvatarTransparentRank.Attach(parent);
+            AvatarTransparentRank.CameraProvider = () => _sceneCam != null ? _sceneCam : _cam;
             if (avatar != null) MmdAvatarSwap.Register(avatar);   // config.ini [Mmd] 開著 → 舞者換成 MMD 模型 (SDO stays the motion driver)
             var handYellow = new Color(1f, 0.86f, 0.25f);
             if (use3dCamera && _camReady)

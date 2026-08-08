@@ -205,6 +205,7 @@ namespace Sdo.Game
                 // shader/材質不同,場上會出現「其中一隻看起來不一樣」。
                 var built = SdoAvatarBuilder.LoadParts(go, av, parts, SdoAvatarBuilder.SkinStyle.Gameplay);
                 if (!built.Any) { Destroy(go); _extraDancers.Add(null); _extraRoots.Add(null); continue; }
+                AvatarTransparentRank.Attach(go);   // 跨角色的半透明先後(本機那隻在 TryLoadAvatar 掛;見 AvatarTransparentRank)
 
                 // 🔴 FeetYAt 會把角色 pose 到第 0 幀 → **量完一定要擺回迴圈當下**,
                 // 否則這一隻會定在 T-pose 之後的第一幀(房間那邊踩過同一個坑)。
