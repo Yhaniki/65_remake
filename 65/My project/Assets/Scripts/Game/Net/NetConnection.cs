@@ -280,19 +280,55 @@ namespace Sdo.Game.Net
 
         // ---- 寫 ----
 
+        /// <summary>最後一次真的把位元組寫進 socket 的時刻(unix ms)。只有 writer thread 寫它。</summary>
+        private long _lastSentMs;
+
+        /// <summary>
+        /// writer thread 的主迴圈,兼**心跳的唯一發送者**。
+        ///
+        /// 🔴 心跳不能由主執行緒排隊。server 的 <c>SweepDeadConnections</c> 看的是「多久沒**收到**
+        /// 這條連線的東西」(<see cref="NetLimits.PingTimeoutMs"/> 15 秒),而排 ping 的
+        /// <c>NetClient.Tick</c> / <c>NetSongFetcher.KeepAlive</c> 都在主執行緒上 —— 主執行緒一卡住
+        /// (收到別人的 MMD 模型時解 .pmx + 解碼十張 2048² 貼圖、換場景、載歌),ping 就跟著停,
+        /// 於是「本機在忙」在 server 眼中與「這台機器死了」一模一樣,被踢掉的是還活著的玩家。
+        ///
+        /// 這裡是唯一不會被主執行緒卡住的地方(socket 也是這條 thread 在寫),所以送出佇列
+        /// 閒置超過 <see cref="NetLimits.PingIntervalMs"/> 就由它自己補一個 ping。
+        /// 「閒置」看的是**真的送出去的位元組**:上傳模型/分數流一直在送的時候完全不會多送。
+        ///
+        /// t0 用的是與 <c>NetClient.NowMs</c> 同一個時鐘(unix ms),所以這個 ping 的 pong 算出來的
+        /// RTT 仍然是真的 —— 補的心跳不需要協定上的任何特例。
+        /// </summary>
         private void WriteLoop()
         {
             try
             {
-                foreach (var item in _outbox.GetConsumingEnumerable())
+                _lastSentMs = NowMs();
+                while (!IsClosed)
                 {
+                    Outbound item;
+                    if (_outbox.TryTake(out item, NetLimits.KeepAlivePollMs))
+                    {
+                        if (IsClosed) break;
+                        NetFrame.Write(_stream, item.Kind, item.Payload);
+                        Interlocked.Increment(ref SentCount);
+                        _lastSentMs = NowMs();
+                        continue;
+                    }
                     if (IsClosed) break;
-                    NetFrame.Write(_stream, item.Kind, item.Payload);
+                    long now = NowMs();
+                    if (!NetLimits.KeepAliveDue(now, _lastSentMs)) continue;
+                    NetFrame.Write(_stream, NetLimits.FrameKindJson,
+                                   JObj.New().Str(NetProto.FieldType, NetProto.Ping).Num("t0", now).Utf8());
                     Interlocked.Increment(ref SentCount);
+                    _lastSentMs = now;
                 }
             }
+            catch (ObjectDisposedException) { Close("closed"); }
             catch (Exception) { Close("writeError"); }
         }
+
+        private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         /// <summary>送一個控制訊息。佇列滿了 → 斷線(狀態訊息漏掉會讓房間狀態永久偏離)。</summary>
         public void Send(JObj msg)

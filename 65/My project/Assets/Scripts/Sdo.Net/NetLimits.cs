@@ -94,6 +94,21 @@ namespace Sdo.Net
         /// <summary>多久沒收到對方任何訊息就當斷線(= 隱含的 leaveRoom)。</summary>
         public const int PingTimeoutMs = 15000;
 
+        /// <summary>
+        /// client 的 writer thread 多久檢查一次「該不該補心跳」(見 <c>NetConnection.WriteLoop</c>)。
+        /// 這只是**取樣間隔**,不是心跳間隔 —— 補不補由 <see cref="KeepAliveDue"/> 決定。
+        /// 取樣要比 <see cref="PingIntervalMs"/> 細很多,否則實際間隔會被量化成取樣的倍數。
+        /// </summary>
+        public const int KeepAlivePollMs = 500;
+
+        /// <summary>
+        /// 這條連線閒置到該補一個心跳了嗎(<paramref name="lastSentMs"/> ＝ 最後一次真的送出位元組的時刻)。
+        ///
+        /// 用 <see cref="PingIntervalMs"/> 而不是更寬鬆的值:server 判死是 <see cref="PingTimeoutMs"/>
+        /// (15 秒),留 3 倍的餘裕才擋得住「補的那一個剛好掉包」。
+        /// </summary>
+        public static bool KeepAliveDue(long nowMs, long lastSentMs) => nowMs - lastSentMs >= PingIntervalMs;
+
         // ---- 進站密碼 ----
 
         /// <summary>
