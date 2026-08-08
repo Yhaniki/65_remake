@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -16,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import build_pak  # noqa: E402
+import sdopak  # noqa: E402
 
 
 def write(root: Path, rel: str, data: bytes) -> Path:
@@ -81,6 +84,49 @@ class PatchTests(unittest.TestCase):
         m = self.patch()
         self.assertIn("UI/same.png", m["whiteouts"])
         self.assertNotIn("UI/same.png", m["files"])
+
+
+class ProgressTests(unittest.TestCase):
+    """進度列。大卷要跑好幾分鐘,這條回報鍊斷掉就完全看不到動靜。"""
+
+    def build(self, root: Path):
+        b = sdopak.PakBuilder(9, encrypt=False)
+        b.add_bytes("UI/a.txt", b"a" * 100)
+        b.add_bytes("UI/b.txt", b"b" * 50)
+        b.add_whiteout("UI/gone.txt")           # whiteout 沒內容,但也要算進「做完幾個」
+        seen = []
+        b.write(root / "t.pak", progress=lambda n, by: seen.append((n, by)))
+        return seen
+
+    def test_reports_every_item_once_and_ends_at_the_total(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            seen = self.build(Path(tmp))
+        self.assertEqual([1, 2, 3], [n for n, _ in seen], "每個項目剛好回報一次、單調遞增")
+        self.assertEqual(150, seen[-1][1], "最後一次要等於全部原始 bytes(whiteout 不計入)")
+
+    def test_bar_throttles_but_always_prints_the_last_one(self):
+        bar = build_pak.Progress("vol", 3, 150)
+        bar.tty = False
+        bar.interval = 3600                      # 大到不可能因為時間而印
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bar(1, 50)                           # 第一筆一定要印:立刻讓人看到它開始跑了
+            bar(2, 100)                          # 被節流吃掉
+            bar(3, 150)                          # 最後一筆一定要印,否則永遠停在半路
+        lines = [ln for ln in out.getvalue().splitlines() if ln.strip()]
+        self.assertEqual(2, len(lines), out.getvalue())
+        self.assertIn("1/3", lines[0])
+        self.assertIn("3/3", lines[-1])
+
+    def test_non_tty_never_emits_carriage_returns(self):
+        # 導向 build.log 時噴幾萬個 \r 會讓 log 完全沒法看。
+        bar = build_pak.Progress("vol", 1, 10)
+        bar.tty = False
+        bar.interval = 0
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bar(1, 10)
+        self.assertNotIn("\r", out.getvalue())
 
 
 if __name__ == "__main__":

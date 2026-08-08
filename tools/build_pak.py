@@ -172,6 +172,53 @@ def volume_spec(name: str) -> dict:
                 compress=True, crypt=sdopak.CRYPT_WHOLE, dirs=[])
 
 
+def _hms(sec: float) -> str:
+    sec = int(sec)
+    return f"{sec // 60}m{sec % 60:02d}s" if sec >= 60 else f"{sec}s"
+
+
+class Progress:
+    """一行原地更新的進度列。base_avatar 有 4 GB / 幾萬個檔,跑好幾分鐘 —— 沒有這個就是一片死寂。
+
+    導向檔案時(build_windows.ps1 的 log、CI)不能噴幾萬個 \\r:偵測到不是終端機就改成
+    每 15 秒印一行普通的。
+    """
+
+    def __init__(self, label: str, total_files: int, total_bytes: int):
+        self.label, self.total_files, self.total_bytes = label, total_files, max(total_bytes, 1)
+        self.tty = sys.stdout.isatty()
+        self.interval = 0.25 if self.tty else 15.0
+        self.t0 = time.time()
+        self.last = 0.0
+        self.width = 0
+
+    def __call__(self, done: int, done_bytes: int) -> None:
+        now = time.time()
+        if now - self.last < self.interval and done != self.total_files:
+            return
+        self.last = now
+        el = now - self.t0
+        rate = done_bytes / el if el > 0.1 else 0.0
+        eta = (self.total_bytes - done_bytes) / rate if rate > 0 else 0.0
+        line = (f"[pak] {self.label:<14} {done:>7}/{self.total_files} 檔 "
+                f"{done_bytes / 1048576:>8.1f}/{self.total_bytes / 1048576:.1f} MB "
+                f"{rate / 1048576:>6.1f} MB/s"
+                + (f"  剩 {_hms(eta)}" if rate > 0 else ""))
+        if self.tty:
+            # 補空白蓋掉上一行的殘影(這一行比較短時)
+            sys.stdout.write("\r" + line.ljust(self.width))
+            sys.stdout.flush()
+            self.width = max(self.width, len(line))
+        else:
+            print(line, flush=True)
+
+    def clear(self) -> None:
+        """把進度列擦掉,讓後面那行總結乾乾淨淨地印出來。"""
+        if self.tty and self.width:
+            sys.stdout.write("\r" + " " * self.width + "\r")
+            sys.stdout.flush()
+
+
 def build_volume(out_dir: Path, manifest_dir: Path, name: str, pak_id: int, paths: list[str],
                  files: dict[str, Path], spec: dict, encrypt: bool) -> dict:
     b = sdopak.PakBuilder(pak_id, encrypt=encrypt)
@@ -179,11 +226,14 @@ def build_volume(out_dir: Path, manifest_dir: Path, name: str, pak_id: int, path
         b.add_file(rel, files[rel], compress=spec["compress"], crypt_range=spec["crypt"])
 
     pak_path = out_dir / f"{name}.pak"
+    src_bytes = sum(files[r].stat().st_size for r in paths)     # 進度列與 manifest 共用,只 stat 一輪
+    bar = Progress(name, len(paths), src_bytes)
     t0 = time.time()
-    manifest = b.write(pak_path)
+    manifest = b.write(pak_path, progress=bar)
     dt = time.time() - t0
+    bar.clear()
 
-    manifest["source_bytes"] = sum(files[r].stat().st_size for r in paths)
+    manifest["source_bytes"] = src_bytes
     manifest_dir.mkdir(parents=True, exist_ok=True)
     (manifest_dir / f"{name}.manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
@@ -297,8 +347,11 @@ def build_patch(source: Path, out_dir: Path, manifest_dir: Path, encrypt: bool, 
     for rel in removed:
         b.add_whiteout(rel)
 
-    manifest = b.write(out_dir / f"{name}.pak")
-    manifest["source_bytes"] = sum(files[r].stat().st_size for r in changed)
+    src_bytes = sum(files[r].stat().st_size for r in changed)
+    bar = Progress(name, len(changed) + len(removed), src_bytes)
+    manifest = b.write(out_dir / f"{name}.pak", progress=bar)
+    bar.clear()
+    manifest["source_bytes"] = src_bytes
     manifest_dir.mkdir(parents=True, exist_ok=True)
     (manifest_dir / f"{name}.manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")

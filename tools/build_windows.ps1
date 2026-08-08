@@ -49,8 +49,22 @@
 .PARAMETER NoRename
   Leave the output in -BuildOut (<repo>\Build\Windows); do not rename to the versioned folder.
 
+.PARAMETER Pack
+  After DATA is assembled, pack it into SDOPAK volumes (tools/build_pak.py) and delete the loose tree.
+
+.PARAMETER Encrypt
+  Encrypt the packed volumes. Obfuscation, not protection — the key ships inside the exe.
+
+.PARAMETER PackOnly
+  Pack an EXISTING output folder's loose DATA and exit — no Unity build, no DATA copy.
+  Looks for DATA under -BuildOut first, then under the renamed versioned folder.
+  Implies packing (no -Pack needed); -Encrypt still selects encrypted vs plain.
+
 .EXAMPLE
   ./tools/build_windows.ps1
+.EXAMPLE
+  # 只打包已經 build 好的那包(加密),不重跑 Unity
+  ./tools/build_windows.ps1 -PackOnly -Encrypt
 .EXAMPLE
   ./tools/build_windows.ps1 -Unity "C:\Program Files\Unity\Hub\Editor\6000.4.11f1\Editor\Unity.exe"
 #>
@@ -70,7 +84,11 @@ param(
     # 預設關 —— 開發時散裝樹好查、改一個檔就生效。出貨才開。
     [switch]$Pack,
     # 打包時加密。⚠️ 混淆不是保護:金鑰必然在執行檔裡。見 docsrchitecture\data-packaging.md §5。
-    [switch]$Encrypt
+    [switch]$Encrypt,
+    # 只打包:不跑 Unity、不複製 DATA,直接對「已經存在的輸出資料夾」底下那棵散裝 DATA 打包。
+    # 用途是「exe 已經 build 好了,只想補打包 / 換成加密版」,省掉整輪 build。
+    # 不必再加 -Pack(它自己就是打包);-Encrypt 照舊決定明碼還是加密。
+    [switch]$PackOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,17 +104,20 @@ if (-not $LogFile) {
 if (-not $BuildOut)    { $BuildOut    = Join-Path $Repo 'Build\Windows' }
 
 # Locate Unity.exe: use -Unity if given, else pick the newest editor under the Hub.
-if (-not $Unity) {
-    $hub = 'C:\Program Files\Unity\Hub\Editor'
-    if (Test-Path $hub) {
-        $Unity = Get-ChildItem -Path $hub -Filter Unity.exe -Recurse -ErrorAction SilentlyContinue |
-                 Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+# -PackOnly 不碰 Unity,所以連找都不用找(沒裝 Editor 的機器也能打包)。
+if (-not $PackOnly) {
+    if (-not $Unity) {
+        $hub = 'C:\Program Files\Unity\Hub\Editor'
+        if (Test-Path $hub) {
+            $Unity = Get-ChildItem -Path $hub -Filter Unity.exe -Recurse -ErrorAction SilentlyContinue |
+                     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+        }
     }
+    if (-not $Unity -or -not (Test-Path $Unity)) {
+        throw "Unity.exe not found. Pass -Unity 'C:\path\to\Unity.exe'."
+    }
+    if (-not (Test-Path $ProjectPath)) { throw "ProjectPath not found: $ProjectPath" }
 }
-if (-not $Unity -or -not (Test-Path $Unity)) {
-    throw "Unity.exe not found. Pass -Unity 'C:\path\to\Unity.exe'."
-}
-if (-not (Test-Path $ProjectPath)) { throw "ProjectPath not found: $ProjectPath" }
 
 # 一行 git 輸出;git 不在、不是 repo、指令失敗都回 $null(不讓 build 因此爆掉)。
 function Get-GitLine([string]$gitArgs) {
@@ -119,11 +140,80 @@ function Get-BuildFolderName([string]$product) {
     return $product
 }
 
+# ---- 把散裝 DATA 打包成 SDOPAK 分卷,打完刪掉散裝樹 ----
+# 兩條路徑共用:一般 build 的 -Pack,和不 build 的 -PackOnly。
+# $OwnerDir = 放這棵 DATA 的資料夾(manifest 寫到它的上一層)。
+function Invoke-DataPack {
+    param(
+        [Parameter(Mandatory)][string]$DataOut,
+        [Parameter(Mandatory)][string]$OwnerDir,
+        [switch]$Encrypt
+    )
+    $pyPack = Join-Path $PSScriptRoot 'build_pak.py'
+    if (-not (Test-Path $pyPack)) { throw "找不到 $pyPack" }
+
+    # 🔴 manifest 要放在**出貨資料夾外面**。它是每一條路徑的明文(base_avatar 那份 5.4 MB)——
+    #    跟著出貨等於把索引加密整個作廢,別人拿到就有完整檔案清單。
+    #    放 $OwnerDir 底下不夠遠:那個資料夾最後會被改名成 Build\Dance v<版本>\,
+    #    正是要壓縮寄出去的東西。所以放到它的**上一層**(Build\pak_manifests\)。
+    #    留著是因為下次產 patch 卷要拿它比對差異。
+    $manifestDir = Join-Path (Split-Path -Parent $OwnerDir) 'pak_manifests'
+    Write-Host "[build] pack: $DataOut -> SDOPAK$(if ($Encrypt) { '(加密)' } else { '(明碼)' })"
+    $packArgs = @($pyPack, '--source', $DataOut, '--out', $DataOut, '--manifest-dir', $manifestDir)
+    if ($Encrypt) { $packArgs += '--encrypt' }
+    $env:PYTHONIOENCODING = 'utf-8'
+    & python @packArgs
+    if ($LASTEXITCODE -ne 0) { throw "build_pak.py 失敗 exit=$LASTEXITCODE" }
+
+    # 打包成功才刪散裝樹 —— 失敗時留著,至少 build 還是能跑的。
+    # 🔴 **只刪 packed_dirs.json 說有打包的那些**。不能寫成「除了 PROFILE/ADDON/… 以外全刪」——
+    #    BGM 刻意維持散裝(見 build_pak.py 的 VOLUMES),那種寫法會把它一起刪掉,
+    #    症狀是「大廳完全沒有音樂而且不報錯」。清單由打包器產出,兩邊才不會漂移。
+    $packedJson = Join-Path $manifestDir 'packed_dirs.json'
+    if (-not (Test-Path $packedJson)) { throw "build_pak.py 沒有產生 packed_dirs.json —— 不敢刪散裝樹" }
+    $packed = (Get-Content $packedJson -Raw -Encoding UTF8 | ConvertFrom-Json).packed
+
+    Get-ChildItem -LiteralPath $DataOut -Directory | Where-Object { $packed -contains $_.Name } | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    }
+    # 頂層零星檔(iteminfo.dat / shop_names.tsv…)已經進了 base_core.pak。出貨的 DATA 只留 *.pak。
+    Get-ChildItem -LiteralPath $DataOut -File | Where-Object { $_.Extension -ne '.pak' } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+
+    $mb = ((Get-ChildItem -LiteralPath $DataOut -Filter *.pak | Measure-Object Length -Sum).Sum / 1MB)
+    Write-Host ("[build] pack: {0} 卷,{1:N0} MB" -f (Get-ChildItem -LiteralPath $DataOut -Filter *.pak).Count, $mb)
+}
+
 $FinalDir = $null
 if (-not $NoRename) {
     $finalName = if ($Name) { $Name } else { Get-BuildFolderName $Product }
     $FinalDir  = Join-Path (Split-Path $BuildOut -Parent) $finalName
     if ($FinalDir -eq $BuildOut) { $FinalDir = $null }
+}
+
+# ---- -PackOnly:完全不 build,直接對現成輸出資料夾底下那棵散裝 DATA 打包 ----
+# 找法:先看 -BuildOut(Build\Windows —— 剛 build 完、還沒改名的狀態),
+# 再看改名後的版本資料夾(Build\Dance v… —— 平常 build 完的最終落點)。
+if ($PackOnly) {
+    $tried = @($BuildOut)
+    if ($FinalDir) { $tried += $FinalDir }
+    $ownerDir = $tried | Where-Object { Test-Path (Join-Path $_ 'DATA') } | Select-Object -First 1
+    if (-not $ownerDir) {
+        throw ("-PackOnly: 找不到現成的 DATA(試過:{0})。用 -BuildOut 指定輸出資料夾。" -f ($tried -join ' / '))
+    }
+    $dataOut = Join-Path $ownerDir 'DATA'
+
+    # 已經是打包狀態就別再打一次 —— 散裝樹早被刪光,再打會產出一堆空卷、然後把剩下的也刪掉。
+    if (Get-ChildItem -LiteralPath $dataOut -Filter *.pak -ErrorAction SilentlyContinue) {
+        throw "-PackOnly: $dataOut 已經有 .pak(散裝樹沒了)。要換明碼/加密請重新組一份 DATA 再打包。"
+    }
+
+    Write-Host "[build] pack-only = $dataOut"
+    Write-Host ""
+    Invoke-DataPack -DataOut $dataOut -OwnerDir $ownerDir -Encrypt:$Encrypt
+    Write-Host ""
+    Write-Host "=== pack-only done ===" -ForegroundColor Green
+    exit 0
 }
 
 Write-Host "[build] unity   = $Unity"
@@ -208,41 +298,7 @@ if ($code -eq 0 -and -not $SkipData) {
         # ---- 打包成 SDOPAK 分卷 ----
         # 順序是刻意的:先把散裝 DATA 完整組好(clean 包 + MODEL 都放進去了),再一次打包 ——
         # 打包器看到的就是最終狀態,不必知道任何組裝規則。
-        if ($Pack) {
-            $pyPack = Join-Path $PSScriptRoot 'build_pak.py'
-            if (-not (Test-Path $pyPack)) { throw "找不到 $pyPack" }
-
-            # 🔴 manifest 要放在**出貨資料夾外面**。它是每一條路徑的明文(base_avatar 那份 5.4 MB)——
-            #    跟著出貨等於把索引加密整個作廢,別人拿到就有完整檔案清單。
-            #    放 $BuildOut 底下不夠遠:那個資料夾最後會被改名成 Build\Dance v<版本>\,
-            #    正是要壓縮寄出去的東西。所以放到它的**上一層**(Build\pak_manifests\)。
-            #    留著是因為下次產 patch 卷要拿它比對差異。
-            $manifestDir = Join-Path (Split-Path -Parent $BuildOut) 'pak_manifests'
-            Write-Host "[build] pack: $dataOut -> SDOPAK$(if ($Encrypt) { '(加密)' } else { '(明碼)' })"
-            $packArgs = @($pyPack, '--source', $dataOut, '--out', $dataOut, '--manifest-dir', $manifestDir)
-            if ($Encrypt) { $packArgs += '--encrypt' }
-            $env:PYTHONIOENCODING = 'utf-8'
-            & python @packArgs
-            if ($LASTEXITCODE -ne 0) { throw "build_pak.py 失敗 exit=$LASTEXITCODE" }
-
-            # 打包成功才刪散裝樹 —— 失敗時留著,至少 build 還是能跑的。
-            # 🔴 **只刪 packed_dirs.json 說有打包的那些**。不能寫成「除了 PROFILE/ADDON/… 以外全刪」——
-            #    BGM 刻意維持散裝(見 build_pak.py 的 VOLUMES),那種寫法會把它一起刪掉,
-            #    症狀是「大廳完全沒有音樂而且不報錯」。清單由打包器產出,兩邊才不會漂移。
-            $packedJson = Join-Path $manifestDir 'packed_dirs.json'
-            if (-not (Test-Path $packedJson)) { throw "build_pak.py 沒有產生 packed_dirs.json —— 不敢刪散裝樹" }
-            $packed = (Get-Content $packedJson -Raw -Encoding UTF8 | ConvertFrom-Json).packed
-
-            Get-ChildItem -LiteralPath $dataOut -Directory | Where-Object { $packed -contains $_.Name } | ForEach-Object {
-                Remove-Item -LiteralPath $_.FullName -Recurse -Force
-            }
-            # 頂層零星檔(iteminfo.dat / shop_names.tsv…)已經進了 base_core.pak。出貨的 DATA 只留 *.pak。
-            Get-ChildItem -LiteralPath $dataOut -File | Where-Object { $_.Extension -ne '.pak' } |
-                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
-
-            $mb = ((Get-ChildItem -LiteralPath $dataOut -Filter *.pak | Measure-Object Length -Sum).Sum / 1MB)
-            Write-Host ("[build] pack: {0} 卷,{1:N0} MB" -f (Get-ChildItem -LiteralPath $dataOut -Filter *.pak).Count, $mb)
-        }
+        if ($Pack) { Invoke-DataPack -DataOut $dataOut -OwnerDir $BuildOut -Encrypt:$Encrypt }
     }
 }
 

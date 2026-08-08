@@ -414,8 +414,15 @@ Unity Mono 的 AES 是 managed 實作(沒有 AES-NI),約 100–200 MB/s。單一
 
 ## 7. 打包器
 
-`tools/build_pak.py`,由 [`package_build.ps1`](../../tools/package_build.ps1) 的 `-Pack` /
-`-Encrypt` 開關呼叫(預設關 —— 開發時散裝樹好查、改一個檔就生效)。要求:
+`tools/build_pak.py`,由 [`build_windows.ps1`](../../tools/build_windows.ps1) 與
+[`package_build.ps1`](../../tools/package_build.ps1) 的 `-Pack` / `-Encrypt` 開關呼叫
+(預設關 —— 開發時散裝樹好查、改一個檔就生效)。
+
+exe 已經 build 好、只想補打包(或改成加密版)時用 `build_windows.ps1 -PackOnly [-Encrypt]`:
+不跑 Unity、不重新複製 DATA,直接對現成輸出資料夾底下那棵散裝 DATA 打包。
+DATA 已經是 `.pak` 狀態會直接報錯 —— 散裝樹早被刪光,再打一次只會產出空卷。
+
+要求:
 
 - **由 manifest 決定分卷**:哪些目錄進哪一卷、每卷的壓縮與加密策略
 - **輸出必須 deterministic**:同輸入 → 同 bytes。條目依 `pathHash` 排序、時間戳一律歸零。
@@ -424,6 +431,20 @@ Unity Mono 的 AES 是 managed 實作(沒有 AES-NI),約 100–200 MB/s。單一
 - **pathHash 碰撞 → 直接失敗**
 - **reserved 前綴(`PROFILE` `ADDON` `CACHE` `REPLAY`)一律排除**
 - 每卷輸出一份 `.manifest.json` 側車檔(路徑 → 大小/CRC),供下次做 diff 與驗證
+
+### 7.1 🔴 加密與壓縮不能寫成 Python 迴圈
+
+打包器要處理 8 GB、10 萬個檔,每 byte 多花一點時間都會放大成小時。踩過的兩個:
+
+- **`xor_keystream` 曾經自己組 counter 區塊、再逐 byte XOR** —— 實測 **7 MB/s**,
+  佔掉加密打包 **89%** 的 CPU 時間(同一份輸入,明碼 0.94s / 加密 8.31s)。
+  正解是交給 OpenSSL 的 `modes.CTR`:全程在 C 裡跑,實測 1.2 GB/s,**輸出完全相同**
+  (CTR 把整個 counter 區塊當大端序整數遞增,和我們「低 64 位放區塊序號」的定義一致)。
+- **讀檔與壓縮是循序的** —— 小檔的每檔開檔成本吃掉整個吞吐(1 緒 8 MB/s)。
+  `zlib` 與檔案 I/O 都會放開 GIL,所以 `ThreadPoolExecutor` 是真的平行:16 緒 67 MB/s。
+  加密留在主迴圈循序做 —— counter 綁「這一段在資料區的絕對位移」,那是累加出來的。
+
+輸出的 bytes 與工作緒數**無關**(順序由排序後的 items 決定),`SDOPAK_WORKERS=1` 可退回循序除錯。
 
 ---
 
