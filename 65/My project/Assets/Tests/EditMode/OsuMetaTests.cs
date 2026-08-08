@@ -42,6 +42,21 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Reads_Chart_Length_Including_Hold_Tails()
+        {
+            var m = OsuBeatmapParser.ReadMeta(Sample);
+            Assert.AreEqual(800, m.LastNoteMs,
+                "譜長要算到長條的尾巴(最後一顆是 300 開始、800 放開的長條)");
+        }
+
+        [Test]
+        public void Chart_Length_Is_Zero_Without_Hit_Objects()
+        {
+            var m = OsuBeatmapParser.ReadMeta("osu file format v14\n[General]\nAudioFilename: virtual\n[HitObjects]\n");
+            Assert.AreEqual(0, m.LastNoteMs);
+        }
+
+        [Test]
         public void Reads_Background_From_Events()
         {
             var m = OsuBeatmapParser.ReadMeta(Sample);

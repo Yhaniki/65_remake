@@ -60,7 +60,10 @@ namespace Sdo.Game
         //      或多了 BPM 換段 / osu 綠線 SV / 停拍，難度會往上走一點點（最多 +8%）。舊快取存的是沒有這層的值。
         //      (⚠️ 第三次撞號:這條在 main 上原本編成 v13,與這條分支的 v13/v14 撞在一起 —— 又是兩邊各自
         //       往下編。合併時照上面立的規矩整組往後挪到 15,把兩邊的舊快取一次作廢。)
-        public const int Version = 15;
+        // v16: 純 keysound 合輯(一個 beatmap set 塞了 N 首不同曲子,全部 AudioFilename: virtual)現在會按譜長
+        //      拆成 N 首歌,而不是併成一首只留三個難度槽(其餘整首消失);標題也改成曲名而不是整包的標籤。
+        //      舊快取每個這種資料夾都只存了一首歌,不作廢就永遠看不到其他曲子。
+        public const int Version = 16;
 
         // JsonUtility-friendly records (plain [Serializable], public fields, no UnityEngine.Object refs → safe to
         // serialize on the scan worker thread). Empty difficulty slots are simply ABSENT from `charts` — never a null

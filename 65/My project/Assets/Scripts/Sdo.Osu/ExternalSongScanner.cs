@@ -377,6 +377,9 @@ namespace Sdo.Osu
             public SongFormat Format;
             public readonly ExternalChart[] Charts = new ExternalChart[3];
             public string Title = "", Artist = "", Version = "";
+            /// <summary>純 keysound 合輯拆出來的那一首曲子自己的名字("" = 不是合輯);
+            /// 見 <see cref="ExternalSongGrouper.SongGroup.SongName"/>。</summary>
+            public string SongName = "";
             public double Bpm;
             public int PreviewStartMs = -1, PreviewLengthMs;
             public string AudioName = "", BannerName = "", BackgroundName = "", CdTitleName = "";
@@ -579,6 +582,7 @@ namespace Sdo.Osu
                 d.Title = First(g.Charts, i => candMeta[i].Title, Path.GetFileNameWithoutExtension(candFile[lead]));
                 d.Artist = First(g.Charts, i => candMeta[i].Artist, "");
                 d.Version = First(g.Charts, i => candMeta[i].Version, "");
+                d.SongName = g.SongName ?? "";   // 合輯:這一首曲子自己的名字(Disambiguate 拿它當標題)
                 // Basenamed like the grouping key and like the .sm branch: a chart may spell its audio/background with
                 // a folder prefix or backslashes, and the folder's files are matched by filename.
                 d.AudioName = ExternalSongGrouper.BaseName(First(g.Charts, i => candMeta[i].AudioFilename, ""));
@@ -849,6 +853,15 @@ namespace Sdo.Osu
         private static void Disambiguate(List<ExternalSong> songs, List<Draft> drafts)
         {
             if (songs.Count < 2) return;
+
+            // 純 keysound 合輯:「這是哪一首曲子」已經在分組時用譜長判定完了(ExternalSongGrouper),曲名就在
+            // 難度名的前綴裡 → 直接用它,不必經過下面那套「同標題幾首」的啟發(它會把合輯的曲名寫成
+            // "Piano Beatmap Set (Canon - 4K EX)" 這種樣子)。
+            for (int i = 0; i < songs.Count; i++)
+            {
+                string name = (drafts[i].SongName ?? "").Trim();
+                if (name.Length > 0) songs[i].Title = name;
+            }
 
             // Pack set: drop the shared pack label, show each song's own name (its osu Version) instead.
             var byTitle = CountTitles(songs);

@@ -197,9 +197,21 @@ namespace Sdo.Osu
                     case "HitObjects":
                         m.NoteCount++;   // one object per line (tap or hold)
                         var hitParts = line.Split(new[] { ',' }, 6);
+                        if (hitParts.Length > 2)
+                        {
+                            int t = TryInt(hitParts[2], 0);
+                            if (t > m.LastNoteMs) m.LastNoteMs = t;
+                        }
                         if (hitParts.Length > 5)
                         {
                             bool hold = (TryInt(hitParts[3], 0) & 128) != 0;
+                            if (hold)
+                            {
+                                // parts[5] = "endTime:hitSample" — 長條的尾巴也算譜長。
+                                int colon = hitParts[5].IndexOf(':');
+                                int end = TryInt(colon >= 0 ? hitParts[5].Substring(0, colon) : hitParts[5], 0);
+                                if (end > m.LastNoteMs) m.LastNoteMs = end;
+                            }
                             ParseHitSample(hitParts[5], hold, out string sampleName, out _);
                             if (sampleName.Length > 0) m.KeysoundCount++;
                         }
@@ -308,6 +320,10 @@ namespace Sdo.Osu
         public int BeatmapSetId = -1;    // [Metadata] BeatmapSetID；未上傳/自製/轉檔譜大多是 -1，只能當分組的次要線索
         public int NoteCount;            // number of [HitObjects] lines
         public int KeysoundCount;        // storyboard Sample events + hit objects with a custom sample filename
+        /// <summary>最後一顆音符的時間(ms，長條的尾巴算在內)＝這張譜的長度。0 = 沒有音符。
+        /// 純 keysound 譜(<c>AudioFilename: virtual</c>)沒有音檔可比，這就是「兩張譜是不是同一首曲子」
+        /// 唯一不靠命名的線索 —— 見 <see cref="ExternalSongGrouper.GroupOsu"/> 的合輯拆分。</summary>
+        public int LastNoteMs;
         public int PreviewTime = -1;     // [General] PreviewTime (ms); -1 = none (試聽起點；長度用預設)
     }
 }

@@ -763,6 +763,54 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Keysound_Compilation_Set_Becomes_One_Song_Per_Track()
+        {
+            // osu 的「鋼琴精選集」:一個 beatmap set 裡好幾首**不同曲子**,全部純 keysound(沒有音檔)、
+            // 共用一個 setId 與一個當標籤用的 Title。以前整包被併成一首歌 → 只剩三個難度槽,其餘整首選不到。
+            var dir = Dir("pack", "piano");
+            const string set = "Piano Beatmap Set";
+            Osu(dir, "canon.osu", "virtual", set, 800, version: "Canon - 4K EX", setId: 332673);
+            Osu(dir, "turkish.osu", "virtual", set, 600, version: "Turkish March - 4K EX", setId: 332673);
+            Osu(dir, "william.osu", "virtual", set, 400, version: "William Tell - 4K EX", setId: 332673);
+            Osu(dir, "circus.osu", "virtual", set, 1000, version: "4K HELL CIRCUS", setId: 332673);
+            Osu(dir, "hell10k.osu", "virtual", set, 1000, version: "10K HELL CIRCUS", setId: 332673, keys: 10);
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+
+            Assert.AreEqual(4, songs.Count, "四首 4K 曲子各自成一首歌(10K 那張照舊不算)");
+            var titles = new List<string>();
+            foreach (var s in songs)
+            {
+                titles.Add(s.Title);
+                Assert.IsTrue(s.Playable);
+                Assert.AreNotEqual("", s.SongKey, "同一個資料夾裡有好幾首歌 → 每首都要有自己的 songKey");
+                Assert.AreEqual("", s.AudioPath, "純 keysound:音樂就是譜自己的取樣,沒有底軌");
+            }
+            CollectionAssert.AreEquivalent(
+                new[] { "Canon", "Turkish March", "William Tell", "4K HELL CIRCUS" }, titles,
+                "標題要是曲名(藏在難度名的前綴裡),不是整包的標籤");
+        }
+
+        [Test]
+        public void Keysound_Difficulties_Of_One_Track_Remain_One_Song()
+        {
+            // 同一首純 keysound 曲子的三個難度(長度一樣)→ 還是一首歌三個難度槽,標題保持原樣。
+            var dir = Dir("pack", "bms");
+            Osu(dir, "another.osu", "virtual", "Only One Song", 400, version: "SP ANOTHER", setId: 55);
+            Osu(dir, "hyper.osu", "virtual", "Only One Song", 399, version: "SP HYPER", setId: 55);
+            Osu(dir, "normal.osu", "virtual", "Only One Song", 398, version: "SP NORMAL", setId: 55);
+
+            var songs = ExternalSongScanner.LoadFolder("pack", dir);
+
+            Assert.AreEqual(1, songs.Count);
+            Assert.AreEqual("Only One Song", songs[0].Title);
+            Assert.AreEqual("", songs[0].SongKey, "沒拆 → 維持「資料夾唯一一首」的身分,舊收藏不會失效");
+            Assert.IsNotNull(songs[0].Charts[0]);
+            Assert.IsNotNull(songs[0].Charts[1]);
+            Assert.IsNotNull(songs[0].Charts[2]);
+        }
+
+        [Test]
         public void Osu_Note_Count_Counts_The_Hold_Release_Too()
         {
             // osu 那條路線本來是拿 [HitObjects] 的行數（長條算一顆）——和 .sm 一樣要改看判定次數。
