@@ -4,55 +4,38 @@ using Sdo.Game;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// 結算左側那幾格頭貼要用哪一支待機 —— <see cref="ScreenGameplay.ResultPortraitRestMot"/>。
+    /// 結算左側那一排頭貼的待機 —— <see cref="ScreenGameplay.ResultRowRestMot"/>。
     ///
-    /// 病灶(使用者回報「MMD 模型結算時兩個頭貼的動作不同步」):兩格的**幀號一直都是對齊的**
-    /// (WREST0072 與 MREST0082 都是 MaxTime=63、相位都是 0、同一條 SdoAvatar.LoopFrame,
-    /// 對得上官方 hook 錄到的 "cursor spread=0.000 => IN LOCKSTEP"),差的是**動作內容**:
-    /// 一格男角放男版待機、一格女角放女版待機。穿 SDO 身體時那是一男一女、本來就該不一樣;
-    /// 換成 MMD 後兩格都是同一個模型,就變成「同一個人卻在做兩套動作」。
+    /// 使用者要的是「結算的頭貼大家一起擺動」。這件事**修錯過一次**:上一版的規則是「身體是 MMD → 女版,
+    /// 是 SDO → 照自己的性別」,只保證了 MMD 那幾格彼此一致;實際畫面是異質的(女角穿 MMD ＋ 男角沒穿)
+    /// → 兩支不同的動作,使用者第二次回報「遠端那個 MMD 的擺動跟其他人沒同步」。
     ///
-    /// 所以規則是:身體是 MMD → 大家同一支;還是 SDO 身體 → 照自己的性別。
-    /// 這裡刻意不寫死 .MOT 檔名(檔名只有 ScreenGameplay 那三個常數一份,見那裡的註解),
-    /// 只釘住彼此的關係。
+    /// 現在的規則是「整排同一個常數」,而且刻意做成**結構上**成立:那個常數沒有參數、也沒有分支可以走歪。
+    /// 所以這裡釘的不是分支,是那個常數的性質 —— 它必須是舞台待機(64 幀迴圈),不能變成大廳待機
+    /// (WREST0056=151 幀 / MREST0067=241 幀),否則整排的相位會跟舞台上的人整個對不上。
+    ///
+    /// 幀相位不必在這裡測:兩支舞台待機都是 MaxTime=63、相位 0、同一條 <see cref="SdoAvatar.LoopFrame"/>
+    /// (對得上官方 hook 錄到的 "cursor spread=0.000 => IN LOCKSTEP")。
     /// </summary>
     public class ResultPortraitIdleTests
     {
         [Test]
-        public void MmdBody_MaleAndFemale_ShareTheSameIdle()
+        public void ResultRowIdle_IsAGameplayIdle_NotALobbyIdle()
         {
-            // 同一個 MMD 模型,兩格必須完全同一支 —— 這就是「不同步」的修正點
-            Assert.AreEqual(ScreenGameplay.ResultPortraitRestMot(true, male: false),
-                            ScreenGameplay.ResultPortraitRestMot(true, male: true));
-        }
-
-        [Test]
-        public void SdoBody_KeepsEachGendersOwnIdle()
-        {
-            // SDO 身體是一男一女,各自的待機才是對的(官方行為,不要一起改掉)
-            Assert.AreNotEqual(ScreenGameplay.ResultPortraitRestMot(false, male: false),
-                               ScreenGameplay.ResultPortraitRestMot(false, male: true));
-        }
-
-        [Test]
-        public void MmdIdle_IsOneOfTheGameplayIdles_NotSomethingNew()
-        {
-            // 共用的那一支必須是既有的**舞台**待機之一(不能變成大廳待機 WREST0056,
-            // 也不能憑空生一支);目前挑的是女版。
-            string mmd = ScreenGameplay.ResultPortraitRestMot(true, male: false);
-            Assert.AreEqual(ScreenGameplay.ResultPortraitRestMot(false, male: false), mmd,
+            // 必須是既有的**舞台**待機之一(不能憑空生一支,也不能退成大廳待機 —— 那是 151/241 幀,
+            // 相位跟 64 幀的完全對不上)。目前釘在女版。
+            Assert.AreEqual(ScreenGameplay.FemaleGameplayRestMot, ScreenGameplay.ResultRowRestMot,
                             "共用待機目前釘在女版舞台待機 —— 改了這個選擇就要一起改這條測試");
+            Assert.AreNotEqual(SdoRoomAvatar.IdleMot, ScreenGameplay.ResultRowRestMot, "退成大廳待機了(女版)");
+            Assert.AreNotEqual(SdoRoomAvatar.MaleIdleMot, ScreenGameplay.ResultRowRestMot, "退成大廳待機了(男版)");
         }
 
         [Test]
-        public void SwitchingMmdOn_ChangesOnlyTheMaleRow()
+        public void TheTwoGameplayIdles_AreStillDistinct()
         {
-            // 女角那格開不開 MMD 都是同一支(不該無謂地換 clip → 不該有多餘的硬切)
-            Assert.AreEqual(ScreenGameplay.ResultPortraitRestMot(false, male: false),
-                            ScreenGameplay.ResultPortraitRestMot(true, male: false));
-            // 男角那格才會被改過去
-            Assert.AreNotEqual(ScreenGameplay.ResultPortraitRestMot(false, male: true),
-                               ScreenGameplay.ResultPortraitRestMot(true, male: true));
+            // 舞台待機本來就是一男一女兩支(結算列刻意只用其中一支;場上的舞者仍然各挑各的)。
+            // 這兩個常數哪天被誰改成同一支的話,上面那條「釘在女版」就會失去意義而不自知。
+            Assert.AreNotEqual(ScreenGameplay.MaleGameplayRestMot, ScreenGameplay.FemaleGameplayRestMot);
         }
     }
 }

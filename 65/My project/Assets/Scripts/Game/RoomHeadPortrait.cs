@@ -44,14 +44,15 @@ namespace Sdo.Game
         public bool groundClipsOnly = false;
         /// <summary>true = 這一格的 MMD 身體**要建布料**(頭髮/裙子會擺動)。
         ///
-        /// 沒有布料時症狀不是「少一點細節」而是**頭髮完全不動**:<see cref="MmdAvatar"/> 的 retarget 會整組
-        /// 跳過 physics 骨(那些骨本來就是留給布料解算的),於是它們停在造型姿勢、剛性地跟著頭骨走
-        /// (使用者回報「遠端玩家大頭貼換 MMD 的沒有擺動」)。所以**看得到頭髮的那幾格都要開**:
-        /// 結算列(192×216)與房間座位那排的本機那格 —— 旁邊 5 格是 <c>RoomRemoteHeadSet</c> 拍現場角色,
-        /// 那幾隻本來就有布料,自己這格不開的話同一排裡只有我的頭髮是死的。
+        /// 🔴 <b>目前所有頭貼都是 false(使用者指定),別隨手打開。</b>布料是建一具 MMD rig 最貴的一段,
+        /// 而頭貼(房間座位那排、結算那排)一律不付這筆錢。
         ///
-        /// 預設 false 是因為布料是建一具 MMD rig 最貴的一段:新的頭貼要自己決定「這格大到值得付這筆錢嗎」。
-        /// 而且只有真的畫出 MMD 身體時才付得到:SDO 穿搭沒有布料解算,這個旗標對它是 no-op。</summary>
+        /// 已知代價,不是 bug:沒有布料時 MMD 的頭髮**完全不動** —— <see cref="MmdAvatar"/> 的 retarget 會
+        /// 整組跳過 physics 骨(那些骨本來就是留給布料解算的),於是它們停在造型姿勢、剛性地跟著頭骨走。
+        /// (房間那排旁邊 5 格是 <c>RoomRemoteHeadSet</c> 拍現場角色,那幾隻是全身 rig、本來就有布料,
+        /// 所以只有自己那格的頭髮不動 —— 同樣是已知的。)
+        ///
+        /// 只有真的畫出 MMD 身體時這個旗標才有意義:SDO 穿搭沒有布料解算,對它是 no-op。</summary>
         public bool clothSim = false;
         /// <summary>待機 clip 換成這一支(相對路徑;null/空 = 用房間的大廳待機)。
         ///
@@ -125,25 +126,9 @@ namespace Sdo.Game
         /// <summary>The live head-portrait texture (null until Init succeeds). Assign to a RawImage.</summary>
         public Texture Texture => _rt;
 
-        /// <summary>這一格是男角還是女角(<see cref="Init"/> 傳進來的那個)。</summary>
-        public bool Male => _male;
-
-        /// <summary>畫出來的身體現在是不是 MMD 模型(SDO 的臉/髮已經被藏起來了)。遠端玩家的模型是下載完
-        /// 才換上去的,所以這個值會在頭貼活著的期間翻面 —— 讀它的地方要每幀問,不能只問一次。</summary>
-        public bool ShowingMmdBody => _avatar != null && MmdAvatarSwap.ActiveFor(_avatar) != null;
-
-        /// <summary>把待機換成 <paramref name="motRelPath"/>(已經是這一支就什麼都不做)。
-        /// 硬切不混色:結算那幾格的待機都是 64 幀迴圈,0.5s crossfade 只會把兩個姿勢糊在一起。
-        /// 用途:MMD 顯示時每一格頭貼都要用**同一支**待機(見 <c>ScreenGameplay.ResultPortraitRestMot</c>)。</summary>
-        public void SetIdleMot(string motRelPath)
-        {
-            if (_avatar == null || string.IsNullOrEmpty(motRelPath) || motRelPath == idleMotOverride) return;
-            idleMotOverride = motRelPath;
-            LoadMirrorClips();
-            if (_idleMot == null) return;
-            _avatar.SnapNextClip();
-            _avatar.SetClip(_idleMot);
-        }
+        // 🔴 這裡以前有一個 SetIdleMot(執行期換待機)—— 已經拿掉,別再加回來。
+        // 結算那一排是**建立時就定案**同一支待機(ScreenGameplay.ResultRowRestMot),沒有任何情況需要中途換:
+        // 換 clip 就是「兩格動作對不上」的來源,而中途換的觸發條件(MMD 下載完、F8 開關)全都只發生在某幾格身上。
 
         /// <summary>Build the isolated head avatar + camera + RT. Returns false if the avatar failed to load.
         /// <paramref name="bodyIndex"/> = 這個角色自己的體型 (胖瘦;跟房間全身 avatar 同一個值,頭貼才一致)。</summary>

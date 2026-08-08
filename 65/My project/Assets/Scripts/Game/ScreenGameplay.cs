@@ -255,16 +255,22 @@ namespace Sdo.Game
         // 舞台待機 idle(rest cat 0x15,DPS 開始前/結束後循環的那支 — 023_gameplay:4135)。
         // WREST0056 是 cat 0 的大廳待機,擺在這裡是錯的。同場的遠端舞者也照這一組挑(見 RemoteRestMot)——
         // 兩邊各寫一份字面值的話,改了一邊沒改另一邊就會變成「只有別人的待機動作不一樣」。
-        internal const string FemaleGameplayRestMot = "MOTION/WREST0072.MOT";
-        internal const string MaleGameplayRestMot   = "MOTION/MREST0082.MOT";
-        // 🔴 MMD 顯示時,結算左側**每一格頭貼一律用這一支**待機,不照各自的性別挑。
-        // 畫出來的身體是同一個 MMD 模型(模型沒有性別之分),一格放男版 MREST0082、一格放女版 WREST0072,
-        // 看起來就是「同一個人卻在做兩套動作」= 使用者回報的「結算頭貼不同步」。
-        // 注意**幀號本來就是對齊的**:兩支都是 MaxTime=63(64 幀迴圈)、相位都是 0,走的是同一條
-        // SdoAvatar.LoopFrame —— 官方那條 lockstep(hook 錄到同一支 mot 的 cursor spread=0.000)沒有被破壞,
-        // 差的只是「動作內容」。所以修的是挑哪一支,不是時鐘。
-        // 固定挑女版(而不是「本機玩家的性別」)是為了兩台看到的是同一套。
-        internal const string MmdPortraitRestMot = FemaleGameplayRestMot;
+        public const string FemaleGameplayRestMot = "MOTION/WREST0072.MOT";
+        public const string MaleGameplayRestMot   = "MOTION/MREST0082.MOT";
+        // 🔴 結算左側那一排頭貼的待機:**整排一律這一支**,不分性別、也不管身體是 SDO 還是 MMD。
+        //
+        // 使用者要的是「結算的頭貼大家一起擺動」。任何「每一格自己決定」的規則遲早會破,因為那一排是異質的
+        // (一男一女、有人穿 MMD 有人沒穿),而且**修過一次還是破**:上一版的規則是「MMD → 女版,SDO → 照性別」,
+        // 於是「女角穿 MMD」 vs 「男角沒穿」照樣是兩支不同的動作 = 使用者第二次回報的「MMD 那格跟其他人不同步」。
+        // 只有「整排同一個常數」這條規則對所有組合都成立,而且是**結構上**成立(沒有分支可以走歪)。
+        //
+        // 幀號一直都是對齊的,不要往時鐘那邊查:兩支都是 MaxTime=63(64 幀迴圈)、相位 0、同一條
+        // SdoAvatar.LoopFrame(對得上官方 hook 錄到的 "cursor spread=0.000 => IN LOCKSTEP")。差的只有動作內容。
+        //
+        // 挑女版(而不是本機玩家的性別)是為了兩台看到的是同一套。男角套女版待機是安全的:MALE.HRC 與
+        // FEMALE.HRC 的第 0..51 根骨**逐一相同**(頭/頸/脊椎/四肢全在裡面),只有 52..54 的馬尾骨排列不同
+        // —— 那三根在男角身上頂多讓馬尾髮型擺得不一樣,不會扭到身體。
+        public const string ResultRowRestMot = FemaleGameplayRestMot;
         public string danceMot = "MOTION/WDANCE0002.MOT";      // fallback dance motion if no DPS
         public string restMot = FemaleGameplayRestMot;         // 男版在 ConfigureAvatarGender 換成 MaleGameplayRestMot
         public string dpsPath = "DANCE/11435.DPS";             // per-song choreography for sdom1435 (sequences motion slices)
@@ -588,7 +594,6 @@ namespace Sdo.Game
         public float headAvatarScale = 1.05f;     // idle avatar uniform scale — tuned
         public float headAvatarYaw = 30f;         // 模型 Y 旋轉 = 3/4 斜角（官方頭部近拍 mode7 = −30°；轉模型不轉相機）。可調/翻號
         private Camera _headCam; private RenderTexture _headRt; private SdoAvatar _headAvatar;
-        private string _headRestMot;              // 本機那一格頭貼現在放的待機(換 MMD/換回 SDO 才重載,見 SyncLocalHeadPortraitIdle)
         private Vector3 _headModelPos = new Vector3(0f, 50f, 0f);   // head bone REST pos (model space) — cam targets this so it stays FIXED (no per-frame bob chase)
         private static readonly Vector3 HeadAvatarSpot = new Vector3(5000f, 0f, 5000f);   // isolated parking spot (off the stage)
         private readonly Dictionary<int, RoomHeadPortrait> _resultHeadPortraits = new Dictionary<int, RoomHeadPortrait>();
@@ -5930,7 +5935,6 @@ namespace Sdo.Game
         private void ResultTick()
         {
             UpdateHeadPortraitCam();          // keep the local head-portrait cam tracking the (moving) head each frame
-            SyncLocalHeadPortraitIdle();      // 本機那一格:MMD 顯示時改用大家共用的那支待機(F8 可即時開關 → 每幀比)
             SyncResultHeadPortraitTuning();   // 遠端那幾格跟著同一組(F4 可調的)取景參數走
             float el = Time.time - _resultPhaseStart;
             switch (_resultPhase)

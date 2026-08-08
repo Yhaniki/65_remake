@@ -322,10 +322,9 @@ namespace Sdo.Game
             // 🔴 頭貼一律用**地面**待機,不是 restMot —— 穿飛行翅膀時 restMot 已經被 ConfigureAvatarGender 換成
             // flystay(浮空前傾),那是**舞台**待機用的。結算列其他人的頭貼是地面 idle(RoomHeadPortrait.
             // groundClipsOnly),自己這一列跟著飛就變成「同一排頭像裡只有我歪一邊」,而且別台看到的我還是站姿。
-            // MMD 顯示時這裡先擺自己性別那支,ResultTick 的 SyncLocalHeadPortraitIdle 會在 MMD 身體真的
-            // 建出來之後換成大家共用的那一支(見 ScreenGameplay.ResultPortraitRestMot)。
-            _headRestMot = localPlayerMale ? MaleGameplayRestMot : FemaleGameplayRestMot;
-            av.RestMot = LoadAsset(_headRestMot, b => MotLoader.Load(b));
+            // 也不照 localPlayerMale 挑:整排(含遠端那幾格)共用同一支,見 ResultRowRestMot —— 一男一女
+            // 各挑各的就是「頭貼沒有同步擺動」。定了就不再換,整場結算都是這一支。
+            av.RestMot = LoadAsset(ResultRowRestMot, b => MotLoader.Load(b));
             av.DanceEnabled = () => false;     // always hold the standby idle clip
             av.DanceTimeSec = () => -1f;
             // Load the WOMAN body parts, opaque portrait style (shared builder; "h_" prefix keeps the isolated names).
@@ -334,10 +333,9 @@ namespace Sdo.Game
             SetLayerRecursive(parent, headPortraitLayer);
             _headAvatar = av;
             // MMD 顯示模式下結算頭貼也換成 MMD 模型 (framing: TryHeadBoundsRest below)。
-            // 🔴 布料要建(cloth: true):這格是 192×216、頭幾乎填滿,沒有布料時頭髮是剛性跟著頭骨走的
-            // ——MmdAvatar 的 retarget 會整組跳過 physics 骨(那些骨本來就是給布料解算的)。房間那顆頭貼
-            // 仍然不建(RoomHeadPortrait.clothSim 預設 false),它是整場都活著的,而布料是 rig 最貴的一段。
-            MmdAvatarSwap.Register(av, cloth: true);
+            // 布料不建(cloth: false):它是建一具 rig 最貴的一段,而頭貼一律不付這筆錢(使用者指定)。
+            // 代價是 MMD 的頭髮在頭貼裡是剛性跟著頭骨走的 —— 見 RoomHeadPortrait.clothSim 的說明。
+            MmdAvatarSwap.Register(av, cloth: false);
             // cache the head bone's REST (bind) model-space position — the cam targets this (NOT the live animated bone),
             // so the camera stays FIXED and the idle head-bob plays out inside the frame instead of being chased.
             Vector3 hp = av.BoneModelPos("Bip01_Head");

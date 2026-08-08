@@ -99,33 +99,29 @@ namespace Sdo.Tests
         }
 
         /// <summary>
-        /// 結算列那幾格頭貼(<c>ScreenGameplay.AttachResultHeadPortraits</c> / <c>BuildIdleHeadAvatar</c>)是
-        /// <c>clothSim = true</c> 建的,MMD 身體上的頭髮/裙子才會擺動。
+        /// <see cref="RoomHeadPortrait.clothSim"/> 這根開關真的接到 rig 上:打開才建布料。
         ///
-        /// 沒有布料時症狀不是「少了一點細節」而是**頭髮完全不動**:<see cref="MmdAvatar"/> 的 retarget 會整組
-        /// 跳過 physics 骨(那些骨本來就是留給布料解算的),於是它們停在 rest 姿勢剛性地跟著頭骨走
-        /// (使用者回報:「遠端玩家大頭貼換 MMD 的沒有擺動」)。
+        /// 出貨的頭貼**全部是關的**(布料是建一具 rig 最貴的一段,使用者指定不付這筆錢)—— 上面那條測試
+        /// 釘的就是那個預設。這條釘的是另一半:哪天要開的時候它會真的生效,而不是一個沒接線的欄位。
+        /// (症狀對照:沒有布料時 MMD 的頭髮完全不動 —— <see cref="MmdAvatar"/> 的 retarget 整組跳過
+        /// physics 骨,它們停在造型姿勢剛性地跟著頭骨走。)
         /// </summary>
         [UnityTest]
-        public IEnumerator ResultRowPortrait_WithClothSim_BuildsTheHairSim()
+        public IEnumerator HeadPortrait_ClothSimKnob_ActuallyBuildsTheHairSim()
         {
             LogAssert.ignoreFailingMessages = true;
             MmdAvatarSwap.SetEnabled(true);
 
-            var host = new GameObject("ResultHeadPortraitHost");
+            var host = new GameObject("ClothSimPortraitHost");
             var portrait = host.AddComponent<RoomHeadPortrait>();
-            // 結算列的設定(見 AttachResultHeadPortraits):只對頭骨取景、地面 clip、192×216、**要布料**
             portrait.clothSim = true;
-            portrait.boneFraming = true;
-            portrait.groundClipsOnly = true;
-            portrait.rtWidth = 192; portrait.rtHeight = 216;
             Assert.IsTrue(portrait.Init(male: false), "portrait avatar failed to load");
             for (int i = 0; i < 5; i++) yield return null;
 
             var driver = host.GetComponentInChildren<SdoAvatar>(true);
             var mmd = MmdAvatarSwap.ActiveFor(driver);
-            Assert.IsNotNull(mmd, "the 結算頭貼 avatar did not swap to the MMD body");
-            Assert.IsTrue(mmd.HasCloth, "結算頭貼 built no hair sim — the MMD hair can only ride the head rigidly");
+            Assert.IsNotNull(mmd, "the 頭貼 avatar did not swap to the MMD body");
+            Assert.IsTrue(mmd.HasCloth, "clothSim=true built no hair sim — the knob is not wired to the rig");
 
             Object.Destroy(host);
             yield return null;

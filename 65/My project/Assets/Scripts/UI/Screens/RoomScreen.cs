@@ -909,9 +909,8 @@ namespace Sdo.UI.Screens
             var headGo = new GameObject("RoomLocalHead");
             _localHead = headGo.AddComponent<RoomHeadPortrait>();
             _localHead.layer = HeadLayer;
-            // 換上 MMD 模型時頭髮/裙擺要跟著擺(見 RoomHeadPortrait.clothSim)。旁邊那 5 格拍的是現場角色、
-            // 本來就有布料 —— 不開的話同一排裡只有自己那格的頭髮是死的。
-            _localHead.clothSim = true;
+            // 布料不開(clothSim 預設 false;使用者指定頭貼一律不付這筆錢)。旁邊那 5 格是 RoomRemoteHeadSet
+            // 拍現場角色、那幾隻本來就有布料,所以 MMD 顯示時只有自己這格的頭髮是不動的 —— 已知且刻意。
             ApplyHeadFraming(_localHead, male);   // 男女各自的上下/遠近
             _localHead.Init(male, parts, body);
             // 旁觀席上不演飛行動作:進房就在旁觀席時要關,換裝重建也會回到 Init 的預設(穿翅膀=飛)→ 得再關一次。
