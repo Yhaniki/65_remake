@@ -31,11 +31,22 @@ namespace Sdo.Game
         /// </summary>
         public const int RemoteAvatarLayer = 13;
 
-        // 🔴 頭上聊天泡**不在**這台相機裡:它要蓋過整張房間畫面(站在說話者前面的人也擋不住它),
-        //    所以整個住在 UI(RoomScreen 的 _bubbleLayer,夾在房間背景與 UI 面板之間)。
-        //    泡與泡之間照各人站的位置排前後,
-        //    深度由 RoomScreen 拿 TryChatBubbleAnchorWorld / SceneCamera 自己算(RoomBubbleDrawOrder)。
-        //    TagManager 的 layer 14/15("RoomBubble"/"RoomPeopleDepth")是那段歷史留下的,現在沒有人用。
+        /// <summary>
+        /// 頭上名字牌/家族列的 layer(TagManager 命名 "RoomNamePlate")。
+        ///
+        /// 名字牌**畫在這台相機裡**(每個人一張 world-space canvas,見 <c>RoomNamePlateAnchor</c>),
+        /// 為的就是吃 GPU 的深度測試:站在前面的人、牆、家具都能逐像素把後面那個人的名字切掉
+        /// (使用者回報:「後面那個人的名牌出現在前面那個人的身體前面」)。畫在 UI 層時做不到 ——
+        /// 整層都疊在房間 RenderTexture 之上,任何人的名字都一定蓋過所有 3D 內容。
+        ///
+        /// 🔴 頭上聊天泡**刻意不在**這裡:泡要蓋過整張房間畫面(站在說話者前面的人也擋不住它),
+        ///    所以泡整個留在 UI(RoomScreen 的 _bubbleLayer)。「名字吃遮擋、泡不吃」是兩條各自
+        ///    獨立的使用者需求,不要順手把泡也搬進來。
+        ///
+        /// 與角色分層的理由同 <see cref="RemoteAvatarLayer"/>:六格頭貼相機只看角色那層,名字不該入頭貼。
+        /// 前端 UI 相機也要把這層遮掉(RoomScreen 進房時做),否則名字會被畫第二次且位置/大小都錯。
+        /// </summary>
+        public const int NamePlateLayer = 14;
 
         public const string ScenePath = "SCENE/SCNROOM";   // official open-room lobby (id 37); SCNCHIRSROOM is off-table
 
@@ -270,17 +281,30 @@ namespace Sdo.Game
         public bool TryHeadViewport(out Vector2 vp)
         {
             vp = default;
-            if (_avatar == null || _cam == null || _avatarRoot == null) return false;
+            Vector3 hw;
+            if (_cam == null || !TryHeadAnchorWorld(out hw)) return false;
+            Vector3 v = _cam.WorldToViewportPoint(hw);
+            if (v.z <= 0f) return false;   // behind the camera
+            vp = new Vector2(v.x, v.y);
+            return true;
+        }
+
+        /// <summary>
+        /// 本機名字牌錨點的**世界座標**(頭骨 + <see cref="headMarkerRise"/>)。名字牌的畫進了房間相機
+        /// 之後要用它算那張正對相機的平面(見 <see cref="RoomBubbleWorldAnchor"/>);螢幕位置仍走
+        /// <see cref="TryHeadViewport"/>,兩者刻意是同一個點,不然名字會擺在 A 的位置卻用 B 的深度。
+        /// </summary>
+        public bool TryHeadAnchorWorld(out Vector3 world)
+        {
+            world = default;
+            if (_avatar == null || _avatarRoot == null) return false;
             Vector3 hm = _avatar.BoneModelPos("Bip01_Head");
             if (hm == Vector3.zero) hm = _avatar.BoneModelPos("Bip01_Neck");
             if (hm == Vector3.zero) return false;
             // MMD 模型放大時,畫面上的頭比 SDO 的頭骨高一截 → 名字牌(與疊在它上面的家族列)要跟著讓,
             // 否則就被壓在放大後的頭裡面(見 MmdHeadroom;模型比較矮時不往下掉)。
-            Vector3 hw = MmdAvatarSwap.RaiseHeadAnchor(_avatar, _avatarRoot.TransformPoint(hm))
-                       + new Vector3(0f, headMarkerRise, 0f);
-            Vector3 v = _cam.WorldToViewportPoint(hw);
-            if (v.z <= 0f) return false;   // behind the camera
-            vp = new Vector2(v.x, v.y);
+            world = MmdAvatarSwap.RaiseHeadAnchor(_avatar, _avatarRoot.TransformPoint(hm))
+                  + new Vector3(0f, headMarkerRise, 0f);
             return true;
         }
 
@@ -808,6 +832,10 @@ namespace Sdo.Game
         public bool TryRemoteHeadViewport(int userId, out Vector2 vp)
             => TryRemoteBoneViewport(userId, "Bip01_Head", "Bip01_Neck", headMarkerRise, out vp);
 
+        /// <summary>某位遠端玩家名字牌錨點的**世界座標**(同 <see cref="TryHeadAnchorWorld"/> 的用途)。</summary>
+        public bool TryRemoteHeadAnchorWorld(int userId, out Vector3 world)
+            => TryRemoteBoneWorld(userId, "Bip01_Head", "Bip01_Neck", headMarkerRise, out world);
+
         /// <summary>某位遠端玩家**肩膀**在畫面上的位置 —— 頭上泡的錨點(泡身往上飄、尾巴指著肩膀)。</summary>
         public bool TryRemoteBubbleViewport(int userId, out Vector2 vp)
             => TryRemoteBoneViewport(userId, "Bip01_Neck", "Bip01_Head", 0f, out vp);
@@ -1062,8 +1090,9 @@ namespace Sdo.Game
             _cam.orthographic = false;
             _cam.fieldOfView = 45f;                                 // EXACT decompiled projection (Camera_ctor): fovY=45,
             _cam.nearClipPlane = 5f; _cam.farClipPlane = 7500f;     //  near=5, far=7500
-            // 場景與遠端角色。頭上泡**不在**這裡(它在 UI,見這個檔案開頭那段註解)。
-            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer);
+            // 場景、遠端角色,以及頭上名字牌那一層 —— 名字牌進來這台相機才吃得到深度測試
+            // (見 NamePlateLayer)。頭上泡**不在**這裡(它在 UI,同上)。
+            _cam.cullingMask = (1 << SceneLayer) | (1 << RemoteAvatarLayer) | (1 << NamePlateLayer);
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = Color.black;

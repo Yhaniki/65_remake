@@ -66,6 +66,54 @@ namespace Sdo.UI.Util
             return canvas;
         }
 
+        /// <summary>
+        /// 一張「掛在 3D 世界裡、由**別人的**相機 render」的小 canvas —— 房間頭上名字牌的畫用它,
+        /// 這樣它才吃得到那台相機的深度緩衝(站在前面的人 / 牆 / 家具能逐像素把它切掉)。
+        ///
+        /// 與 <see cref="CreateWorldCanvas"/> 的差別(每一條都是刻意的):
+        /// • **不建相機、不 <c>AspectController.Register</c>** —— 它是被房間相機拍到的,不是自己一台。
+        /// • **不掛 GraphicRaycaster** —— 頭上名字牌不吃滑鼠(右鍵選單走 RoomPickCatcher 打 3D 角色)。
+        /// • pivot/anchor (0,1) + sizeDelta = <paramref name="designSize"/> —— 讓「anchor (0,1) 的子物件」的
+        ///   原點正好落在 canvas 的 transform 位置上,子物件的 anchoredPosition 就與它還在 UI 層時同一個意思
+        ///   (往下為負)。所以既有的排版程式碼一行都不用改。
+        /// • ConstantPixelSize + dynamicPixelsPerUnit 3 —— 與前端 UI canvas 同一組設定,
+        ///   否則同樣 fontSize 的字會用不同尺度長出來。
+        ///
+        /// 🔴 <paramref name="parent"/> **絕對不可以是另一個 Canvas 的後代**:Unity 會把它降級成
+        /// nested canvas,renderMode 直接被忽略 —— 名字牌會回到 UI 層,遮擋功能靜默消失。
+        /// </summary>
+        public static RectTransform CreateDepthTestedWorldCanvas(string name, Transform parent, int layer, Vector2 designSize)
+        {
+            var go = new GameObject(name, typeof(Canvas), typeof(CanvasScaler));
+            go.layer = layer;
+            var canvas = go.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            var rt = (RectTransform)canvas.transform;
+            if (parent != null) rt.SetParent(parent, false);
+            rt.pivot = new Vector2(0f, 1f);
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.sizeDelta = designSize;
+            var scaler = go.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.dynamicPixelsPerUnit = 3f;
+            return rt;
+        }
+
+        /// <summary>
+        /// 把 <paramref name="go"/> 與它**所有後代**搬到 <paramref name="layer"/>。
+        ///
+        /// 為什麼需要:<c>new GameObject(...)</c> 一律落在 layer 0,**不會**繼承 parent —— 所以任何
+        /// 掛進 world canvas 的 UI 子物件都要在建好之後補這一下,否則房間相機看不到它們(名字整個消失)。
+        /// TMP 執行期長出來的後備字型 sub-mesh 會繼承它 parent 當下的 layer,所以建立時做一次就夠。
+        /// </summary>
+        public static void SetLayerRecursive(GameObject go, int layer)
+        {
+            if (go == null) return;
+            go.layer = layer;
+            var t = go.transform;
+            for (int i = 0; i < t.childCount; i++) SetLayerRecursive(t.GetChild(i).gameObject, layer);
+        }
+
         public static void EnsureEventSystem()
         {
             if (EventSystem.current != null) return;

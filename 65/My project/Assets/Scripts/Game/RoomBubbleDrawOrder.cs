@@ -9,6 +9,10 @@ namespace Sdo.Game
     ///
     /// 泡整個畫在 UI 裡(疊在房間畫面之上、UI 面板之下),所以兩顆泡的前後**只由畫的順序決定** ——
     /// 這裡把各人的深度換成畫的順序,呼叫端(RoomScreen.SortBubbleOwnerLayers)照名次重排每個人那一層。
+    ///
+    /// 頭上**名字牌**用同一套名次,但套的地方不同:它已經搬進房間相機(吃深度測試),
+    /// 一個人一張 world canvas → 走 <see cref="ApplyFarToNearSorting"/> 改 sortingOrder。
+    /// 名次算法只該有一份 —— gameplay 舞台的名牌(<c>NameplateDrawOrder</c>)也是叫 <see cref="FarToNear"/>。
     /// </summary>
     public static class RoomBubbleDrawOrder
     {
@@ -63,6 +67,32 @@ namespace Sdo.Game
             for (int rank = 0; rank < layers.Count; rank++)
                 for (int i = 0; i < scratchOrders.Count; i++)
                     if (scratchOrders[i] == rank) { if (layers[i] != null) layers[i].SetAsLastSibling(); break; }
+        }
+
+        /// <summary>
+        /// 同 <see cref="ApplyFarToNear"/>,但套在 <b>world-space canvas 的 sortingOrder</b> 上 ——
+        /// 房間的頭上名字牌走這條。
+        ///
+        /// 為什麼不能沿用 sibling index:每個人的名字牌各自是一張**獨立的 root canvas**(要各自貼在
+        /// 自己那個人的深度平面上),而獨立 canvas 之間的畫序只看 sortingOrder,sibling 順序完全不影響。
+        ///
+        /// <paramref name="baseOrder"/> 要 &gt; 0:房間場景(牆/家具/角色/玻璃)全在 sortingOrder 0,
+        /// 而 sortingOrder 比 renderQueue 優先([[unity-sortingorder-outranks-renderqueue]]) ——
+        /// 給 0 的話名字牌會與場景的透明批混在一起排,窗玻璃那類 ZWrite Off 的東西就會蓋在名字上。
+        /// 排在透明批之後**不會**讓名字穿透人體:那是深度測試(不透明的人早就寫好深度)在管的,與畫序無關。
+        /// </summary>
+        public static void ApplyFarToNearSorting(List<Canvas> canvases, List<float> depths,
+                                                 List<int> scratchOrders, int baseOrder)
+        {
+            if (canvases == null || depths == null || scratchOrders == null) return;
+            if (canvases.Count != depths.Count) return;
+            FarToNear(depths, scratchOrders);
+            for (int i = 0; i < canvases.Count; i++)
+            {
+                if (canvases[i] == null) continue;
+                int order = baseOrder + scratchOrders[i];
+                if (canvases[i].sortingOrder != order) canvases[i].sortingOrder = order;
+            }
         }
     }
 }

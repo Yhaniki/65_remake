@@ -7,8 +7,9 @@ namespace Sdo.Game
     ///
     /// 🔴 名字取自它的第一個用途(房間頭上聊天泡),但**房間的泡已經不走這裡了** ——
     /// 泡要蓋過整張房間畫面(前面的人也擋不住它),所以它整個回到 UI 層;泡與泡之間照站位排前後
-    /// 由 <see cref="RoomBubbleDrawOrder"/> 做。現在的使用者是 gameplay 舞台上的頭部標記
-    /// (<c>HeadMarker.SolveWorldPlane</c>)—— 那裡要的正是「被舞者擋住」的效果。
+    /// 由 <see cref="RoomBubbleDrawOrder"/> 做。現在的使用者是兩處「要被人擋住」的頭上物件:
+    /// gameplay 舞台的頭部標記(<c>HeadMarker.SolveWorldPlane</c>)與房間的頭上**名字牌**
+    /// (<c>RoomNamePlateAnchor</c>)。
     ///
     /// 要的是:東西不可以隨距離變大變小、螢幕位置要與畫在 UI 上時逐像素一樣。做法是把它放在一個
     /// **正對相機的平面**上,並讓平面的縮放隨距離補償:
@@ -69,5 +70,18 @@ namespace Sdo.Game
             return result;
         }
 
+        /// <summary>
+        /// 「內容層」相對於平面原點的位移(設計 px)。
+        ///
+        /// 平面的原點就落在錨點的投影點上,但掛在上面的名字/家族列**還是用 800×600 的絕對設計座標**
+        /// 在排版(PlaceFollow / RoomFamilyRow.Place 一行都不用改)。所以中間夾一層,把整組往回推
+        /// 「錨點的設計座標」——(0,0) 的子物件於是正好落在錨點上,而 (x,−y) 的子物件落在它該在的絕對位置。
+        ///
+        /// 座標系:子物件是左上錨(0,1),anchoredPosition 往下為負;<paramref name="vp"/> 是 y 朝上的
+        /// viewport,所以錨點的設計座標是 (vp.x·W, (1−vp.y)·H),而這裡回的是它的相反數
+        /// (x 取負、y 取正 —— 差一個負號的症狀是名字牌上下鏡射地飄到頭的另一邊)。
+        /// </summary>
+        public static Vector2 ContentOffset(Vector2 vp, float designWidth, float designHeight)
+            => new Vector2(-vp.x * designWidth, (1f - vp.y) * designHeight);
     }
 }

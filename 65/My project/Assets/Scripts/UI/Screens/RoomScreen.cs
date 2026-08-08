@@ -154,11 +154,12 @@ namespace Sdo.UI.Screens
         private OutlinedLabel _songLabel;   // 歌名(白邊)
         private OutlinedLabel _floatName;       // name marker that floats above the avatar in the room (官方頭上名字)；字 rgb(250,252,214) 描黑邊
         private RoomFamilyRow _localFamily;     // 自己頭上的家族列(徽章+家族名)；家族名留空則整條不顯示
-        // ---- 頭上名字牌:一個人一層,層與層之間照他站的位置排(與泡同一套規則,見 SortNamePlateLayers)----
-        // 名字牌全部畫在 UI 裡 ⇒ 誰蓋誰只由畫的順序決定。不分層的話「本機那面先建、遠端的後建」
-        // → 站在最後面的遠端玩家的名字牌永遠蓋住站在最前面的自己(使用者回報的症狀)。
-        private RectTransform _nameLayer;   // 名字牌/家族列的容器;夾在房間背景與泡層之間(泡仍畫在名字之上)
-        private readonly Dictionary<int, RectTransform> _nameOwnerLayer = new Dictionary<int, RectTransform>();   // 0 = 本機
+        // ---- 頭上名字牌:一個人一張 world canvas,由**房間相機**畫(見 RoomNamePlateAnchor)----
+        // 名字牌畫在 3D 裡才吃得到深度測試 —— 站在前面的人/牆/家具能真的把後面那個人的名字切掉。
+        // 名字牌與名字牌之間再照各人站的位置排 sortingOrder(SortNamePlateLayers);不排的話
+        // 「本機那面先建、遠端的後建」→ 站在最後面的遠端玩家的名字牌會蓋住站在最前面的自己。
+        private Transform _namePlateRoot;   // 那些 canvas 的家。🔴 場景根物件,不可以掛在 Root(Canvas)底下
+        private readonly Dictionary<int, RoomNamePlateAnchor> _nameOwnerLayer = new Dictionary<int, RoomNamePlateAnchor>();   // 0 = 本機
         private RectTransform _chatContent;
         private ScrollRect _chatScroll;
         private ChatLineClip _chatClip;
@@ -352,17 +353,12 @@ namespace Sdo.UI.Screens
             UIKit.Stretch(pick.rectTransform);
             pick.gameObject.AddComponent<PointerClickProxy>().Clicked = OnRoomPickClick;
 
-            // 名字牌層。建在**泡層之前** → 泡永遠畫在名字之上(見下面 _bubbleLayer 的註解),
-            // 建在**所有 UI 面板之前** → 名字牌被面板擋住。層內一個人一層,每幀按站位重排(SortNamePlateLayers)。
-            // 🔴 不要對它呼叫 SetAsLastSibling —— 那就是在改上面兩條規則。
-            _nameLayer = UIKit.NewRect(Root, "RoomNamePlateLayer");
-            UIKit.Stretch(_nameLayer);
-
             // name marker that floats above the avatar's head in the room (positioned each frame in Update).
             // 跟遊戲內頭頂名字同款:共用色 TextStyles.FaceCream(rgb 250,252,214)+ 黑邊 + 粗體 + 8 向描邊。
             // trackEm = 字靠緊一點（真・字距，字不變形），跟遊戲內頭頂名字同一個值；實際收多少由 OutlinedLabel
             // 每次 SetText 依字串重算（固定收緊會把 SimSun 半形西文的 "TA" 黏成一塊 → 見 TextTracking）。
-            // 本機的名字/家族列住 owner 0 那一層 —— 這樣它才跟遠端的名字牌一起參與「照站位排前後」。
+            // 本機的名字/家族列住 owner 0 那一組 —— 這樣它才跟遠端的名字牌一起參與「照站位排前後」,
+            // 也才跟遠端的一樣吃深度遮擋(那一組是 3D 裡的 world canvas,不是 UI 層,見 NamePlateOwnerLayer)。
             var localNameLayer = NamePlateOwnerLayer(0);
             _floatName = OutlinedLabel.Create(localNameLayer, "FloatName", 0, 0, 160, 20, 14, TextStyles.FaceCream, Color.black, HeadNameEdgePx, true,
                 trackEm: TextStyles.HeadNameTrackEm);
@@ -372,11 +368,12 @@ namespace Sdo.UI.Screens
             // 內容與顯不顯示由這個角色的 profile.json 決定(沒設過才吃 config.ini 的預設，見 UpdateFamilyRow)，位置每幀跟著頭擺(PlaceFamilyRow)。
             // 版面與排版數學在 RoomFamilyRow —— **遠端玩家頭上那條走同一份**(見 SyncRemoteNamePlates)。
             _localFamily = RoomFamilyRow.Create(localNameLayer, "");
+            RefreshNamePlateLayer(0);   // 🔴 子物件生在 layer 0 → 不補這一下,房間相機看不到自己的名字
 
             // 對話泡層。位置(sibling index)**就是**泡的前後規則本身,所以這兩件事都靠它:
-            //   • 建在**頭上名字/家族列那一層(_nameLayer)之後** → 泡永遠畫在名字之上(自己說話時泡不會被自己的名字擋住);
             //   • 建在**所有 UI 面板之前** → 上排的六格頭貼框與其他面板蓋得住泡(使用者需求)。
             // 泡因此蓋過整張房間畫面(站在說話者前面的人、家具都擋不住它),但不會浮到 UI 上面。
+            // 頭上名字牌不必再靠 sibling 讓位:它整個搬進房間相機了(3D),而泡在 UI ⇒ 泡永遠畫在名字之上。
             // 🔴 不要把它搬到別處建、也不要對它呼叫 SetAsLastSibling —— 那就是在改上面兩條規則。
             // 打字泡與已送出的泡都掛這底下(一個人一層,見 BubbleOwnerLayer)。容器本身不擋點擊。
             _bubbleLayer = UIKit.NewRect(Root, "RoomChatBubbleLayer");
@@ -807,13 +804,17 @@ namespace Sdo.UI.Screens
             if (_localHead == null) BuildLocalHead(localMale, localAvatarParts, localBody);
 
             // mask the room's 3D layers off the front-end UI camera (it renders ~0, so it would otherwise draw them flat)
+            // 🔴 名字牌那層也要遮:它是 world canvas,前端 UI 相機看得到的話會被畫**第二次**
+            //    (位置與大小都錯,而且那一份不吃深度 → 看起來就像「遮擋時好時壞」)。
             var ui = FrontendApp.Instance != null ? FrontendApp.Instance.UiCam : null;
             if (ui != null)
             {
                 _maskedCam = ui; _savedMask = ui.cullingMask;
                 ui.cullingMask &= ~((1 << RoomScene3D.SceneLayer) | (1 << HeadLayer)
-                                    | (1 << RoomScene3D.RemoteAvatarLayer));
+                                    | (1 << RoomScene3D.RemoteAvatarLayer)
+                                    | (1 << RoomScene3D.NamePlateLayer));
             }
+            if (_namePlateRoot != null) _namePlateRoot.gameObject.SetActive(true);
 
             // 儲物櫃換穿後 → 立即重建本機房間 avatar + 頭貼，讓新穿搭當場反映 (WardrobeScreen 已寫回 profile.json)。
             Nav.RefreshRoomAvatar = RefreshLocalAvatar;
@@ -989,9 +990,13 @@ namespace Sdo.UI.Screens
             if (_localHead != null) { Destroy(_localHead.gameObject); _localHead = null; }
             if (_scene != null) { Destroy(_scene.gameObject); _scene = null; }
             _remoteHeads = null;   // 它掛在 _scene 底下,跟著一起被拆掉(OnDestroy 會釋放 RT)
-            // 遠端玩家的角色跟著 _scene 一起被拆掉,但名字牌是掛在 UI 上的 → 要自己收,
+            // 遠端玩家的角色跟著 _scene 一起被拆掉,但名字牌住在自己的根物件底下 → 要自己收,
             // 否則回房間時會留下一排指向已消失角色的孤兒名字牌。
             ClearRemoteNamePlates();
+            // 本機那一組留著(BuildUI 建一次的常駐物件),但整棵關掉:名字牌不在 Root 底下,
+            // 藏起這個畫面**不會**連帶藏到它。房間相機已經沒了所以現在看不見,但下一個 3D 畫面
+            // (男女選擇/商城)若剛好也拍 layer 14,自己的名字就會冒出來。
+            if (_namePlateRoot != null) _namePlateRoot.gameObject.SetActive(false);
             _remoteAvatarRev = -1;
             _localMoveSlot = int.MinValue;
             // 回房時房裡的人全是「新面孔」→ 自己的位置會重送一次(見 RepublishMoveForNewcomers)。
@@ -3378,15 +3383,16 @@ namespace Sdo.UI.Screens
             UpdateRoomChatBubble();
             UpdateSentRoomBubbles();
 
-            // 本機的名字牌 + 家族列:UI 的絕對設計座標,與泡一樣蓋過房間畫面、被面板擋住。
-            // 刻意**不**放進泡那一層(泡要畫在名字之上),但與遠端的名字牌住同一層 —— 名字牌之間
-            // 照站位排前後(SortNamePlateLayers),否則站在後面的人的名字牌會蓋住站在前面的自己。
+            // 本機的名字牌 + 家族列:仍用 800×600 的絕對設計座標排版,但整組住在房間相機的 3D 裡
+            // (RoomNamePlateAnchor)→ 前面的人/牆/家具擋得住它。頭在鏡頭後面就整組關掉。
             if (_scene.TryHeadViewport(out var vp))
             {
                 if (_floatName != null && _floatName.gameObject.activeSelf)
                     PlaceFollow(_floatName.Rect, vp, -8f);   // 名字在頭的正上方
                 PlaceFamilyRow(vp);                          // 家族列再往上疊一行
+                PlaceNamePlateAnchor(0, vp);                 // 🔴 子物件擺完之後才貼平面(同一個 vp)
             }
+            else NamePlateAnchorSetActive(0, false);
             // 名字牌都擺完了 → 按各人站的位置重排「名字牌與名字牌」的前後(本機那面也算在內)。
             SortNamePlateLayers();
 
@@ -5016,6 +5022,7 @@ namespace Sdo.UI.Screens
                 string lvl = s.Level > 0 ? "  LV:" + s.Level : "";
                 lbl.SetText((s.Name ?? "") + lvl);
                 RemoteFamilyRow(s.UserId).Set(s.Guild, s.GuildEmblem);
+                RefreshNamePlateLayer(s.UserId);   // 名字/家族列的子物件都生在 layer 0(見那邊的註解)
             }
 
             // Spectators still own a live 3D avatar in a looker slot. Keep the same userId-keyed label while
@@ -5040,6 +5047,7 @@ namespace Sdo.UI.Screens
                     string lvl = sp.Level > 0 ? "  LV:" + sp.Level : "";
                     lbl.SetText((sp.Name ?? "") + lvl);
                     RemoteFamilyRow(sp.UserId).Set(sp.Guild, sp.GuildEmblem);
+                    RefreshNamePlateLayer(sp.UserId);
                 }
 
             _remoteGoneIds.Clear();
@@ -5054,11 +5062,11 @@ namespace Sdo.UI.Screens
                     if (fam != null) fam.Destroy();
                     _remoteFamilies.Remove(id);
                 }
-                RectTransform layer;
-                // 名字牌住的那一層跟著走:留著的話房間開久了會累積一堆空層(每幀都要走一遍排序)。
-                if (_nameOwnerLayer.TryGetValue(id, out layer))
+                RoomNamePlateAnchor anchor;
+                // 名字牌住的那一組跟著走:留著的話房間開久了會累積一堆空 canvas(每幀都要走一遍排序)。
+                if (_nameOwnerLayer.TryGetValue(id, out anchor))
                 {
-                    if (layer != null) Destroy(layer.gameObject);
+                    if (anchor != null) anchor.Destroy();
                     _nameOwnerLayer.Remove(id);
                 }
                 DestroySentBubblesOf(id);   // 角色已被拆掉,泡不清會孤兒地掛到壽命結束
@@ -5094,21 +5102,51 @@ namespace Sdo.UI.Screens
         }
 
         /// <summary>
-        /// 某個人的名字牌住的那一層(lazily 建)。整層與 <see cref="_nameLayer"/> 同框、不吃滑鼠,
-        /// 所以名字牌的座標仍是 800×600 的**絕對設計座標**(PlaceFollow/PlaceFamilyRow 一行都不用改)。
+        /// 某個人的名字牌住的那一組(lazily 建)—— 一張由**房間相機**畫的 world canvas
+        /// (<see cref="RoomNamePlateAnchor"/>),回的是它的內容層。
         ///
-        /// 一個人一層的唯一理由是**排序**:層與層之間每幀按各人的深度重排(見 <see cref="SortNamePlateLayers"/>)。
-        /// owner 0 = 本機自己(名字 + 家族列 + 徽章都在裡面,它們彼此不重疊,層內順序無所謂)。
+        /// 一個人一組有兩個理由:
+        ///   ① **遮擋**:整組每幀貼到那個人的頭部深度上 → 站在前面的人/牆/家具擋得住他的名字
+        ///      (在 UI 層時做不到:那一層永遠疊在整張房間畫面之上,使用者回報的正是這個);
+        ///   ② **排序**:名字牌之間再照各人的深度排 sortingOrder(見 <see cref="SortNamePlateLayers"/>)。
+        ///
+        /// 內容層仍是 800×600 的**絕對設計座標**,所以 PlaceFollow / RoomFamilyRow.Place 一行都不用改。
+        /// owner 0 = 本機自己(名字 + 家族列 + 徽章都在裡面,它們彼此不重疊,組內順序無所謂)。
         /// </summary>
         private RectTransform NamePlateOwnerLayer(int owner)
         {
-            if (_nameLayer == null) return null;
-            RectTransform rt;
-            if (_nameOwnerLayer.TryGetValue(owner, out rt) && rt != null) return rt;
-            rt = UIKit.NewRect(_nameLayer, "RoomNamePlateOwner" + owner);
-            UIKit.Stretch(rt);
-            _nameOwnerLayer[owner] = rt;
-            return rt;
+            RoomNamePlateAnchor anchor;
+            if (_nameOwnerLayer.TryGetValue(owner, out anchor) && anchor != null && anchor.Content != null)
+                return anchor.Content;
+            anchor = RoomNamePlateAnchor.Create(NamePlateRoot(), "RoomNamePlateOwner" + owner,
+                                                RoomScene3D.NamePlateLayer);
+            _nameOwnerLayer[owner] = anchor;
+            return anchor.Content;
+        }
+
+        /// <summary>
+        /// 所有名字牌 canvas 的家。🔴 **場景根物件**,刻意不掛在 <c>Root</c> 底下 —— 那是一張 Canvas,
+        /// 掛進去會被 Unity 降級成 nested canvas,renderMode 直接被忽略:名字牌靜默回到 UI 層、遮擋消失。
+        /// 與 RoomScreen 同壽命(常駐單例);離開房間時整棵關掉,見 <see cref="OnHide"/>。
+        /// </summary>
+        private Transform NamePlateRoot()
+        {
+            if (_namePlateRoot != null) return _namePlateRoot;
+            var go = new GameObject("RoomNamePlates3D") { layer = RoomScene3D.NamePlateLayer };
+            _namePlateRoot = go.transform;
+            return _namePlateRoot;
+        }
+
+        /// <summary>
+        /// 剛往 <paramref name="owner"/> 那一組加了子物件 → 把整棵樹搬回名字牌的 layer。
+        /// 🔴 <c>new GameObject</c> 一律生在 layer 0(**不繼承 parent**),漏叫的症狀是
+        /// 「那個人的名字整個不見」而不是位置不對 —— 房間相機根本沒拍到它。
+        /// </summary>
+        private void RefreshNamePlateLayer(int owner)
+        {
+            RoomNamePlateAnchor anchor;
+            if (_nameOwnerLayer.TryGetValue(owner, out anchor) && anchor != null)
+                anchor.RefreshLayer(RoomScene3D.NamePlateLayer);
         }
 
         /// <summary>
@@ -5122,8 +5160,8 @@ namespace Sdo.UI.Screens
             for (int i = 0; i < _nameScratchOwners.Count; i++)
             {
                 int owner = _nameScratchOwners[i];
-                var rt = _nameOwnerLayer[owner];
-                if (rt != null) Destroy(rt.gameObject);
+                var anchor = _nameOwnerLayer[owner];
+                if (anchor != null) anchor.Destroy();
                 _nameOwnerLayer.Remove(owner);
             }
         }
@@ -5133,35 +5171,61 @@ namespace Sdo.UI.Screens
         /// 沒有它的話順序就是「誰先建誰在下面」—— 本機的名字牌是 BuildUI 建的,所以站在最後面的
         /// 遠端玩家的名字牌會永遠蓋住站在最前面的自己。
         ///
+        /// 「被人/被場景擋住」是另一回事,那由房間相機的深度緩衝逐像素處理(名字牌住在 3D 裡,
+        /// 見 <see cref="RoomNamePlateAnchor"/>);這裡管的只有「兩面名字牌自己重疊時誰蓋誰」——
+        /// UI 材質不寫深度,兩張 canvas 之間只看 sortingOrder。
+        ///
         /// 深度量的是**泡的那個錨點(肩膀骨)**,與 <see cref="TrackBubbleOwnerDepth"/> 同一個點:
         /// 同一個人的泡與名字牌用同一個深度,兩者的前後才不會互相矛盾。量不到(人剛進來/在鏡頭後面)
         /// → 當成無限遠,排在所有人後面。
         /// </summary>
         private void SortNamePlateLayers()
         {
-            if (_nameOwnerLayer.Count <= 1) return;
+            if (_nameOwnerLayer.Count == 0) return;
             var cam = _scene != null ? _scene.SceneCamera : null;
             if (cam == null) return;
 
-            _nameSortLayers.Clear();
+            _nameSortCanvases.Clear();
             _nameSortDepths.Clear();
             foreach (var kv in _nameOwnerLayer)
             {
-                if (kv.Value == null) continue;
+                if (kv.Value == null || kv.Value.Canvas == null) continue;
                 Vector3 anchorWorld;
                 bool have = kv.Key == 0
                     ? _scene.TryChatBubbleAnchorWorld(out anchorWorld)
                     : _scene.TryRemoteChatBubbleAnchorWorld(kv.Key, out anchorWorld);
-                _nameSortLayers.Add(kv.Value);
+                _nameSortCanvases.Add(kv.Value.Canvas);
                 _nameSortDepths.Add(have
                     ? Vector3.Dot(anchorWorld - cam.transform.position, cam.transform.forward)
                     : float.MaxValue);
             }
-            RoomBubbleDrawOrder.ApplyFarToNear(_nameSortLayers, _nameSortDepths, _nameSortOrders);
+            RoomBubbleDrawOrder.ApplyFarToNearSorting(_nameSortCanvases, _nameSortDepths, _nameSortOrders,
+                                                      RoomNamePlateAnchor.SortingBase);
+        }
+
+        /// <summary>
+        /// 把 <paramref name="owner"/> 那一組名字牌貼到他頭上的深度平面(每幀,擺完子物件之後)。
+        ///
+        /// 🔴 <paramref name="vp"/> 必須與錨點是**同一個點**:子物件用的是絕對設計座標(從 vp 算),
+        /// 而內容層的回推位移也從 vp 算 —— 兩邊用不同的點,名字就會離開頭飄走。
+        /// </summary>
+        private void PlaceNamePlateAnchor(int owner, Vector2 vp)
+        {
+            RoomNamePlateAnchor anchor;
+            if (!_nameOwnerLayer.TryGetValue(owner, out anchor) || anchor == null) return;
+            var cam = _scene != null ? _scene.SceneCamera : null;
+            if (cam == null) { anchor.SetActive(false); return; }
+
+            Vector3 anchorWorld = default;
+            bool have = owner == 0
+                ? _scene.TryHeadAnchorWorld(out anchorWorld)
+                : _scene.TryRemoteHeadAnchorWorld(owner, out anchorWorld);
+            if (!have) { anchor.SetActive(false); return; }
+            anchor.Place(cam, anchorWorld, vp);
         }
 
         private readonly List<int> _nameScratchOwners = new List<int>();
-        private readonly List<RectTransform> _nameSortLayers = new List<RectTransform>();
+        private readonly List<Canvas> _nameSortCanvases = new List<Canvas>();
         private readonly List<float> _nameSortDepths = new List<float>();
         private readonly List<int> _nameSortOrders = new List<int>();
 
@@ -5177,6 +5241,7 @@ namespace Sdo.UI.Screens
                 Vector2 vp;
                 bool visible = _scene.TryRemoteHeadViewport(kv.Key, out vp);
                 if (lbl.gameObject.activeSelf != visible) lbl.gameObject.SetActive(visible);
+                if (!visible) NamePlateAnchorSetActive(kv.Key, false);
 
                 // 家族列跟著同一顆頭:看不到的人整條一起藏(有家族的人才畫得出來,見 RoomFamilyRow.Set)。
                 RoomFamilyRow fam;
@@ -5188,7 +5253,15 @@ namespace Sdo.UI.Screens
 
                 if (!visible) continue;
                 PlaceFollow(lbl.Rect, vp, -8f);
+                PlaceNamePlateAnchor(kv.Key, vp);   // 🔴 子物件擺完之後才貼平面(同一個 vp)
             }
+        }
+
+        /// <summary>那一組名字牌的整張 canvas 開/關(頭轉到鏡頭後面/人還沒生出來 → 關掉)。</summary>
+        private void NamePlateAnchorSetActive(int owner, bool on)
+        {
+            RoomNamePlateAnchor anchor;
+            if (_nameOwnerLayer.TryGetValue(owner, out anchor) && anchor != null) anchor.SetActive(on);
         }
 
 
