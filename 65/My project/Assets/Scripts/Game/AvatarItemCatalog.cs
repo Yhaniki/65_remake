@@ -71,6 +71,83 @@ namespace Sdo.Game
             return res;
         }
 
+        /// <summary>
+        /// 一套 (套装) 拆成「一件一件」的商品列 —— 官方買一套 = 那幾件各自進儲物櫃一格 (使用者:「不是一整個進去格子,
+        /// 而是各個部分分開各自一個格子」),所以購買/入櫃/換穿走的都是這些單件,套装列本身不入櫃。
+        ///
+        /// 每個組件先照 <see cref="OutfitComponentMeshes"/> 同一條規則解出 mesh (含跨性別後備),再由檔名決定部位/性別:
+        /// 目錄裡有名字的那一列優先 (玩家看到的是真正的商品名),否則合成一列 mesh-only (與商城逐部位分頁同一套 synth id
+        /// → 重開遊戲仍解得回 <see cref="ById"/>)。解不出 mesh 或不是穿戴部位 (素體臉) 的組件略過。
+        /// </summary>
+        public List<ShopItem> OutfitComponentItems(ShopItem outfitItem)
+        {
+            var res = new List<ShopItem>();
+            var set = SetForItem(outfitItem);
+            if (set == null) return res;
+            bool male = ItemTypes.GenderOf(outfitItem.Category, outfitItem.Name) == ItemSex.Male;
+            string g = male ? "MAN" : "WOMAN";
+            var seen = new HashSet<int>();
+            foreach (var c in set.Components)
+            {
+                string hit = FindComponentMesh(c.ModelId, g, c.Token) ?? FindComponentMesh(c.ModelId, male ? "WOMAN" : "MAN", c.Token);
+                if (hit == null) continue;
+                var sex = hit.IndexOf("_MAN_", StringComparison.OrdinalIgnoreCase) >= 0 ? ItemSex.Male : ItemSex.Female;
+                var slot = SlotFromMeshFileName(hit);
+                if (slot == EquipSlot.None) continue;
+                var it = NamedGarment(sex, slot, c.ModelId) ?? SynthGarment(sex, slot, c.ModelId);
+                if (it != null && seen.Add(it.Id)) res.Add(it);
+            }
+            return res;
+        }
+
+        /// <summary>Pure: the worn slot an AVATAR mesh FILENAME names (<c>023425_WOMAN_COAT.MSH</c> → 上衣). 素體臉
+        /// (<c>_FACE</c> without <c>_HUAN</c>) is body geometry, not a shop item → None.</summary>
+        public static EquipSlot SlotFromMeshFileName(string file)
+        {
+            if (string.IsNullOrEmpty(file)) return EquipSlot.None;
+            string u = file.ToUpperInvariant();
+            if (u.Contains("_FACE_HUAN")) return EquipSlot.Expression;   // 表情 (先於 _FACE 判,否則會被吃掉)
+            if (u.Contains("_CHIBANG")) return EquipSlot.Wings;
+            if (u.Contains("_LINGDANG")) return EquipSlot.Necklace;
+            if (u.Contains("_ONE")) return EquipSlot.OnePiece;
+            if (u.Contains("_COAT")) return EquipSlot.Top;
+            if (u.Contains("_PANT")) return EquipSlot.Bottom;
+            if (u.Contains("_HAIR")) return EquipSlot.Hair;
+            if (u.Contains("_SHOES")) return EquipSlot.Shoes;
+            if (u.Contains("_HAND")) return EquipSlot.Gloves;
+            if (u.Contains("_GLASS")) return EquipSlot.Glasses;
+            return EquipSlot.None;
+        }
+
+        // (性別, 部位, modelId) → 目錄裡有名字的那一列。同一件常有租7/租30/永久多列 → 取目錄第一列 (商城也是這樣列)。
+        private Dictionary<(ItemSex, EquipSlot, int), ShopItem> _garmentByModel;
+        private ShopItem NamedGarment(ItemSex sex, EquipSlot slot, int modelId)
+        {
+            if (_garmentByModel == null)
+            {
+                _garmentByModel = new Dictionary<(ItemSex, EquipSlot, int), ShopItem>();
+                foreach (var it in Clothing)
+                {
+                    if (it.EquipSlot == EquipSlot.Outfit || it.EquipSlot == EquipSlot.None) continue;
+                    var key = (ItemTypes.GenderOf(it.Category, it.Name), it.EquipSlot, it.ModelId);
+                    if (!_garmentByModel.ContainsKey(key)) _garmentByModel[key] = it;
+                }
+            }
+            return _garmentByModel.TryGetValue((sex, slot, modelId), out var v) ? v : null;
+        }
+
+        // 沒有名字的組件 → 合成一列 (序號當名字、100M、永久),並登記進 _synthById 讓 ById 查得到。
+        private ShopItem SynthGarment(ItemSex sex, EquipSlot slot, int modelId)
+        {
+            int cat = CategoryForSynthSlot(sex, slot);
+            if (cat == 0) return null;
+            int id = SynthId(slot, sex, modelId);
+            if (_synthById.TryGetValue(id, out var s)) return s;
+            var syn = NewSynth(id, modelId, modelId.ToString("D6"), cat);
+            _synthById[id] = syn;
+            return syn;
+        }
+
         private string FindComponentMesh(int modelId, string g, string preferredToken = null)
         {
             string id = modelId.ToString("D6");
@@ -254,16 +331,21 @@ namespace Sdo.Game
             return s;
         }
 
-        // Synth-Id slot code (1..4) for the 衣物 slots that synthesise mesh-only rows; 0 = 附件 (bare id, legacy).
+        // Synth-Id slot code (1..7) for the 衣物 slots that synthesise mesh-only rows; 0 = 附件 (bare id, legacy).
+        // 5..7 (手套/眼鏡/連身) 只有「套装拆件」用得到 (那些部位的商城分頁不合成 mesh-only 列),是純新增的
+        // 編碼區段 (舊存檔只會出現 0..4),所以不影響任何既有 id 的解回。
         private static int SynthSlotCode(EquipSlot slot)
         {
             switch (slot)
             {
-                case EquipSlot.Hair:   return 1;
-                case EquipSlot.Top:    return 2;
-                case EquipSlot.Bottom: return 3;
-                case EquipSlot.Shoes:  return 4;
-                default:               return 0;   // 翅膀/表情/项链 → bare modelId
+                case EquipSlot.Hair:     return 1;
+                case EquipSlot.Top:      return 2;
+                case EquipSlot.Bottom:   return 3;
+                case EquipSlot.Shoes:    return 4;
+                case EquipSlot.Gloves:   return 5;
+                case EquipSlot.Glasses:  return 6;
+                case EquipSlot.OnePiece: return 7;
+                default:                 return 0;   // 翅膀/表情/项链 → bare modelId
             }
         }
 
@@ -276,7 +358,26 @@ namespace Sdo.Game
                 case 2: return EquipSlot.Top;
                 case 3: return EquipSlot.Bottom;
                 case 4: return EquipSlot.Shoes;
+                case 5: return EquipSlot.Gloves;
+                case 6: return EquipSlot.Glasses;
+                case 7: return EquipSlot.OnePiece;
                 default: return EquipSlot.None;
+            }
+        }
+
+        /// <summary>Category for a SYNTH row's slot — <see cref="CategoryFor"/> plus the three slots only 套装 拆件 ever
+        /// synthesises (手套/眼鏡/連身). Deliberately separate: <see cref="CategoryFor"/> also drives
+        /// <see cref="AllMeshModels"/>, and widening THAT would put every mesh-only glove/眼鏡/連身 on the shop shelf.</summary>
+        private static int CategoryForSynthSlot(ItemSex sex, EquipSlot slot)
+        {
+            bool m = sex == ItemSex.Male;
+            switch (slot)
+            {
+                case EquipSlot.Gloves:   return m ? ItemCategory.GlovesMale   : ItemCategory.GlovesFemale;    // _HAND
+                case EquipSlot.Glasses:  return m ? ItemCategory.GlassesMale  : ItemCategory.GlassesFemale;   // _GLASS
+                case EquipSlot.OnePiece: return m ? ItemCategory.OnePieceMale : ItemCategory.OnePieceFemale;  // _ONE
+                case EquipSlot.Necklace: return m ? ItemCategory.NecklaceMale : ItemCategory.NecklaceFemale;  // _LINGDANG
+                default: return CategoryFor(sex, slot);
             }
         }
 
@@ -365,7 +466,7 @@ namespace Sdo.Game
             int modelId = rel % SynthSlotStride;
             if (modelId <= 0) return null;
             var sex = (mult % 2) == 0 ? ItemSex.Male : ItemSex.Female;
-            int cat = CategoryFor(sex, slot);
+            int cat = CategoryForSynthSlot(sex, slot);
             string token = ItemTypes.MshSlotSuffix(cat);
             if (token == null) return null;
             string id6 = modelId.ToString("D6");

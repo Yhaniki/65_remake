@@ -83,6 +83,90 @@ namespace Sdo.Tests
             Assert.AreEqual(BuyResult.NoRoom, ShopService.Buy(wd, Clothes(6, ItemCategory.TopFemale, ItemPriceCurrency.Coins, 10), 0));
         }
 
+        // ---- BuyOutfit (套装：一套一個價,但每件各自入櫃一格) ----
+
+        // 一套的三件:上衣/下裝/髮型。套裝列本身沒有 mesh (cat 200 = 女套装)。
+        private static ShopItem OutfitRow(int id, int price, int durationDays = -1)
+            => new ShopItem { Id = id, Category = ItemCategory.OutfitFemale, PriceCategoryRaw = (int)ItemPriceCurrency.Coins,
+                              Price = price, DurationDays = durationDays, Quantity = -1, SexRaw = 0, Name = "白色星辰" };
+        private static ShopItem[] ThreePieces()
+            => new[]
+            {
+                Clothes(11, ItemCategory.TopFemale, ItemPriceCurrency.Coins, 300),
+                Clothes(12, ItemCategory.BottomFemale, ItemPriceCurrency.Coins, 300),
+                Clothes(13, ItemCategory.HairFemale, ItemPriceCurrency.Coins, 300),
+            };
+
+        [Test]
+        public void BuyOutfit_OwnsEachPieceSeparately_AndChargesSetPriceOnce()
+        {
+            // 使用者:「不是一整個進去格子,而是各個部分分開各自一個格子」→ 套裝列本身不入櫃,三件各佔一格。
+            var wd = new Wardrobe(); wd.Wallet.Coins = 1000;
+            var set = OutfitRow(80000001, 500);
+            Assert.AreEqual(BuyResult.Ok, ShopService.BuyOutfit(wd, set, ThreePieces(), 0));
+            Assert.AreEqual(500, wd.Wallet.Coins);                 // 只收一次整套標價 (不是三件加總 900)
+            Assert.IsTrue(wd.Owns(11)); Assert.IsTrue(wd.Owns(12)); Assert.IsTrue(wd.Owns(13));
+            Assert.IsFalse(wd.Owns(80000001));                     // 套裝列自己不佔格
+            Assert.AreEqual(3, wd.Count(ItemSlotType.Clothes));
+        }
+
+        [Test]
+        public void BuyOutfit_PiecesInheritSetDuration()
+        {
+            var wd = new Wardrobe(); wd.Wallet.Coins = 1000;
+            Assert.AreEqual(BuyResult.Ok, ShopService.BuyOutfit(wd, OutfitRow(80000001, 100, durationDays: 7), ThreePieces(), 1000));
+            Assert.AreEqual(1000 + 7 * 86400L, wd.GetOwned(11).ExpireUnix);
+        }
+
+        [Test]
+        public void BuyOutfit_AlreadyHavePartOfIt_OnlyFillsTheGaps()
+        {
+            var wd = new Wardrobe(); wd.Wallet.Coins = 1000;
+            var pieces = ThreePieces();
+            ShopService.Buy(wd, pieces[0], 0);                     // 先單買上衣 (300)
+            Assert.AreEqual(BuyResult.Ok, ShopService.BuyOutfit(wd, OutfitRow(80000001, 500), pieces, 0));
+            Assert.AreEqual(200, wd.Wallet.Coins);                 // 1000 - 300 - 500
+            Assert.AreEqual(3, wd.Count(ItemSlotType.Clothes));    // 已有的那件不重複佔格
+        }
+
+        [Test]
+        public void BuyOutfit_EveryPieceOwned_IsAlreadyOwned_AndFree()
+        {
+            var wd = new Wardrobe(); wd.Wallet.Coins = 2000;
+            var pieces = ThreePieces();
+            foreach (var p in pieces) ShopService.Buy(wd, p, 0);   // 900
+            Assert.AreEqual(BuyResult.AlreadyOwned, ShopService.BuyOutfit(wd, OutfitRow(80000001, 500), pieces, 0));
+            Assert.AreEqual(1100, wd.Wallet.Coins);                // 沒再扣錢
+        }
+
+        [Test]
+        public void BuyOutfit_NoRoom_WhenNotEveryPieceFits_AndChargesNothing()
+        {
+            // 剩 2 格但這套要 3 件 → 整套不成立 (不會買半套),錢也不動。
+            var wd = new Wardrobe { ClothSlotCount = 2 }; wd.Wallet.Coins = 1000;
+            Assert.AreEqual(BuyResult.NoRoom, ShopService.BuyOutfit(wd, OutfitRow(80000001, 500), ThreePieces(), 0));
+            Assert.AreEqual(1000, wd.Wallet.Coins);
+            Assert.AreEqual(0, wd.Count(ItemSlotType.Clothes));
+        }
+
+        [Test]
+        public void BuyOutfit_NotEnoughMoney_OwnsNothing()
+        {
+            var wd = new Wardrobe(); wd.Wallet.Coins = 100;
+            Assert.AreEqual(BuyResult.NotEnoughMoney, ShopService.BuyOutfit(wd, OutfitRow(80000001, 500), ThreePieces(), 0));
+            Assert.AreEqual(100, wd.Wallet.Coins);
+            Assert.IsFalse(wd.Owns(11));
+        }
+
+        [Test]
+        public void BuyOutfit_NoResolvableComponents_IsUnknownItem()
+        {
+            var wd = new Wardrobe(); wd.Wallet.Coins = 1000;
+            Assert.AreEqual(BuyResult.UnknownItem, ShopService.BuyOutfit(wd, OutfitRow(80000001, 500), new ShopItem[0], 0));
+            Assert.AreEqual(BuyResult.UnknownItem, ShopService.BuyOutfit(wd, OutfitRow(80000001, 500), null, 0));
+            Assert.AreEqual(1000, wd.Wallet.Coins);
+        }
+
         // ---- ComputeExpire ----
 
         [Test]

@@ -122,7 +122,42 @@ namespace Sdo.UI.Core
             s.Wardrobe.Reset();
             var p = ProfileManager.Active;
             ApplyProfileToWardrobe(p, s.Wardrobe);
+            var cat = AvatarItemCatalog.Instance;
+            if (MigrateOwnedOutfits(s.Wardrobe, id => cat.ById(id), it => cat.OutfitComponentItems(it)))
+                SaveOwnedWallet(s);   // 換過的存回去,下次開就是乾淨的
             HealEquippedParts(p, s.Gender == 1 ? ItemSex.Male : ItemSex.Female);
+        }
+
+        /// <summary>
+        /// 舊存檔搬家:早期的商城把「一整套 (套装)」當成 <b>一格</b> 存進儲物櫃,但套装列沒有自己的 mesh —— 那一格畫不出
+        /// 東西 (看起來像沒買到) 又佔著服飾欄。現在一套 = 它的每一件各自一格 (見 ShopService.BuyOutfit),所以載入時就地
+        /// 把舊的整套紀錄換成它的組件 (租期沿用原本那筆;已經有的那件不重複給),並移除整套那一筆。
+        /// 純邏輯 (目錄查詢注入) → 可單元測試。回傳是否真的動過 (呼叫端據此決定要不要落地)。
+        /// </summary>
+        public static bool MigrateOwnedOutfits(Wardrobe w, Func<int, ShopItem> byId, Func<ShopItem, List<ShopItem>> componentsOf)
+        {
+            if (w == null || byId == null || componentsOf == null) return false;
+            List<OwnedItem> sets = null;
+            foreach (var kv in w.Owned)
+            {
+                var it = byId(kv.Key);
+                if (it == null || it.EquipSlot != EquipSlot.Outfit) continue;
+                (sets = sets ?? new List<OwnedItem>()).Add(kv.Value);
+            }
+            if (sets == null) return false;
+            foreach (var o in sets)
+            {
+                var comps = componentsOf(byId(o.ItemId));
+                if (comps != null)
+                    foreach (var c in comps)
+                    {
+                        if (c == null || w.Owns(c.Id)) continue;
+                        w.AddOwned(new OwnedItem { ItemId = c.Id, Slot = c.SlotType, ExpireUnix = o.ExpireUnix, Quantity = 1 });
+                    }
+                w.RemoveOwned(o.ItemId);
+            }
+            w.ClearEquipped(EquipSlot.Outfit);
+            return true;
         }
 
         /// <summary>Re-derive <see cref="UserProfile.equippedParts"/> (the room/gender-select/gameplay avatar's mesh-path

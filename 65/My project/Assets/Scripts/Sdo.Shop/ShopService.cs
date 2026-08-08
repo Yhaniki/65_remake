@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Sdo.Shop
 {
     /// <summary>Outcome of a purchase (mirrors ShopMessages.java result codes).</summary>
@@ -98,6 +100,45 @@ namespace Sdo.Shop
                     ExpireUnix = ComputeExpire(item.DurationDays, nowUnix),
                     Quantity = consumable ? addQty : 1,
                 });
+            }
+            return BuyResult.Ok;
+        }
+
+        /// <summary>
+        /// Buy a 套装 (outfit set): one price for the set, but the player receives its COMPONENT GARMENTS as separate
+        /// inventory entries — each takes its own 儲物櫃 格子, exactly like the retail client (使用者:「不是一整個進去
+        /// 格子,而是各個部分分開各自一個格子」). The set row itself is never owned (it has no mesh of its own).
+        ///
+        /// Order mirrors <see cref="Buy"/>: already-complete → space for the pieces still missing → afford → spend →
+        /// craft each piece with the SET's duration. Pieces already owned (and unexpired) are left alone: they neither
+        /// cost a slot nor get re-issued, so re-buying a set the player half-owns just fills the gaps.
+        /// <paramref name="components"/> comes from the catalog (AvatarItemCatalog.OutfitComponentItems) — passed in so
+        /// this stays pure/unit-testable.
+        /// </summary>
+        public static BuyResult BuyOutfit(Wardrobe wardrobe, ShopItem outfit, IList<ShopItem> components, long nowUnix)
+        {
+            if (wardrobe == null || outfit == null || components == null || components.Count == 0) return BuyResult.UnknownItem;
+
+            int need = 0;                                   // 還沒擁有(或已過期)的件數 = 要佔幾格
+            foreach (var c in components)
+            {
+                if (c == null) continue;
+                var owned = wardrobe.GetOwned(c.Id);
+                if (owned == null || owned.IsExpired(nowUnix)) need++;
+            }
+            if (need == 0) return BuyResult.AlreadyOwned;    // 整套每一件都有了
+
+            if (wardrobe.Count(ItemSlotType.Clothes) + need > wardrobe.ClothSlotCount) return BuyResult.NoRoom;
+            if (!CanAfford(wardrobe.Wallet, outfit)) return BuyResult.NotEnoughMoney;
+
+            wardrobe.Wallet.Spend(outfit.Currency, outfit.Price);   // 收整套的標價一次 (不是逐件加總)
+            long expire = ComputeExpire(outfit.DurationDays, nowUnix);
+            foreach (var c in components)
+            {
+                if (c == null) continue;
+                var owned = wardrobe.GetOwned(c.Id);
+                if (owned != null && !owned.IsExpired(nowUnix)) continue;
+                wardrobe.AddOwned(new OwnedItem { ItemId = c.Id, Slot = c.SlotType, ExpireUnix = expire, Quantity = 1 });
             }
             return BuyResult.Ok;
         }

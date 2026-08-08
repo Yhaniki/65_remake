@@ -68,5 +68,56 @@ namespace Sdo.Tests
         {
             Assert.IsTrue(AvatarItemCatalog.ShouldSynthGarment(ItemSex.Female, EquipSlot.Top, 2247, null));
         }
+
+        // ---- 套装拆件用到的 mesh 檔名 → 部位 / synth id 來回 ----
+
+        [Test]
+        public void SlotFromMeshFileName_MapsEveryWornToken()
+        {
+            Assert.AreEqual(EquipSlot.Top,        AvatarItemCatalog.SlotFromMeshFileName("023425_WOMAN_COAT.MSH"));
+            Assert.AreEqual(EquipSlot.Bottom,     AvatarItemCatalog.SlotFromMeshFileName("023426_WOMAN_PANT.MSH"));
+            Assert.AreEqual(EquipSlot.Hair,       AvatarItemCatalog.SlotFromMeshFileName("023424_WOMAN_HAIR.MSH"));
+            Assert.AreEqual(EquipSlot.Shoes,      AvatarItemCatalog.SlotFromMeshFileName("023427_MAN_SHOES.MSH"));
+            Assert.AreEqual(EquipSlot.Gloves,     AvatarItemCatalog.SlotFromMeshFileName("023428_MAN_HAND.MSH"));
+            Assert.AreEqual(EquipSlot.Glasses,    AvatarItemCatalog.SlotFromMeshFileName("000673_WOMAN_GLASS.MSH"));
+            Assert.AreEqual(EquipSlot.OnePiece,   AvatarItemCatalog.SlotFromMeshFileName("002247_WOMAN_ONE.MSH"));
+            Assert.AreEqual(EquipSlot.Wings,      AvatarItemCatalog.SlotFromMeshFileName("023108_WOMAN_CHIBANG.MSH"));
+            Assert.AreEqual(EquipSlot.Necklace,   AvatarItemCatalog.SlotFromMeshFileName("023109_WOMAN_LINGDANG.MSH"));
+            Assert.AreEqual(EquipSlot.Expression, AvatarItemCatalog.SlotFromMeshFileName("023110_WOMAN_FACE_HUAN.MSH"));
+            // 素體臉是身體幾何,不是商品 → 不會被拆成一件衣服。
+            Assert.AreEqual(EquipSlot.None,       AvatarItemCatalog.SlotFromMeshFileName("900007_WOMAN_FACE.MSH"));
+        }
+
+        [Test]
+        public void SynthId_RoundTrips_ForTheOutfitOnlySlots()
+        {
+            // 手套/眼鏡/連身 只有「套装拆件」會合成 → 這三個 synth id 必須解得回同一個部位+性別+mesh,
+            // 否則買了整套、重開遊戲後那幾件就從儲物櫃消失。
+            var slots = new[] { EquipSlot.Gloves, EquipSlot.Glasses, EquipSlot.OnePiece };
+            var tokens = new[] { "HAND", "GLASS", "ONE" };
+            for (int i = 0; i < slots.Length; i++)
+                foreach (var sex in new[] { ItemSex.Male, ItemSex.Female })
+                {
+                    string mesh = "023425_" + (sex == ItemSex.Male ? "MAN" : "WOMAN") + "_" + tokens[i] + ".MSH";
+                    int id = AvatarItemCatalog.SynthId(slots[i], sex, 23425);
+                    var it = AvatarItemCatalog.SynthesizeSynthItem(id, f => f == mesh);
+                    Assert.IsNotNull(it, mesh + " 解不回商品列");
+                    Assert.AreEqual(slots[i], it.EquipSlot, mesh);
+                    Assert.AreEqual(23425, it.ModelId, mesh);
+                    Assert.AreEqual("AVATAR/" + mesh, it.MshRelPath, mesh);
+                }
+        }
+
+        [Test]
+        public void SynthId_NewSlotCodes_DoNotCollideWithTheOldOnes()
+        {
+            var ids = new HashSet<int>();
+            var slots = new[] { EquipSlot.Hair, EquipSlot.Top, EquipSlot.Bottom, EquipSlot.Shoes,
+                                EquipSlot.Gloves, EquipSlot.Glasses, EquipSlot.OnePiece };
+            foreach (var slot in slots)
+                foreach (var sex in new[] { ItemSex.Male, ItemSex.Female })
+                    Assert.IsTrue(ids.Add(AvatarItemCatalog.SynthId(slot, sex, 23425)), slot + "/" + sex + " id 撞號");
+            Assert.IsTrue(ids.Add(AvatarItemCatalog.SynthId(EquipSlot.Wings, ItemSex.Female, 23425)));   // 附件仍是 bare id
+        }
     }
 }

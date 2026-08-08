@@ -820,6 +820,7 @@ namespace Sdo.UI.Screens
         // 購買/全身購買 = 使用者主動花錢 → 要有 info 回饋 (其餘按鈕才靜默)。
         private void DoBuy(ShopItem item)
         {
+            if (item != null && item.EquipSlot == EquipSlot.Outfit) { DoBuyOutfit(item); return; }
             switch (ShopService.Buy(_session.Wardrobe, item, Now()))
             {
                 case BuyResult.Ok:
@@ -843,6 +844,29 @@ namespace Sdo.UI.Screens
                 case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
                 case BuyResult.AlreadyOwned: Toast.Show("已經擁有 " + item.Name); break;
                 case BuyResult.NoRoom: Toast.Show(item.IsProp ? "背包已滿" : "服飾欄已滿,請到儲物櫃用「服饰栏扩充」加格子"); break;
+                default: Toast.Show("購買失敗"); break;
+            }
+            Refresh();
+        }
+
+        // 買套装 = 買下這一套的每一件:每件各自進儲物櫃一格 (官方行為,使用者指定),扣的是套裝的標價一次,然後逐件穿上。
+        // 套装列本身不入櫃 (它沒有自己的 mesh) —— 以前它整個當成一格,結果格子畫不出東西、人也沒換衣服。
+        private void DoBuyOutfit(ShopItem item)
+        {
+            var comps = _catalog != null ? _catalog.OutfitComponentItems(item) : null;
+            switch (ShopService.BuyOutfit(_session.Wardrobe, item, comps, Now()))
+            {
+                case BuyResult.Ok:
+                    AddFame(item);                           // 知名度依套裝標價算一次 (成交才算)
+                    foreach (var c in comps) EquipOwned(c);  // 逐件穿上 (單件的互斥規則照舊:連身↔上下著)
+                    WardrobeStore.SaveAll(_session);         // 落地 擁有+錢包+穿搭
+                    Nav.RefreshRoomAvatar?.Invoke();         // 房間/大廳的人同步換上
+                    RebuildAvatar();                         // 左側預覽更新
+                    Toast.Show("已購買並穿上 " + item.Name + "(" + comps.Count + " 件)");
+                    break;
+                case BuyResult.NotEnoughMoney: Toast.Show("餘額不足"); break;
+                case BuyResult.AlreadyOwned: Toast.Show("已經擁有 " + item.Name); break;
+                case BuyResult.NoRoom: Toast.Show("服飾欄不夠放這一套,請到儲物櫃用「服饰栏扩充」加格子"); break;
                 default: Toast.Show("購買失敗"); break;
             }
             Refresh();
@@ -938,7 +962,7 @@ namespace Sdo.UI.Screens
             // 之前多呼叫 RefreshGrid 會 DestroyCardPreviews 把整頁 8 張 3D 縮圖全砍掉重建 → 使用者看到「按一張、其餘 6 張同時重 load」。
         }
 
-        // 買了直接穿上 (單件；套装另走 tryOn 預覽,不在這裡自動穿)。與 DoTryOn 同一套互斥規則。
+        // 買了直接穿上 (單件；套装走 DoBuyOutfit：逐件買下、逐件穿上)。與 DoTryOn 同一套互斥規則。
         private void EquipOwned(ShopItem item)
         {
             if (item == null || item.EquipSlot == EquipSlot.None || item.EquipSlot == EquipSlot.Outfit) return;

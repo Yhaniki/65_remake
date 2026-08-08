@@ -163,5 +163,47 @@ namespace Sdo.Tests
             var parts = WardrobeStore.ResolveEquippedParts(p, ItemSex.Female, id => null, meshExists: _ => true);
             CollectionAssert.Contains(parts, "AVATAR/900018_WOMAN_COAT.MSH");   // legacy default coat (fallback, not blank)
         }
+
+        // ---- 舊存檔「一整套當一格」→ 換成每件各自一格 ----
+
+        private static ShopItem OutfitRow(int id) => Item(id, id, ItemCategory.OutfitFemale);
+
+        [Test]
+        public void MigrateOwnedOutfits_ReplacesTheSetEntryWithItsPieces()
+        {
+            var set = OutfitRow(80000001);
+            var pieces = new List<ShopItem> { Item(11, 11, ItemCategory.TopFemale), Item(12, 12, ItemCategory.BottomFemale) };
+            var w = new Wardrobe();
+            w.AddOwned(new OwnedItem { ItemId = set.Id, Slot = ItemSlotType.Clothes, ExpireUnix = 4242, Quantity = 1 });
+
+            Assert.IsTrue(WardrobeStore.MigrateOwnedOutfits(w, id => id == set.Id ? set : null, _ => pieces));
+            Assert.IsFalse(w.Owns(set.Id));                       // 整套那一筆消失 (它畫不出東西又佔格)
+            Assert.IsTrue(w.Owns(11)); Assert.IsTrue(w.Owns(12));  // 換成兩件各自一格
+            Assert.AreEqual(4242, w.GetOwned(11).ExpireUnix);      // 租期沿用原本那筆
+        }
+
+        [Test]
+        public void MigrateOwnedOutfits_KeepsAPieceThePlayerAlreadyBought()
+        {
+            var set = OutfitRow(80000001);
+            var pieces = new List<ShopItem> { Item(11, 11, ItemCategory.TopFemale) };
+            var w = new Wardrobe();
+            w.AddOwned(new OwnedItem { ItemId = 11, Slot = ItemSlotType.Clothes, ExpireUnix = -1, Quantity = 1 });
+            w.AddOwned(new OwnedItem { ItemId = set.Id, Slot = ItemSlotType.Clothes, ExpireUnix = 4242, Quantity = 1 });
+
+            WardrobeStore.MigrateOwnedOutfits(w, id => id == set.Id ? set : (id == 11 ? pieces[0] : null), _ => pieces);
+            Assert.AreEqual(-1, w.GetOwned(11).ExpireUnix);        // 原本永久的那件不被套裝的租期覆蓋
+            Assert.AreEqual(1, w.Count(ItemSlotType.Clothes));
+        }
+
+        [Test]
+        public void MigrateOwnedOutfits_NothingToDo_ReportsNoChange()
+        {
+            var w = new Wardrobe();
+            w.AddOwned(new OwnedItem { ItemId = 11, Slot = ItemSlotType.Clothes, ExpireUnix = -1, Quantity = 1 });
+            var top = Item(11, 11, ItemCategory.TopFemale);
+            Assert.IsFalse(WardrobeStore.MigrateOwnedOutfits(w, id => id == 11 ? top : null, _ => null));
+            Assert.IsTrue(w.Owns(11));
+        }
     }
 }
