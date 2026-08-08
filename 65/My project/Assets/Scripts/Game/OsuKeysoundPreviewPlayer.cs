@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using Sdo.Osu;
+using Sdo.Ruleset;
 using UnityEngine;
 
 namespace Sdo.Game
@@ -32,7 +33,7 @@ namespace Sdo.Game
         private const double LookaheadMs = 500.0;
         private const double LateCutoffMs = 100.0;
         private const int MaxOccurrencesPerTick = 8192;
-        private const int MaxVoices = 128;
+        private const int MaxVoices = KeysoundVoicePool.MaxVoices;
 
         private readonly GameObject _host;
         private readonly string _chartPath;
@@ -40,6 +41,7 @@ namespace Sdo.Game
         private readonly OsuKeysoundBank _bank = new OsuKeysoundBank();
         private readonly List<AudioSource> _voices = new List<AudioSource>();
         private readonly List<double> _busyUntil = new List<double>();
+        private readonly List<double> _startsAt = new List<double>();
         private readonly List<long> _voiceCycles = new List<long>();
         private int _cursor;
         private long _cycle;
@@ -113,6 +115,7 @@ namespace Sdo.Game
             }
             _voices.Clear();
             _busyUntil.Clear();
+            _startsAt.Clear();
             _voiceCycles.Clear();
         }
 
@@ -231,6 +234,7 @@ namespace Sdo.Game
                 ? 0
                 : (long)Math.Floor((dspNow - _transportStartDsp) / loopSec);
             StopExpiredCycleVoices(physicalCycle);
+            UpdateVoicePriorities(dspNow);
 
             // After a long frame stall, discard whole loops whose occurrences are already too late.
             // Keep at most the immediately preceding loop so a trigger near its end can still resume.
@@ -298,19 +302,26 @@ namespace Sdo.Game
 
         private int PickVoice(double dspNow)
         {
-            for (int i = 0; i < _voices.Count; i++)
-                if (_busyUntil[i] <= dspNow)
-                    return i;
-            if (_voices.Count >= MaxVoices || _host == null) return -1;
+            int free = KeysoundVoicePool.FindFree(_busyUntil, dspNow);
+            if (free >= 0) return free;
 
-            var source = _host.AddComponent<AudioSource>();
-            source.playOnAwake = false;
-            source.loop = false;
-            source.spatialBlend = 0f;
-            _voices.Add(source);
-            _busyUntil.Add(0.0);
-            _voiceCycles.Add(-1);
-            return _voices.Count - 1;
+            if (_voices.Count < MaxVoices && _host != null)
+            {
+                var source = _host.AddComponent<AudioSource>();
+                source.playOnAwake = false;
+                source.loop = false;
+                source.spatialBlend = 0f;
+                source.priority = KeysoundVoicePool.PriorityFresh;
+                _voices.Add(source);
+                _busyUntil.Add(0.0);
+                _startsAt.Add(0.0);
+                _voiceCycles.Add(-1);
+                return _voices.Count - 1;
+            }
+
+            // 池滿了偷最舊的那顆 —— 同遊玩畫面(見 KeysoundVoicePool)。回 -1 會讓排程迴圈卡住游標,
+            // 那些取樣接著全部超過 LateCutoffMs 被丟掉,試聽後半就整段安靜。試聽的音源沒有暫停狀態。
+            return KeysoundVoicePool.FindStealable(_startsAt, null, dspNow);
         }
 
         private void StartVoice(int index, AudioClip clip, int volume,
@@ -322,6 +333,7 @@ namespace Sdo.Game
             voice.clip = clip;
             voice.pitch = 1f;
             voice.volume = AudioMix.Music * Mathf.Clamp01(volume / 100f);
+            voice.priority = KeysoundVoicePool.PriorityFresh;   // 剛起音 = 最高;UpdateVoicePriorities 之後往下降
             voice.timeSamples = Math.Min(clip.samples - 1,
                 Math.Max(0, (int)Math.Round(sourceOffsetSec * clip.frequency)));
 
@@ -333,7 +345,22 @@ namespace Sdo.Game
                 playDsp + Math.Max(0.0, clip.length - sourceOffsetSec);
             if (naturalEndDsp > cycleEndDsp) voice.SetScheduledEndTime(cycleEndDsp);
             _busyUntil[index] = Math.Min(naturalEndDsp, cycleEndDsp);
+            _startsAt[index] = playDsp;
             _voiceCycles[index] = cycle;
+        }
+
+        /// <summary>依「已經響多久」重掛發聲優先度,理由同遊玩畫面:priority 是固定值,不會自己隨衰減下降,
+        /// 發聲數吃滿時該讓位的要是快聽不見的尾巴。</summary>
+        private void UpdateVoicePriorities(double dspNow)
+        {
+            for (int i = 0; i < _voices.Count; i++)
+            {
+                if (_busyUntil[i] <= dspNow) continue;
+                var voice = _voices[i];
+                if (voice == null) continue;
+                int want = KeysoundVoicePool.PriorityForAge(dspNow - _startsAt[i]);
+                if (voice.priority != want) voice.priority = want;
+            }
         }
 
         private void StopExpiredCycleVoices(long physicalCycle)
@@ -350,6 +377,7 @@ namespace Sdo.Game
                     voice.clip = null;
                 }
                 _busyUntil[i] = 0.0;
+                _startsAt[i] = 0.0;
                 _voiceCycles[i] = -1;
             }
         }
@@ -364,6 +392,7 @@ namespace Sdo.Game
                     _voices[i].clip = null;
                 }
                 _busyUntil[i] = 0.0;
+                _startsAt[i] = 0.0;
                 _voiceCycles[i] = -1;
             }
         }

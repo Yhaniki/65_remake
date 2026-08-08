@@ -10,7 +10,10 @@ namespace Sdo.Game
     public sealed partial class ScreenGameplay
     {
         private const int InitialOsuEventVoices = 24;
-        private const int MaxOsuEventVoices = 128;
+        // 純 keysound 譜(AudioFilename: virtual)沒有背景音樂檔:整首曲子就是幾百顆取樣疊出來的,起手就會
+        // 用掉幾十個音源。先配好省得在密集段一顆一顆 AddComponent(實測峰值 170,見 KeysoundVoicePool)。
+        private const int InitialVirtualOsuEventVoices = 64;
+        private const int MaxOsuEventVoices = KeysoundVoicePool.MaxVoices;
         private const double OsuEventLookaheadMs = 500.0;
         private const double OsuEventLateCutoffMs = 100.0;
 
@@ -19,6 +22,9 @@ namespace Sdo.Game
         private readonly List<double> _osuEventStartsAt = new List<double>();
         private readonly List<double> _osuEventBusyUntil = new List<double>();
         private readonly List<int> _osuEventPausedSamples = new List<int>();
+        // 每個音源目前掛著的發聲優先度。AudioSource.priority 是固定值、不會自己隨衰減下降,所以每幀重算
+        // (UpdateOsuVoicePriorities);記在這裡是為了只在**跨桶**時才寫 setter(那是 native call)。
+        private readonly List<int> _osuEventPriorities = new List<int>();
         private readonly List<int> _osuAutoNoteOwners = new List<int>();
         private readonly HashSet<int> _osuScheduledAutoNotes = new HashSet<int>();
         private int _osuEventIndex;
@@ -40,6 +46,12 @@ namespace Sdo.Game
         private float OsuSamplePitch =>
             _map != null && _map.SamplesMatchPlaybackRate ? _timeScale : 1f;
 
+        /// <summary>keysound 走哪一條音量軌。純 keysound 譜(AudioFilename: virtual)的取樣**就是音樂本身**,
+        /// 要吃「音樂」滑桿 —— 走音效的話玩家把音效關小整首歌就消失了(選歌試聽的
+        /// <see cref="OsuKeysoundPreviewPlayer"/> 一直都是走音樂)。一般 osu 圖的 keysound 是疊在音樂上的
+        /// 打擊音,維持「音效」。</summary>
+        private float OsuSampleMixGain => IsVirtualOsuTrack ? AudioMix.Music : AudioMix.Sfx;
+
         private bool ShouldScheduleOsuAutoNotes =>
             (editorMode && !beatTestMode) ||
             (!editorMode && (_showtime.Active || (autoPlay && forcedJudge != (int)Judgment.Miss)));
@@ -49,7 +61,8 @@ namespace Sdo.Game
             if (chartFormat != (int)SongFormat.Osu || _map == null ||
                 OsuKeysoundBank.ReferencedFilenames(_map).Count == 0) return;
             _osuKeysounds = new OsuKeysoundBank();
-            for (int i = 0; i < InitialOsuEventVoices; i++)
+            int initial = IsVirtualOsuTrack ? InitialVirtualOsuEventVoices : InitialOsuEventVoices;
+            for (int i = 0; i < initial; i++)
                 AddOsuEventVoice();
         }
 
@@ -60,6 +73,7 @@ namespace Sdo.Game
             source.loop = false;
             source.spatialBlend = 0f;
             source.pitch = OsuSamplePitch;
+            source.priority = KeysoundVoicePool.PriorityFresh;
             return source;
         }
 
@@ -69,6 +83,7 @@ namespace Sdo.Game
             _osuEventStartsAt.Add(0.0);
             _osuEventBusyUntil.Add(0.0);
             _osuEventPausedSamples.Add(-1);
+            _osuEventPriorities.Add(KeysoundVoicePool.PriorityFresh);
             _osuAutoNoteOwners.Add(-1);
         }
 
@@ -201,6 +216,8 @@ namespace Sdo.Game
             if (_paused || Time.timeScale <= 0f)
                 return;
 
+            UpdateOsuVoicePriorities(AudioSettings.dspTime);
+
             bool scheduleAutoNotes = ShouldScheduleOsuAutoNotes;
             if (scheduleAutoNotes != _lastOsuAutoNoteScheduling)
                 ChangeOsuAutoNoteScheduling(scheduleAutoNotes, nowMs);
@@ -308,7 +325,9 @@ namespace Sdo.Game
             voice.Stop();
             voice.clip = clip;
             voice.pitch = OsuSamplePitch;
-            voice.volume = AudioMix.Sfx * Mathf.Clamp01(volume / 100f);
+            voice.volume = OsuSampleMixGain * Mathf.Clamp01(volume / 100f);
+            voice.priority = KeysoundVoicePool.PriorityFresh;   // 剛起音 = 最高;UpdateOsuVoicePriorities 之後往下降
+            _osuEventPriorities[voiceIndex] = KeysoundVoicePool.PriorityFresh;
             voice.timeSamples = Math.Min(clip.samples - 1,
                 Math.Max(0, (int)Math.Round(sourceOffsetSec * clip.frequency)));
 
@@ -326,17 +345,46 @@ namespace Sdo.Game
 
         private int PickOsuEventVoice(double dspNow)
         {
-            for (int i = 0; i < _osuEventVoices.Count; i++)
+            int free = KeysoundVoicePool.FindFree(_osuEventBusyUntil, dspNow);
+            if (free >= 0)
             {
-                if (_osuEventBusyUntil[i] > dspNow) continue;
                 // The sound may already be in the output buffer while its note has not reached the visible judgment
                 // line. Detach the voice for reuse but retain the scheduled-note marker until that judgment occurs.
-                _osuAutoNoteOwners[i] = -1;
-                return i;
+                _osuAutoNoteOwners[free] = -1;
+                return free;
             }
-            if (_osuEventVoices.Count >= MaxOsuEventVoices) return -1;
-            AddOsuEventVoice();
-            return _osuEventVoices.Count - 1;
+            if (_osuEventVoices.Count < MaxOsuEventVoices)
+            {
+                AddOsuEventVoice();
+                return _osuEventVoices.Count - 1;
+            }
+
+            // 池滿了就偷最舊的那顆(voice stealing,見 KeysoundVoicePool)。舊版在這裡回 -1,排程迴圈 break
+            // 且游標不前進 —— 等有空位時後面那些取樣早就過了 OsuEventLateCutoffMs 被整批丟掉,純 keysound 譜
+            // 聽起來就是「玩到後面整段沒音樂」。被偷的音已經響過了,所以只解除擁有關係、不撤 _osuScheduledAutoNotes
+            // 標記(同上面 free 的路徑),否則那顆音符的判定幀會再播一次。
+            int steal = KeysoundVoicePool.FindStealable(_osuEventStartsAt, _osuEventPausedSamples, dspNow);
+            if (steal < 0) return -1;
+            _osuAutoNoteOwners[steal] = -1;
+            return steal;
+        }
+
+        /// <summary>
+        /// 每幀依「這顆音已經響了多久」重掛發聲優先度:AudioSource.priority 是固定值,不會自己隨衰減下降。
+        /// 發聲數(Real Voices)真的吃滿時,先被虛擬化(靜音)的才會是快聽不見的鋼琴尾巴,而不是剛起音的音
+        /// 或 F7 打拍音。只在跨桶時才寫 setter —— 那是 native call,幾百個音源每幀無條件寫太浪費。
+        /// </summary>
+        private void UpdateOsuVoicePriorities(double dspNow)
+        {
+            for (int i = 0; i < _osuEventVoices.Count; i++)
+            {
+                if (_osuEventBusyUntil[i] <= dspNow) continue;
+                int want = KeysoundVoicePool.PriorityForAge(dspNow - _osuEventStartsAt[i]);
+                if (_osuEventPriorities[i] == want) continue;
+                _osuEventPriorities[i] = want;
+                var voice = _osuEventVoices[i];
+                if (voice != null) voice.priority = want;
+            }
         }
 
         private void ChangeOsuAutoNoteScheduling(bool enabled, double nowMs)

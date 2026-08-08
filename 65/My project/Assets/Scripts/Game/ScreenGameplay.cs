@@ -377,8 +377,10 @@ namespace Sdo.Game
         private double _tickClipLenSec;         // 目前打拍音檔的長度(秒)——音源要被佔住這麼久
         // 池的大小**看譜面**決定(見 BuildAssistTick):一顆 tick 從被排程到播完會佔住一個音源
         // lookahead + 音檔長度 那麼久,密集段一個視窗內十幾顆是常態。固定 8 個會輪回去蓋掉還沒響的排程 → 那幾聲
-        // 直接消失(「按鍵很密的時候沒有打拍音」)。上限 24 是留給音樂/音效的發聲數(Unity Real Voices 預設 32)。
-        private const int MinTickVoices = 8, MaxTickVoices = 24;
+        // 直接消失(「按鍵很密的時候沒有打拍音」)。上限原本是 24,理由是「把發聲數留給音樂/音效」——那時
+        // 專案的 Real Voices 是 32。純 keysound 譜(音樂本身就吃掉上百個音源)逼著把 Real Voices 開到 255
+        // (AudioManager.asset),那個理由沒了,上限放寬到 32,極密的譜才不會蓋掉自己還沒響的排程。
+        private const int MinTickVoices = 8, MaxTickVoices = 32;
         private const double TickVoiceWindowMs = AssistTick.DefaultLookaheadMs + 250.0;   // 250 = 音檔長度上限(合成 clap 150ms)+餘裕
         // Per-scene ambient SE (decompiled SeMgr_PlayVoiceTimed, gated on scene id in Gameplay_Update): only a few
         // scenes carry an intermittent ambience (sea waves / stadium crowd / underwater bubbles / garden); see
@@ -1532,9 +1534,10 @@ namespace Sdo.Game
             {
                 var a = gameObject.AddComponent<AudioSource>();
                 a.playOnAwake = false; a.loop = false; a.volume = AudioMix.Sfx;
-                // 優先度壓在音樂/音效之下(預設 128;數字越大越低)：發聲數上限是全域的(專案 Real Voices = 32),
-                // 極密的譜真的把池吃滿時,該被虛擬化掉的是一聲 clap,不能是歌。
-                a.priority = 200;
+                // 發聲數上限是全域的,吃滿時 priority 數字大的先被虛擬化(靜音)。打拍音夾在「剛起音的音符」
+                // 與「衰減中的尾巴」之間:歌永遠優先,但一聲 clap 比一條快聽不見的鋼琴尾巴重要 —— 打拍音是
+                // 對拍用的參考,整段被踢掉就失去意義(純 keysound 譜就是這樣把它壓死的,見 KeysoundVoicePool)。
+                a.priority = KeysoundVoicePool.PriorityAssistTick;
                 _tickVoices[i] = a;
             }
             SetTickClip(SynthClapClip());         // 先掛 fallback,音源池才有 clip 可用(合成的 clap 沒有前導靜音)
