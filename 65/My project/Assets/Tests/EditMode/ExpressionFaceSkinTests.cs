@@ -84,10 +84,13 @@ namespace Sdo.Tests
 
         /// <summary>這條測試存在的理由就是這次的 bug:修正只寫在商城,儲物櫃漏了,而漏掉不會編譯失敗、不會拋例外 ——
         /// 只有玩家打開儲物櫃才看得到一張黑臉。之後再多一個會畫表情的地方就往清單裡加一行。
-        /// <c>SdoRoomAvatar</c> 涵蓋房間走路本尊 / 遊戲內舞者 / 頭貼 / 選性別(它的兩條 Build 都套)。</summary>
+        /// 兩條「所有角色的必經之路」都要套:<c>SdoAvatarBuilder.LoadParts</c>(遊戲內舞者/遊戲中頭貼/商城卡與預覽)
+        /// 與 <c>SdoRoomAvatar.Build</c> 的 RenderMode overload(房間本尊/房間頭貼/選性別 —— 那條自帶迴圈,不經 builder)。
+        /// 商城/儲物櫃另外在卡片的 cutout 之後再套一次(順序:LoadParts → ApplyCardCutoutShader → 再壓一次臉底)。</summary>
         [TestCase("UI/Screens/ShopScreen.cs")]
         [TestCase("UI/Screens/WardrobeScreen.cs")]
         [TestCase("Game/SdoRoomAvatar.cs")]
+        [TestCase("Game/SdoAvatarBuilder.cs")]
         public void ScreenThatRendersExpressions_CallsForceLightSkin(string relPath)
         {
             string path = Path.Combine(Application.dataPath, "Scripts", relPath.Replace('/', Path.DirectorySeparatorChar));
