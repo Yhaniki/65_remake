@@ -176,6 +176,10 @@ namespace Sdo.Game
                 foreach (var m in sheerMats) m.SetFloat(SheerDensityProp, SheerDensityFor(sheerMats.Count));
                 res.Parts++;
             }
+            // 半透明衣物/翅膀 ZWrite Off ⇒ 深度緩衝裡沒有它們 ⇒ 站在前面的人穿半透明翅膀時,後面那個人的
+            // 頭上名字牌會從翅膀裡透出來。補一份只寫深度的分身(排在所有衣物色彩批之後,外觀不受影響)。
+            // 🔴 Portrait 系(頭貼/商城卡)不掛:那是不透明合成到透明 RT,多一份深度只會有害無益。
+            if (style != SkinStyle.Portrait) AvatarTranslucentDepth.Attach(parent);
             return res;
         }
 

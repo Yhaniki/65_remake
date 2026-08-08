@@ -229,6 +229,11 @@ namespace Sdo.Game
             av.PoseInitialIdle();           // arm the idle so the first frame isn't the bind/T-pose
             foreach (var wrp in wingRigs) BuildWingRig(parent, av, wrp, useCutout);   // 動畫翅膀:掛獨立會拍動的 _G rig(跟身體背骨動)
             SetLayerRecursive(parent, layer);   // 也把翅膀 rig 一起收進 layer(它是 parent 的子物件)
+            // 半透明衣物/翅膀 ZWrite Off ⇒ 深度緩衝裡沒有它們 ⇒ 後面那個人的頭上名字牌會從翅膀裡透出來。
+            // 補一份只寫深度的分身。🔴 一定要在 BuildWingRig **之後**(動畫翅膀是那時才生的,漏了就不擋),
+            // 也在 SetLayerRecursive 之後(分身抄 layer;它在角色階層外面,SetLayerRecursive 掃不到它)。
+            // 頭貼那條(PortraitHead:不透明合成到透明 RT)不掛。
+            if (mode == RenderMode.Scene) AvatarTranslucentDepth.Attach(parent);
             return av;
         }
 
