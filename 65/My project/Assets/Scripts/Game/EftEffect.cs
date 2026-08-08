@@ -313,6 +313,10 @@ namespace Sdo.Game
         // stores WHITE note-arrow textures; the official 3D skin renders them GOLD/yellow via a play-time diffuse tint,
         // so the host sets this to gold. Combos/scene effects leave it white (their real per-channel hue is used as-is).
         public Color Tint = Color.white;
+        // 舞台背景亮度（1 = 原樣，0 = 完全不亮）。只有**場景**的常駐 EFT（魔法陣/雪/極光/火焰…）會被設 <1，
+        // 人物的 combo burst / 命中特效永遠是 1。乘在 SetCol 的增益上，跟 Tint 各管各的（Tint 是美術色相）。
+        // 走這個欄位而不是改材質的 _Color：EFT 每幀自己 SetCol，外面寫進材質的值下一幀就被蓋掉了。
+        public float Dim = 1f;
         // FAITHFUL ALPHA (hiteft3D hit burst): route EVERY particle through Sdo/EftAlpha (1× premultiplied, linear in
         // ch1, gamma-space) instead of Legacy Particles/Additive. The legacy shader does 2×tint×tex with SrcAlpha
         // blending, so srcAlpha = sat(2×ch1/255): any ch1 ≥ 128 clips to identical max brightness — HIT.EFT's authored
@@ -1418,7 +1422,7 @@ namespace Sdo.Game
             // match the live client to ±1. So map straight through (k = 1/255); _bright stays a user gain (F4),
             // default 1.0 = faithful. The glow comes from additive blend + alpha + the 15 overlapping rings, NOT a
             // fudge factor. The ring's rainbow hue-cycle (white→orange→green→magenta) is exactly these channels.
-            float k = _bright / 255f;
+            float k = _bright / 255f * Dim;
             var c = new Color(r * k * Tint.r, g * k * Tint.g, b * k * Tint.b, Mathf.Clamp01(a / 255f));
             if (m.HasProperty("_TintColor")) m.SetColor("_TintColor", c); else m.color = c;
         }

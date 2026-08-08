@@ -540,6 +540,15 @@ namespace Sdo.Settings
                 Min = DisplaySettings.MinBrightness, Max = DisplaySettings.MaxBrightness, Step = 0.05f, Unit = "×",
                 Get = () => Num(Display().brightness), Set = v => Display().brightness = ParseFloat(v, Display().brightness),
             });
+            // 舞台背景亮度：上面那根是「整個畫面」，這根只動遊玩畫面**背景**那一層（人物不受影響）。
+            // 下一場遊戲開局才生效（FrontendApp 開局前把值灌進 ScreenGameplay）。
+            f.Add(new ConfigField
+            {
+                Key = "opt_stageBrightness", Category = CatText, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.stage_brightness.label", HelpKey = "cfg.stage_brightness.help",
+                Min = 0f, Max = 1f, Step = 0.05f, Unit = "×",
+                Get = () => Num(Gameplay().stageBrightness), Set = v => Gameplay().stageBrightness = ParseFloat(v, Gameplay().stageBrightness),
+            });
 
             // ---------------------------------------------------------------- MMD [Mmd]
             // 以前這一整頁是遊戲裡一塊自己畫的 IMGUI 除錯面板（F7/F9/F10），值只活在記憶體、關掉就沒了。

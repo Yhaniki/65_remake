@@ -765,6 +765,7 @@ namespace Sdo.UI
                 game.cameraFixedIndex = gp.cameraFixed;          // 固定視角鎖第幾台＝上次在遊戲中用 F2 切到的那台
                 game.onCamModeChanged = PersistCamMode;          // 遊戲中 F2 換鏡頭 → 記住（見 PersistCamMode）
                 game.boardAlpha = gp.panelOpacity;               // 面板透明度（note 面板 alpha 倍率）
+                game.stageBrightness = gp.stageBrightness;       // 舞台背景亮度（只暗背景那一層；0=全黑只剩人物）
                 game.playFullSong = gp.playFullSong;             // 進階「整首打完」：HP 歸零不立即退出，打到曲末
                 game.notesPanelLeft = gp.notesPanelLeft;         // NOTES面板位置：屏幕左邊/屏幕中央（水平位移）
                 game.collapseShortHolds = gp.collapseShortHolds; // 無理短長條(<180BPM 16分)收成一般 note；只對外部轉檔譜(osu/sm/mc)，官方/歌曲包 .gn 不動

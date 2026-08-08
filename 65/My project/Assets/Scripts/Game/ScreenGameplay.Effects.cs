@@ -667,7 +667,7 @@ namespace Sdo.Game
             // glow (SCN0001/SCN0005 guangxiao) must be drawn ONCE or the additive doubling clips its bell-curve alpha
             // into a flat hard-rimmed disc. Cull Off means one winding still shows from both sides either way.
             var mesh = BillboardQuadMesh(doubleSided: set.DoubleDraw);
-            int layer = use3dCamera ? SceneLayer : 0;
+            int layer = use3dCamera ? BackdropLayer : 0;   // 場景火焰＝背景(吃舞台背景亮度)
             foreach (var b in set.Billboards)
             {
                 var go = new GameObject("Flame") { layer = layer };
@@ -736,7 +736,7 @@ namespace Sdo.Game
             // (SrcAlpha One) ignores what's behind and produces a hard bright edge with no real transparency variation;
             // alpha-blend (Sdo/UnlitOverlay = SrcAlpha OneMinusSrcAlpha, two-sided) gives the soft translucent spectre.
             var shader = Shader.Find("Sdo/UnlitOverlay");
-            int layer = use3dCamera ? SceneLayer : 0;
+            int layer = use3dCamera ? BackdropLayer : 0;   // 場景鬼火＝背景
             foreach (var g in defs)
             {
                 var hrc = LoadAsset(g.Dir + "/" + g.Hrc, b => HrcLoader.Load(b));
@@ -816,7 +816,7 @@ namespace Sdo.Game
                 anchorGo.transform.position = owner.TransformPoint(avatar.BoneModelPos(e.Bone));
                 var go = SpawnSceneEft(e.Eft, follow.position, e.EulerDeg, e.Scale, follow);
                 RegisterSceneEft(go, e.Eft);
-                if (use3dCamera) SetLayerRecursive(anchorGo, SceneLayer);
+                if (use3dCamera) SetLayerRecursive(anchorGo, BackdropLayer);
                 Debug.Log($"[eft] attached scene eft {e.Eft} -> {baseName}/{e.Bone} offset {e.Offset} scale {e.Scale}");
             }
         }
@@ -833,12 +833,13 @@ namespace Sdo.Game
             var go = new GameObject("SceneEft_" + name);
             go.transform.position = pos;
             go.transform.rotation = Quaternion.Euler(euler);
-            int layer = use3dCamera ? SceneLayer : 0;
+            int layer = use3dCamera ? BackdropLayer : 0;   // 場景常駐 EFT＝背景(combo burst 走 SpawnComboBurst,仍在人物層)
             var eff = go.AddComponent<EftEffect>();
             eff.Persistent = true;   // never auto-destroy; loops for the whole song
             eff.EffectName = name;
+            eff.Dim = Mathf.Clamp01(stageBrightness);   // 舞台背景亮度：延遲生成的場景 EFT 也要一出生就是對的
             eff.Init(file, scale, follow, ResolveEftTex, _addMat, layer, comboBurstBright, comboGlow, comboGlowSpread, ResolveEftMesh);
-            if (use3dCamera) SetLayerRecursive(go, SceneLayer);
+            if (use3dCamera) SetLayerRecursive(go, BackdropLayer);
             Debug.Log($"[eft] scene eft {name} @ {pos} euler {euler} scale {scale}");
             return go;
         }

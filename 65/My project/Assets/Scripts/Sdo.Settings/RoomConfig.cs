@@ -238,6 +238,7 @@ namespace Sdo.Settings
                            optDanceIgnoreMiss = false;   // 掉 miss 也照跳舞：預設關（官方玩法＝斷 combo 會停舞）
         public static int optCameraFixed = 0;   // 固定視角用哪一台（0..5）；遊戲中 F2 切鏡頭會寫回
         public static float optPanelOpacity = 1.4f;
+        public static float optStageBrightness = 1f;   // 舞台背景亮度(遊玩畫面;0=全黑只剩人物)
 
         // ---- 舊 [Profile] 區（登入哪個角色 + 家族/等級預設值）：**已經拉出去成 DATA/PROFILE/profile.json**
         //      （見 ProfileDefaults）。這幾個欄位只剩「開機時把舊 config.ini 的值讀進來給它搬」這一個用途 ——
@@ -672,6 +673,7 @@ namespace Sdo.Settings
                     case "opt_collapseShortHolds": optCollapseShortHolds = ParseBool(val, optCollapseShortHolds); break;
                     case "opt_danceIgnoreMiss": optDanceIgnoreMiss = ParseBool(val, optDanceIgnoreMiss); break;
                     case "opt_panelOpacity": optPanelOpacity = ParseFloat(val, optPanelOpacity); break;
+                    case "opt_stageBrightness": optStageBrightness = ParseFloat(val, optStageBrightness); break;
                 }
             }
         }
@@ -726,6 +728,7 @@ namespace Sdo.Settings
             laneCoverAmount = Mathf.Clamp(laneCoverAmount, 0f, 100f);        // %：0＝沒有擋板，100＝一路蓋到受擊線
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
+            optStageBrightness = Mathf.Clamp01(optStageBrightness);          // 舞台背景亮度 0..1
             if (optBrightness <= 0f) optBrightness = DisplaySettings.DefaultBrightness;   // 0/沒寫 → 回 1，不然畫面全黑
             optBrightness = Mathf.Clamp(optBrightness, DisplaySettings.MinBrightness, DisplaySettings.MaxBrightness);
             // [Mmd]：範圍與開場設定面板的滑桿一致（面板一開就把值夾進滑桿範圍，兩邊不同會被夾掉玩家的設定）。
@@ -936,6 +939,9 @@ namespace Sdo.Settings
             sb.Append("opt_danceIgnoreMiss=").Append(B(optDanceIgnoreMiss)).Append('\n');
             sb.Append("# 面板透明度 0.0~1.6\n");
             sb.Append("opt_panelOpacity=").Append(optPanelOpacity.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 舞台背景亮度 0.0~1.0(1=原樣,0=全黑只剩人物)。只暗遊玩畫面的背景那一層:場景/道具/場景的人/\n");
+            sb.Append("# 燈/招牌/場景特效;舞者與人物特效不受影響。跟 opt_brightness(整個畫面一起暗)是兩回事。\n");
+            sb.Append("opt_stageBrightness=").Append(optStageBrightness.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             return sb.ToString();
         }
 
@@ -980,6 +986,7 @@ namespace Sdo.Settings
                 optDanceIgnoreMiss = g.danceIgnoreMiss;
                 optSongBombs = g.songBombs;
                 optPanelOpacity = g.panelOpacity;
+                optStageBrightness = g.stageBrightness;
             }
             hasOption = true;
         }
@@ -1008,6 +1015,7 @@ namespace Sdo.Settings
             g.danceIgnoreMiss = optDanceIgnoreMiss;
             g.songBombs = optSongBombs;
             g.panelOpacity = optPanelOpacity;
+            g.stageBrightness = optStageBrightness;
         }
 
         private static string JoinKeys(string[] a)

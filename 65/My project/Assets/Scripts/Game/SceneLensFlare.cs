@@ -122,6 +122,9 @@ namespace Sdo.Game
             _mr.enabled = false;
         }
 
+        /// <summary>舞台背景亮度(1=原樣、0=完全不畫)。ScreenGameplay 開局時依 stageBrightness 設。</summary>
+        public float Dim = 1f;
+
         /// <summary>診斷用:每 N 秒印一次可見性判定的每一步(為什麼沒畫出來)。0 = 不印。</summary>
         public float DiagEverySec = 0f;
         private float _lastDiag = -999f;
@@ -181,7 +184,11 @@ namespace Sdo.Game
                 _verts[b + 1] = new Vector3(x1, y0, 89f);
                 _verts[b + 2] = new Vector3(x0, y1, 89f);
                 _verts[b + 3] = new Vector3(x1, y1, 89f);
-                for (int c = 0; c < 4; c++) _cols[b + c] = e.Color;
+                // 舞台背景亮度(Dim)：太陽光斑也是「場景」的一部分。它畫在合成 quad 之前、不在 StageBackdrop
+                // layer 上，所以 StageBackdropDim 掃不到它 —— 由這裡自己乘。
+                var ec = e.Color;
+                if (Dim < 1f) ec = new Color32((byte)(ec.r * Dim), (byte)(ec.g * Dim), (byte)(ec.b * Dim), (byte)(ec.a * Dim));
+                for (int c = 0; c < 4; c++) _cols[b + c] = ec;
             }
             _mesh.vertices = _verts;
             _mesh.colors32 = _cols;

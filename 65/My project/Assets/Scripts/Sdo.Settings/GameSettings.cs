@@ -54,6 +54,10 @@ namespace Sdo.Settings
         // ——差別只在地上有沒有雷。（舊名 disableBombs，語意相反；config.ini 的舊鍵 opt_disableBombs 仍讀得進來搬遷。）
         public bool songBombs = true;
         public float panelOpacity = 1.4f;    // 面板透明度：note 面板 alpha 倍率(=boardAlpha)，範圍 0..1.4（1.4=官方＝上限）
+        // 舞台背景亮度（遊玩畫面專用，0=全黑只剩人物 … 1=原樣）。只暗背景：SCENE.MSH／道具／場景的人／燈／招牌／
+        // 場景 EFT・火焰・鬼火；舞者與人物特效不受影響。全域的「畫面亮度」(DisplaySettings.brightness) 是另一回事
+        // ——那個連 UI 都一起暗。實作見 Sdo.Game.StageBackdropDim（乘材質 tint，不動繪製順序）。
+        public float stageBrightness = 1f;
         // 無理短長條 → 一般 note：長度短於 180 BPM 的 16 分音符 (≈83 ms, OsuBeatmap.ShortHoldMaxMs) 的 long note，
         // 開局載譜時直接收成單顆 note（頭尾判定擠在同一個判定窗內＝按不出來，多半是外部譜把裝飾音寫成極短 hold）。
         // **只對外部轉檔譜（osu/sm/mc）生效**：官方 k.gn 與 Songs/ 的 .gn 歌曲包都是 SDO 原生譜，這開關開著也不動

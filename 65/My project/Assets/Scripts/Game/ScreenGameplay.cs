@@ -730,6 +730,11 @@ namespace Sdo.Game
         // OPTION 遊戲頁「遊戲特效」兩個勾選（FrontendApp 開局前設定）：關掉就不生對應特效。預設 true = 全開。
         public bool effectCharacter = true; // 人物特效：每 100 combo 的 100/200/300 COMBO.EFT（SpawnComboBurst）
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
+        // 舞台**背景**亮度（config.ini opt_stageBrightness；1=原樣、0=全黑只剩人物）。只暗背景那一層：SCENE.MSH、
+        // 道具、場景的人、燈、招牌、場景 EFT/火焰/鬼火；舞者與人物特效不受影響。作法見 StageBackdropDim
+        // （乘材質 tint，繪製順序一動也不動，所以飄在人物前面的彩帶/雪還是在人物前面）。
+        public float stageBrightness = 1f;
+        private readonly StageBackdropDim _backdropDim = new StageBackdropDim();
         // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
         // (P/C/B/M 判定統計仍繼續記錄)、**舞者停舞回待機**(血用完了就不能再跳舞，跟一般模式死掉一樣)，
         // 結算一樣算輸、評分 F。見 Update 的 HP-out 段與 _hpDead(GAME OVER 大字只有被淘汰才演)。
@@ -3686,9 +3691,10 @@ namespace Sdo.Game
         private bool _paused;            // \ 暫停:timeScale=0 且音樂 Pause(否則音樂會自己跑掉)
         private double _pauseChartSec;   // 暫停當下的譜面時間(秒)→ 恢復時用它重新錨定音訊
         private const int SceneLayer = 4;             // the perspective stage layer — **人物**(舞者/手部光條/人物特效/星環)
-        // 舞台**背景**(SCENE.MSH、mapobj 道具、場景的人、場景 EFT/火焰/鬼火、燈、招牌)自己一層。分層的唯一理由是
-        // 「舞台背景亮度」(stageBrightness)要能把背景壓到全黑而人物不受影響：SceneCam 先畫這層 → 疊一張乘法暗幕 →
-        // 人物由 SceneCharCam(URP overlay，**不清深度**)畫上去，所以背景與人物的前後遮擋關係照舊。
+        // 舞台**背景**(SCENE.MSH、mapobj 道具、場景的人、場景 EFT/火焰/鬼火、燈、招牌)自己一層。這層**不是**拿來
+        // 分相機的（同一台 SceneCam 畫兩層），只是「誰算背景」的標記：`stageBrightness` 靠它挑出要乘暗的 renderer
+        // （見 StageBackdropDim）。※ 試過拆成「背景相機 → 人物 overlay 相機」，那會把飄的彩帶/雪/粒子這類
+        //   ZWrite Off 的半透明背景推到人物後面（它們不寫深度，後畫的人物直接蓋掉），所以順序絕不能動。
         private const int BackdropLayer = 6;          // "StageBackdrop" (TagManager)
         // The default camera is the AUTO-DIRECTOR (decompiled CameraSeq, a CAMERA/*.CDT shot list): a sequence of
         // shots, each a moving .cv dolly shown for its own durationMs, auto-cutting to the next and looping. F2
@@ -4311,7 +4317,7 @@ namespace Sdo.Game
                         avatar.AddBoneMeshBaker(bone, bakeMesh, src,
                             ShouldApplyRigidBindScale(SceneFolder(), baseName, srcMesh, hrc.BindWorld[bone].lossyScale));
                     }
-                    SetLayerRecursive(parent, SceneLayer);
+                    SetLayerRecursive(parent, BackdropLayer);
                 }
                 Debug.Log($"[mapobj] {baseName}: {instances.Length}× rigid bone-follow, {r.Submeshes.Count} submesh(es) on {leafBones.Length} bone(s) (animated .mot)");
                 return;
@@ -4345,7 +4351,7 @@ namespace Sdo.Game
                             AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si]);   // unskinned submesh
                         si++;
                     }
-                    SetLayerRecursive(parent, SceneLayer);
+                    SetLayerRecursive(parent, BackdropLayer);
                 }
                 Debug.Log($"[mapobj] {baseName}: {instances.Length}× animated(GPU-skin), {hrc.Names.Length} bones");
                 return;
@@ -4385,7 +4391,7 @@ namespace Sdo.Game
                     int si = 0;
                     foreach (var sub in r.Submeshes) AddMapobjMeshChild(parent.transform, baseName + "_mesh", sub.Mesh, subMats[si++]);
                 }
-                SetLayerRecursive(parent, SceneLayer);
+                SetLayerRecursive(parent, BackdropLayer);
                 placed.Add(parent.transform);
             }
             // Props the original SLIDES every tick (SCN0010 花車's two street-front HOUSEs loop past the parade).
@@ -4490,7 +4496,7 @@ namespace Sdo.Game
                 go.AddComponent<MeshRenderer>().sharedMaterial = mat;
                 marquee.Register(idx, new[] { mat });
             }
-            SetLayerRecursive(holder, SceneLayer);
+            SetLayerRecursive(holder, BackdropLayer);
             Debug.Log($"[mapobj] DENG arch marquee: {n}/{instances.Length} bulbs, {ArchDengMarquee.IntervalMs}ms, " +
                       $"groups {ArchDengMarquee.GroupACount}%{ArchDengMarquee.GroupACount + 3} + {ArchDengMarquee.GroupBCount}%{ArchDengMarquee.GroupBCount + 3}");
         }
@@ -4535,7 +4541,7 @@ namespace Sdo.Game
                 go.AddComponent<MeshRenderer>().sharedMaterial = m;
             }
             holder.AddComponent<BoxFloorAnimator>().Init(mats, frames);
-            SetLayerRecursive(holder, SceneLayer);
+            SetLayerRecursive(holder, BackdropLayer);
             Debug.Log($"[mapobj] BOX disco floor: {instances.Length} tiles, pattern {BoxFloorPattern.Steps} steps");
         }
 
@@ -4802,7 +4808,7 @@ namespace Sdo.Game
                 try { res = SceneLoader.Load(VfsFile.ReadAllBytes(mshPath), dir); }
                 catch (System.Exception e) { Debug.LogWarning("[scene] load fail: " + e.Message); return; }
                 if (res == null || res.Mesh == null) { Debug.LogWarning("[scene] parse fail"); return; }
-                var go = new GameObject("StageScene") { layer = sceneLayer };
+                var go = new GameObject("StageScene") { layer = BackdropLayer };
                 go.AddComponent<MeshFilter>().mesh = res.Mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterials = res.Materials;
                 ApplySceneMaterialUvScroll(SceneFolder(), res.Materials, res.MaterialIds);
@@ -4834,7 +4840,10 @@ namespace Sdo.Game
             var camGo = new GameObject("SceneCam") { layer = sceneLayer };
             var cam = camGo.AddComponent<Camera>();
             cam.orthographic = false; cam.fieldOfView = 45f;
-            cam.cullingMask = 1 << sceneLayer; cam.targetTexture = sceneRT;
+            // 背景(BackdropLayer)與人物(SceneLayer)**同一台相機**畫 —— 分成兩台(背景先畫、人物 overlay 後畫)會把
+            // 半透明背景(飄的彩帶/雪/粒子/火焰，全是 ZWrite Off)推到人物後面：它們不寫深度，後畫的人物就蓋掉它們。
+            // 背景要變暗改走材質的 _StageDim 乘數(StageBackdropDim)，渲染順序一動也不動。
+            cam.cullingMask = (1 << BackdropLayer) | (1 << sceneLayer); cam.targetTexture = sceneRT;
             cam.clearFlags = CameraClearFlags.SolidColor; cam.backgroundColor = Color.black;
             // EXACT decompiled projection (Camera_ctor 004_camera_0040a420.c: fovY=0x3f490fdb=45°, aspect=0x3faaaaab=4/3,
             // zNear=0x40a00000=5, zFar=0x45ea6000=7500). The old near=1 / far=bounds×4 wrecked depth precision on big
@@ -4883,7 +4892,7 @@ namespace Sdo.Game
                 cam.transform.position = b.center + new Vector3(0f, -b.extents.y * 0.22f, -dz);
                 cam.transform.LookAt(b.center + new Vector3(0f, dz * Mathf.Tan(pitchUp), 0f), Vector3.up);
             }
-            if (_cam != null) _cam.cullingMask &= ~(1 << sceneLayer);   // main cam shows the stage only via the quad
+            if (_cam != null) _cam.cullingMask &= ~((1 << sceneLayer) | (1 << BackdropLayer));   // main cam shows the stage only via the quad
 
             // full-screen background quad textured with the scene render. NATURAL (un-flipped) UVs: the live screen
             // (and the headless capture, which matches it) showed the stage+avatar UPSIDE-DOWN with a flipped V, so
@@ -4899,6 +4908,11 @@ namespace Sdo.Game
             _backdropMat = new Material(Shader.Find("Unlit/Texture")) { mainTexture = sceneRT };
             quad.AddComponent<MeshRenderer>().sharedMaterial = _backdropMat;
             SpawnLensFlare(quad.layer);
+
+            // 舞台背景亮度：場景/道具/場景特效都已經生出來了，這裡把它們的材質收一收再套一次值
+            // （之後每幀 Update 也會 Apply，值沒變就是零成本）。
+            _backdropDim.Collect(BackdropLayer);
+            _backdropDim.Apply(stageBrightness);
         }
 
         // SCN0004 太陽的鏡頭光斑鏈。畫在合成 quad(z=90)前面的 z=89，也就是「3D 場景之後、2D HUD 之前」——
@@ -4917,6 +4931,7 @@ namespace Sdo.Game
             var go = new GameObject("SunLensFlare");
             var lf = go.AddComponent<SceneLensFlare>();
             lf.Init(stage, atlas, backdropLayer);
+            lf.Dim = Mathf.Clamp01(stageBrightness);   // 太陽光斑也算舞台背景（它不在 StageBackdrop layer 上，自己傳）
             if (!string.IsNullOrEmpty(DevVar("SDO_FLARE_DIAG"))) lf.DiagEverySec = 1f;
             Debug.Log($"[flare] {SceneFolder()}: {SceneLensFlare.Elements.Length} 顆光斑, 壽命 {lf.LifetimeSec}s (官方 10s 後永遠消失)");
             _pendingLensFlareDir = null;
@@ -5564,6 +5579,7 @@ namespace Sdo.Game
         {
             if (!_sceneBootDone) return;   // stage is still building behind the loading screen — nothing to drive yet
             MaintainSceneRt();
+            _backdropDim.Apply(stageBrightness);   // 舞台背景亮度（值沒變 = 直接 return，見 StageBackdropDim.Apply）
             _musicName?.Tick();            // 視窗/全螢幕一變就重新以實體 px 光柵化歌名（否則取樣不對 → 殘影/糊）
             // LV/時間值同一套光柵；真的換了尺寸就重量「: 秒」欄寬(字寬會微調)，好把總長欄重新釘回原位。
             if (_hudTextRaster.Tick()) _timeMeasure = 0;

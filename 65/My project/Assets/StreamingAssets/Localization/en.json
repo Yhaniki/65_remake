@@ -1440,6 +1440,14 @@
    "v": "Overall screen brightness as a light multiplier (1x = untouched, 0.5x = half the light, 2x = twice). The whole picture — 3D stage, scene, UI — is multiplied after it is drawn, so dark areas stay dark instead of washing out to grey. Takes effect as you drag; press 保存配置 to keep it."
   },
   {
+   "k": "cfg.stage_brightness.label",
+   "v": "Stage backdrop"
+  },
+  {
+   "k": "cfg.stage_brightness.help",
+   "v": "In-game only, and only the BACKDROP: the stage mesh, props, background NPCs, lights, signs and scene effects. Dancers and their effects are never touched, so 0x leaves the characters on a pure black stage. Drawing order is untouched — ribbons and snow that float in front of a dancer still do. Applies from the next song you start."
+  },
+  {
    "k": "cfg.mmd_model.label",
    "v": "Model"
   },

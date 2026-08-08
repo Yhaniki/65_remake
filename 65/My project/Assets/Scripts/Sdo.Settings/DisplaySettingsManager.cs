@@ -97,6 +97,7 @@ namespace Sdo.Settings
 
             s.gameplay ??= new GameplaySettings();
             s.gameplay.panelOpacity = Mathf.Clamp(s.gameplay.panelOpacity, 0f, GameplaySettings.MaxPanelOpacity);
+            s.gameplay.stageBrightness = Mathf.Clamp01(s.gameplay.stageBrightness);   // 舞台背景亮度 0(全黑)..1(原樣)
 
             if (string.IsNullOrEmpty(s.language)) s.language = "zh-TW";
             return s;
