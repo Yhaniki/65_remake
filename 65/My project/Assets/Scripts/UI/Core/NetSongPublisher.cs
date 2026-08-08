@@ -295,6 +295,113 @@ namespace Sdo.UI.Core
             ctx.Net.SetSong(song);
         }
 
+        // ---- 反方向:把 server 手上那首歌收進自己的 session ------------------------------------------
+
+        /// <summary>
+        /// **非房主**:把 server 手上那首歌收回自己的 <see cref="GameSession"/>。
+        ///
+        /// 🔴 這是「房主轉給我、我離房再回來,房間的歌就變回**我上一次**玩的那首」的修法,
+        /// 與 <see cref="NetRoomSettingsPublisher.AdoptIfNotHost"/>(房間設定版)是同一種病:
+        /// <see cref="Publish"/> 拿的是**本機 session**,而非房主的 session 從頭到尾都還是他自己
+        /// 上次選的歌 —— 一旦他接手房主(被轉讓、原房主離開而遞補、或座位全空後第一個坐下),
+        /// 下一次走到發布路徑就把那首舊歌推上去,把房間真正選好的歌蓋掉。
+        /// 房間選的歌是**房間的**,不是誰的個人偏好。
+        ///
+        /// 收回來之後,升房主那一刻 session 與 server 已經一致 → <see cref="Publish"/> 的
+        /// <see cref="SameRoomSelection"/> 守門就會擋下重送。附帶修好顯示:房主那台的右側面板
+        /// 是讀 session 的(見 <c>RoomScreen.NetRoomForPanel</c>),接手房主的瞬間歌名會跳成自己上次那首。
+        /// </summary>
+        public static void AdoptIfNotHost(AppContext ctx)
+        {
+            if (ctx == null || ctx.Net == null || ctx.Session == null) return;
+            if (!ctx.Net.IsConnected || !ctx.Net.InRoom || ctx.Net.IsHost) return;
+            var snap = ctx.Net.Room;
+            AdoptToSession(ctx.Session, snap != null ? snap.Song : null);
+        }
+
+        /// <summary>
+        /// 把一份 server 的 <see cref="NetSongRef"/> 寫進 session。回 false = 沒收(沒歌、或缺這首外部歌)。
+        ///
+        /// 🔴 **必須是 <see cref="FromSession"/> 的左反元**:收完之後 <c>FromSession(session)</c> 要與
+        /// 傳進來的這一份 <see cref="SameRoomSelection"/>,否則這台升房主後每一份快照都會再送一次
+        /// (而每一次送都會把全房的 ready/avail 打回去,R9)。<c>SongIsRandom</c> 那一行就是為了這個。
+        ///
+        /// 缺歌的外部歌**不收**:本機根本沒有那份譜,寫進 session 只會讓它指向不存在的檔。
+        /// 那台就算升房主也不會覆蓋 server —— 進房的自動發布只在「房間沒歌」時才送
+        /// (見 <see cref="PublishIfRoomHasNone"/>)。
+        /// </summary>
+        public static bool AdoptToSession(GameSession s, NetSongRef song)
+        {
+            if (s == null || song == null || !song.HasSong) return false;
+            // 已經是同一個選擇 → 什麼都不做。這條路徑每一份房間快照都會走,而外部歌重寫一次
+            // 就要再掃一次目錄(FindByPack)。
+            if (SameRoomSelection(FromSession(s), song)) return true;
+
+            if (song.Official)
+            {
+                // 隨機難度局:Title 是「隨機難度 X」標籤,**不可以**拿 gn 去查目錄換成抽到的歌名 ——
+                // 那等於在房間面板上提前揭曉(見 NetSongRef.RandomTitle)。
+                var meta = song.RandomTitle ? null : SongCatalog.Get(song.Gn);
+                string title = meta != null ? (meta.title ?? song.Gn)
+                             : (!string.IsNullOrEmpty(song.Title) ? song.Title : song.Gn);
+                string artist = meta != null ? (meta.artist ?? "") : (song.Artist ?? "");
+                // 一定要走 SetOfficialSong 而不是只寫 SongGn:自己上次選的可能是外部歌,
+                // IsExternalSong 留著 true 的話進場放的還是那首(見 GameSession.SetOfficialSong)。
+                s.SetOfficialSong(song.Gn, song.FileId, title, artist);
+                s.SongIsRandom = song.RandomTitle;
+                s.Difficulty = (Difficulty)UnityEngine.Mathf.Clamp(song.Difficulty, 0, 2);
+                return true;
+            }
+
+            var hit = ExternalSongLibrary.FindByPack(song.PackId, song.SongKey);
+            if (hit == null) return false;   // 缺歌(還在傳/根本沒有)→ 寧可不動 session
+            ApplyExternalToSession(s, hit, UnityEngine.Mathf.Clamp(song.Difficulty, 0, 2));
+            return true;
+        }
+
+        /// <summary>
+        /// 外部歌:把「房主選的那一份」對映到**本機自己的路徑**(M5)。
+        ///
+        /// 🔴 為什麼不能直接用 server 帶來的路徑:那是房主電腦上的絕對路徑,而且外部歌的 gn 是
+        /// 「絕對路徑的 hash」—— 換台電腦完全不同。所以身分走 packId + songKey(內容指紋),
+        /// 查到本機的那筆 catalog entry 之後,譜/音檔/資料夾全部用**自己這邊**的值。
+        /// 少了這一步,非房主進場時 ExternalChartPath 還是房主的路徑 → 載不到譜(黑畫面),
+        /// 而症狀完全指不到「身分對映」這一層。
+        ///
+        /// 開場(<c>matchStarting</c>)與房間快照兩條路徑共用這一份 —— 兩份會漂移。
+        /// </summary>
+        public static void ApplyExternalToSession(GameSession s, SongCatalog.Entry hit, int slot)
+        {
+            if (s == null || hit == null) return;
+
+            slot = UnityEngine.Mathf.Clamp(slot, 0, 2);   // 自由模式時這是**自己**挑的難度,不一定是房主那個
+            s.SongGn = hit.gn;                 // 本機的 gn(每台不同,只在本機有意義)
+            s.SongFileId = hit.fileId;
+            s.SongTitle = hit.title;
+            s.SongArtist = hit.artist ?? "";
+            s.SongIsRandom = false;
+            s.IsExternalSong = true;
+            s.Difficulty = (Difficulty)slot;
+            s.ExternalChartFormat = hit.chartFormat;
+            s.ExternalChartPath = hit.ChartPath(slot);
+            s.ExternalChartIndex = hit.ChartIndex(slot);
+            s.ExternalChartSeed = hit.chartSeed;
+            s.ExternalDpsPath = hit.dpsPath;
+            s.ExternalAudioPath = hit.audioPath;
+            s.ExternalLevel = hit.DisplayLevel(slot);
+            s.ExternalFolderPath = hit.folderPath;
+            s.ExternalSongKey = hit.songKey ?? "";
+            // 舞蹈的 seed:**內容指紋**,不是資料夾名 —— 傳檔來的那份放在 connect/<歌名 - 作者 [tag]>/,
+            // 資料夾名與持有原檔的人不同,吃資料夾名的話同一場的兩個人會跳完全不同的舞(見 Sdo.Game.ExternalDps)。
+            s.ExternalPackId = hit.packId ?? "";
+            // 生成編舞的輸入一樣要走**本機**這筆 catalog:舞是一首歌一支,不能因為房主選了 hard
+            // 就跟自己單機玩 easy 時生出的舞不同(見 Sdo.Osu.DanceInputs)。
+            s.ExternalSongBpm = hit.bpm;
+            s.ExternalSongChartPaths = new[] { hit.ChartPath(0), hit.ChartPath(1), hit.ChartPath(2) };
+            s.ExternalSongChartIndices = new[] { hit.ChartIndex(0), hit.ChartIndex(1), hit.ChartIndex(2) };
+            UnityEngine.Debug.Log("[net] 外部歌已對映到本機:" + hit.title + " → " + s.ExternalChartPath);
+        }
+
         /// <summary>
         /// 「server 那邊還沒有歌就補發一次」—— 由房間快照的回呼每次呼叫。
         ///

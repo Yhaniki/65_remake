@@ -955,7 +955,13 @@ namespace Sdo.UI.Screens
                 Ctx.Rooms.SetSong(s.SongTitle);               // 同步房間顯示（單機=房主）
             // 連線:房主要把歌**發給 server**,否則 server 眼中這間房沒有歌 → 沒人按得下準備、
             // 房主按開始只會收到「請先選擇歌曲」(見 NetSongPublisher 的註解)。
-            NetSongPublisher.Publish(Ctx);
+            //
+            // 🔴 這裡是「進房的預設歌」,只在**房間還沒有歌**時才送 —— 不能用 Publish:
+            //    那會拿本機 session(可能是我自己上次玩的那首)蓋掉房間已經選好的歌。
+            //    踩過的路徑:別人選好歌之後把房主轉給我,我離開畫面再回房間 → OnShow 又跑一次這裡
+            //    → 房間的歌變成我上一首。玩家**主動**選歌走的是 SongSelectScreen.OnConfirm 的 Publish,
+            //    那一條才該覆蓋。
+            NetSongPublisher.PublishIfRoomHasNone(Ctx);
         }
 
         public override void OnHide()
@@ -1044,6 +1050,11 @@ namespace Sdo.UI.Screens
         private void OnRoomUpdated(int id)
         {
             EnsureChatScope();
+            // 🔴 **先收再推**(與下面的房間設定同一個道理,而且是同一個 bug 的歌曲版):
+            //    非房主要先把「房間選的那首歌」收進自己的 session,否則房主一轉移(或原房主離開後
+            //    遞補、離房再回來重新接手),新房主就拿自己上次玩的那首把房間的歌蓋掉。
+            //    使用者回報的「房主給我 → 我跳出去再回房間 → 歌名變成前一次那首」就是這條。
+            NetSongPublisher.AdoptIfNotHost(Ctx);
             // 🔴 房主要把歌發給 server,而且必須在**每次房間快照**時檢查一次,不能只在進房那一刻送一次:
             //    進房時房間可能還沒建好(createRoom 要等 server 回 roomState),那時 InRoom 還是 false
             //    → 發布被靜默跳過、而且永遠不會再試 → server 眼中這間房永遠沒有歌 →
@@ -3057,7 +3068,13 @@ namespace Sdo.UI.Screens
             // 它的 session 記著自己上次選的歌,面板會顯示那一首,而房間實際上是房主選的另一首
             // (實機兩開就是這樣:房主選了外部歌,客人的面板還寫著自己上次玩的官方歌)。
             // 線上非房主一律看房間快照;缺歌的人也看得到歌名/等級/BPM(那些值 server 帶著走)。
-            var netSong = netRoom != null ? netRoom.Song : null;
+            //
+            // 🔴 **房主也讀快照**(與 RoomGameMode 同一個原則):房間的歌是 server 手上那一份,
+            // 房主自己選的會 push 上去,兩邊本來就該一致 —— 推送還沒回來(或根本被擋下)時,
+            // 顯示 server 手上的那個才是誠實的。拿 session 當來源會讓「剛接手房主」的人
+            // 看到自己上一次玩的那首歌,而房間其實選的是別首(使用者回報的那個症狀)。
+            // 快照還沒歌(建房那一刻)才退回 session,免得剛選完歌閃一下「未選擇歌曲」。
+            var netSong = Online && Ctx.Net != null && Ctx.Net.Room != null ? Ctx.Net.Room.Song : null;
             if (netSong != null && !netSong.HasSong) netSong = null;
 
             bool hasSong = netSong != null || s.HasSong;
@@ -5711,6 +5728,9 @@ namespace Sdo.UI.Screens
         /// 而症狀完全指不到「身分對映」這一層。
         ///
         /// 找不到(還在下載 / 下載失敗)就什麼都不動:那台本來就不會被納入這一場(R12 要求 avail==have)。
+        ///
+        /// 對映本身住在 <see cref="NetSongPublisher.ApplyExternalToSession"/> —— 房間快照那條
+        /// (非房主把房間的歌收進 session)用的是同一份,兩份會漂移。
         /// </summary>
         private static void ApplyResolvedExternalSong(GameSession s, NetSongRef song, int slot)
         {
@@ -5721,34 +5741,7 @@ namespace Sdo.UI.Screens
                 Debug.LogWarning("[room] 本機找不到這一場的外部歌(packId=" + song.PackId + ")—— 進場會載不到譜");
                 return;
             }
-
-            slot = Mathf.Clamp(slot, 0, 2);    // 自由模式時這是**自己**挑的難度(見 LocalPlaySlot),不一定是房主那個
-            s.SongGn = hit.gn;                 // 本機的 gn(每台不同,只在本機有意義)
-            s.SongFileId = hit.fileId;
-            s.SongTitle = hit.title;
-            s.SongArtist = hit.artist ?? "";
-            s.SongIsRandom = false;
-            s.IsExternalSong = true;
-            s.Difficulty = (Difficulty)slot;
-            s.ExternalChartFormat = hit.chartFormat;
-            s.ExternalChartPath = hit.ChartPath(slot);
-            s.ExternalChartIndex = hit.ChartIndex(slot);
-            s.ExternalChartSeed = hit.chartSeed;
-            s.ExternalDpsPath = hit.dpsPath;
-            s.ExternalAudioPath = hit.audioPath;
-            s.ExternalLevel = hit.DisplayLevel(slot);
-            s.ExternalFolderPath = hit.folderPath;
-            s.ExternalSongKey = hit.songKey ?? "";
-            // 舞蹈的 seed:**內容指紋**,不是資料夾名 —— 傳檔來的那份放在 connect/<歌名 - 作者 [tag]>/,
-            // 資料夾名與持有原檔的人不同,吃資料夾名的話同一場的兩個人會跳完全不同的舞(見 Sdo.Game.ExternalDps)。
-            s.ExternalPackId = hit.packId ?? "";
-            // 生成編舞的輸入一樣要走**本機**這筆 catalog:舞是一首歌一支,不能因為房主選了 hard
-            // 就跟自己單機玩 easy 時生出的舞不同(見 Sdo.Osu.DanceInputs)。少了這三行,線上開外部歌
-            // 會退回「選到那張譜自己的 span/bpm」—— 正是這次要修掉的那個 bug,只是躲在連線這條路徑上。
-            s.ExternalSongBpm = hit.bpm;
-            s.ExternalSongChartPaths = new[] { hit.ChartPath(0), hit.ChartPath(1), hit.ChartPath(2) };
-            s.ExternalSongChartIndices = new[] { hit.ChartIndex(0), hit.ChartIndex(1), hit.ChartIndex(2) };
-            Debug.Log("[room] 外部歌已對映到本機:" + hit.title + " → " + s.ExternalChartPath);
+            NetSongPublisher.ApplyExternalToSession(s, hit, slot);
         }
 
         private void OnStart()
