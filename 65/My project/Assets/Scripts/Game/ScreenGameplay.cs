@@ -552,7 +552,9 @@ namespace Sdo.Game
         private float _resultPhaseStart;          // Time.time the current result phase began
         private bool _localWon;                   // local player is the round winner (rank 1) — drives win/lose pose + FINISHED
         private bool _localWonForRecord;          // 戰績用的「贏」:並列第一也算(見 LocalWonForRecord)
-        private bool _gameOver;                   // HP ran out (failed) — result shows GAME OVER instead of YouWin/Lose
+        // 這一局用 GAME OVER 死亡演出收尾(＝血空**而且**沒有別人還在打;見 GameOverGate.GameOverEnding)。
+        // 多人時別人把歌撐到曲末的話這裡是 false —— 一樣輸、一樣 F,但演的是一般輸掉的定格,不出大字。
+        private bool _gameOver;
         // 輸贏定格的官方 clip(cat5 = 贏、cat4 = 輸),男女各一支。本機用下面兩個欄位(ConfigureAvatarGender 依
         // 本機性別挑);場上其他人**各挑自己性別**的那一支(見 PlayRemoteFinishPoses)—— 所以字面值要有名字,
         // 不能只活在本機那兩個欄位裡。
@@ -730,7 +732,7 @@ namespace Sdo.Game
         public bool effectScene = true;     // 場景特效：場景常駐背景 EFT（魔法陣/雪/極光/發光…，SpawnSceneEffects）
         // 進階「完奏模式」：HP 歸零不切斷歌曲，整首照打(判定續行)到曲末 —— 但死亡照算：從歸零那刻起分數凍結
         // (P/C/B/M 判定統計仍繼續記錄)、**舞者停舞回待機**(血用完了就不能再跳舞，跟一般模式死掉一樣)，
-        // 結算一樣出 GAME OVER、評分 F。見 Update 的 HP-out 段與 _hpDead。
+        // 結算一樣算輸、評分 F。見 Update 的 HP-out 段與 _hpDead(GAME OVER 大字只有被淘汰才演)。
         public bool playFullSong = false;
         // 掉 miss 也照跳舞（config.ini opt_danceIgnoreMiss，預設關；OPTION 沒有這個選項）：開著時 8 拍結算不再因為
         // 這個 block 有 Bad/Miss 而讓舞者停下來（見 Sdo.Ruleset.DanceGate），**連血量都不管**（優先權最大）：
@@ -5738,7 +5740,8 @@ namespace Sdo.Game
             //   (2) P/C/B/M 判定統計、combo、特效照常繼續累計(結算的判定數是整首的);
             //   (3) HP 鎖在地板 (HealthProcessor lockOnDeath),不會被後面的 combo 補回來;
             //   (4) 舞者停舞 —— 血用完就不能繼續跳舞,回待機站著(DanceEnabled 看 _hpDead);
-            //   (5) 結算一樣算 GAME OVER / 輸(見 EnterResult 的 _gameOver 與評分 F)。
+            //   (5) 結算一律算輸、評分 F(見 EnterResult 的 _gameOver 與 FillRows);至於收尾要不要演
+            //       GAME OVER 大字,是**被淘汰**才有的事 —— 別人把歌撐到播完的話走一般輸掉的流程。
             if (!showtimeMode && !_hpDead && _health != null && _health.IsFailed)
             {
                 _hpDead = true;
@@ -5747,8 +5750,9 @@ namespace Sdo.Game
             // 出局(_failed = 停止遊玩 → 這一幀就切 GAME OVER 結算)。
             //
             // 🔴 血空 ≠ 當場出局:**房裡只要還有人在打,自己就照完奏模式繼續打下去**(音符照捲、照判定、
-            //    分數凍結),等到最後一個人也倒下的那一幀才出局。歌先播完的話走下面的曲末出口,一樣是
-            //    GAME OVER 結算。完奏模式永不出局(整首打到底),離線/單人沒有別人 → 血空當場出局(行為不變)。
+            //    分數凍結),等到最後一個人也倒下的那一幀才出局。歌先播完的話走下面的曲末出口,而且那一場
+            //    是**正常打完**的 → 收尾不出 GAME OVER,走一般輸掉的流程(見 EnterResult 的 GameOverEnding)。
+            //    完奏模式永不出局(整首打到底),離線/單人沒有別人 → 血空當場出局(行為不變)。
             //    (`_hpDead &&` 只是短路:還活著的人不必每幀去算一次對手名單 —— 規則本身在 EliminatedNow。)
             if (!showtimeMode && !_failed && _hpDead
                 && Sdo.Ruleset.GameOverGate.EliminatedNow(_hpDead, playFullSong, AnyOpponentStillPlaying()))
@@ -5780,7 +5784,12 @@ namespace Sdo.Game
             if (_audio) _audio.Stop();                        // stop the song (natural end already silent; matters for F5 mid-song cut)
             if (showtimeMode) { SetEnergyHudVisible(false); _scoreRoll?.SetVisible(false); _bonusRoll?.SetVisible(false); }   // hide the gauge AND the big/small ShowTime score at song end (not on the result panel)
             RebuildRoster();                                  // finalize scores so the rank/winner is current
-            _gameOver = _hpDead;                              // HP-out → GAME OVER (overrides win/lose banner);完奏模式打完整首也算
+            // HP-out → GAME OVER 死亡演出(蓋掉輸贏定格/短曲/FINISHED/勝負旗)。
+            // 🔴 但「血空」不等於「被淘汰」:多人時自己死了、**別人還在打**,歌被撐到曲末 —— 那一場是
+            // 正常打完的,只是自己成績最差 → 走一般輸掉的流程,不出 GAME OVER 大字(使用者指定)。
+            // 出局那條路(GameOverGate.EliminatedNow)必然沒有人還在打 → 離線/單人/全員陣亡照舊 GAME OVER。
+            // 評分仍是 F(見 FillRows 的 _hpDead)—— 死了就是死了,與演哪一套收尾無關。
+            _gameOver = Sdo.Ruleset.GameOverGate.GameOverEnding(_hpDead, AnyOpponentStillPlaying());
             // STAGE 1 (win/lose pose): clear ONLY the note board (+HP/receptors) and its combo/judgment words.
             // The top score, centre rank and right-side roster STAY visible until the result panel appears.
             SetTrackVisible(false);                           // note board + HP + receptors + click strips
@@ -5807,9 +5816,10 @@ namespace Sdo.Game
             ReturnAllVisuals();                               // also kill any note sprites still in flight (return them to the pool)
             if (_gameOver)
             {
-                // 血條用完死掉 (HP-out): 不放結束勝利/失敗的定格動作與 FINISHED effect;改播死亡字幕 GAME OVER (置中) +
-                // Frameextrude 音效。**出局的那一幀一定走到這裡** —— 「什麼時候才算出局」由 Update 的
-                // GameOverGate.EliminatedNow 決定(一般模式要等房裡所有人都倒下,或歌自然播完)。
+                // 被淘汰 (血空 + 沒有別人還在打): 不放結束勝利/失敗的定格動作與 FINISHED effect;改播死亡字幕
+                // GAME OVER (置中) + Frameextrude 音效。**出局的那一幀一定走到這裡** —— 「什麼時候才算出局」
+                // 由 Update 的 GameOverGate.EliminatedNow 決定(一般模式要等房裡所有人都倒下)。
+                // 反之,別人把歌撐到曲末的那條路 _gameOver 是 false,底下照常演輸的定格。
                 PlaySe("Frameextrude");
                 LoadGameOverFrames();                             // 依當前 note skin 選對應的 GAMEOVER 圖 (per-skin)
                 StartCoroutine(GameOverAnim());
@@ -5896,7 +5906,7 @@ namespace Sdo.Game
             PlayRemoteFinishPoses(redo);
             // FINISHED = 官方掛在**第一名舞者**腳下的完奏特效。一定要在 PlayRemoteFinishPoses 之後 ——
             // 贏家是那邊定案的,錨點要跟做勝利動作的是同一個人(見 FinishedEftAnchor)。
-            // GAME OVER(本機血條見底)不放:那條路整套輸贏演出都不演。
+            // GAME OVER(本機被淘汰)不放:那條路整套輸贏演出都不演。
             // 翻案翻成別人贏也收不回來(特效自己會在 5 秒內結束),但至少不會再放第二次。
             if (!_gameOver && !_finishedEftSpawned)
             {

@@ -75,9 +75,45 @@ namespace Sdo.Tests
         [Test]
         public void FullSong_Mode_Is_Never_Eliminated_Mid_Song()
         {
-            // 完奏模式:整首打到曲末,由曲末那條出口收(結算一樣是 GAME OVER)。
+            // 完奏模式:整首打到曲末,由曲末那條出口收(那時是不是 GAME OVER 由 GameOverEnding 決定)。
             Assert.IsFalse(GameOverGate.EliminatedNow(hpDead: true, playFullSong: true, anyRemoteStillPlaying: false));
             Assert.IsFalse(GameOverGate.EliminatedNow(hpDead: true, playFullSong: true, anyRemoteStillPlaying: true));
+        }
+
+        // ---- 收尾要不要演 GAME OVER 大字 ----
+
+        [Test]
+        public void A_Living_Player_Never_Sees_Game_Over()
+        {
+            Assert.IsFalse(GameOverGate.GameOverEnding(hpDead: false, anyRemoteStillPlaying: false));
+            Assert.IsFalse(GameOverGate.GameOverEnding(hpDead: false, anyRemoteStillPlaying: true));
+        }
+
+        [Test]
+        public void Solo_Death_Still_Shows_Game_Over()
+        {
+            // 離線/單人/全員陣亡:被淘汰 = 這一場對我結束了 → 照舊死亡演出(行為不變)。
+            Assert.IsTrue(GameOverGate.GameOverEnding(hpDead: true, anyRemoteStillPlaying: false));
+        }
+
+        [Test]
+        public void Death_With_Someone_Else_Alive_Ends_As_A_Normal_Loss()
+        {
+            // 🔴 需求本身:多人時自己死了但別人還在打,歌被撐到曲末 —— 那一場是正常打完的,
+            // 收尾走一般輸掉的流程(cat4 + SE_0015 + 輸的旗),不出 GAME OVER 大字。
+            Assert.IsFalse(GameOverGate.GameOverEnding(hpDead: true, anyRemoteStillPlaying: true));
+        }
+
+        [Test]
+        public void Every_Elimination_Ends_As_Game_Over()
+        {
+            // 兩條規則必須對得起來:被淘汰(EliminatedNow)那一幀切結算,一定會演 GAME OVER。
+            // 少了這條,「出局了卻走輸的定格」會變成沒有人查得出原因的畫面。
+            foreach (bool playFullSong in new[] { false, true })
+                foreach (bool anyRemote in new[] { false, true })
+                    if (GameOverGate.EliminatedNow(hpDead: true, playFullSong: playFullSong, anyRemoteStillPlaying: anyRemote))
+                        Assert.IsTrue(GameOverGate.GameOverEnding(hpDead: true, anyRemoteStillPlaying: anyRemote),
+                                      "playFullSong=" + playFullSong + " anyRemote=" + anyRemote);
         }
     }
 }
