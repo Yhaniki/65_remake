@@ -227,6 +227,8 @@ namespace Sdo.Tests
             var a = MakeTypicalSong("generated");
             var id1 = SongPackId.ForFolder(a);
 
+            // 側車檔也在這一條裡:它會傳(收端需要它才知道要用哪一支編舞),但不算身分 ——
+            // 它的內容每播一次就變一次(見 SongPackFilter.NotPartOfTheSong)。
             WriteFile(a, "sdoinfo.dat", "#SONG:x;");
             WriteBytes(a, "cd.png", 500, 0x11);
             WriteBytes(a, "dance.dps", 500, 0x22);
@@ -329,14 +331,15 @@ namespace Sdo.Tests
             WriteBytes(f, "bg.mp4", 1024 * 1024, 1);
             WriteBytes(f, "bg2.avi", 2 * 1024 * 1024, 1);
             WriteFile(f, "readme.txt", "x");
-            WriteFile(f, "sdoinfo.dat", "#SONG:x;");
+            WriteBytes(f, "dance.dps", 500, 1);      // 生成的舞 —— 收端自己會重生
+            WriteFile(f, "sdoinfo.dat", "#SONG:x;"); // companion —— 會傳,所以算在 IncludedFiles 裡
             WriteBytes(f, "tool.exe", 100, 1);
 
             List<PackFileEntry> files;
             PackScanStats stats;
             Assert.IsTrue(SongPackId.ScanFolder(f, false, out files, out stats));
 
-            Assert.AreEqual(4, stats.IncludedFiles, "2 譜 + 音檔 + 圖");
+            Assert.AreEqual(5, stats.IncludedFiles, "2 譜 + 音檔 + 圖 + 側車檔(companion 也要傳)");
             Assert.AreEqual(2, stats.SkippedVideos);
             Assert.AreEqual(3 * 1024 * 1024, stats.SkippedVideoBytes);
             Assert.AreEqual(1, stats.SkippedUnknown);

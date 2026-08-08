@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Sdo.Game;
 using Sdo.Osu;
@@ -159,6 +160,60 @@ namespace Sdo.Tests
             Assert.IsTrue(SongPackFilter.IsGenerated("dance.dps"));
             Assert.IsTrue(SongPackFilter.IsGenerated(SongSidecar.DpsFileName("audio:song.mp3")));
             Assert.IsFalse(SongPackFilter.IsGenerated("12951.DPS"), "客製編舞是使用者的檔案,不是生成物");
+        }
+
+        // ---- 缺歌傳檔:客製編舞要跟著過去 ----
+
+        [Test]
+        public void The_Custom_Dance_Its_Clips_And_The_Sidecar_Are_All_Transferable()
+        {
+            // 🔴 「不是生成物」還不夠 —— .dps/.mot 也得在**白名單**裡,否則它們是 UnknownType,
+            // 連上傳清單都進不去;而 sidecar 是指到它們的唯一指標,一起漏掉的話收端拿到檔案也沒人指它。
+            // 實機症狀:同一場裡房主跳作者編的舞,下載到這首歌的人跳的是亂數生成的那一支。
+            Assert.IsTrue(SongPackFilter.IsTransferable("12951.dps", 4096), "客製編舞要傳");
+            Assert.IsTrue(SongPackFilter.IsTransferable("WDANCE0272.MOT", 40960), "它點名的動作片段也要傳");
+            Assert.IsTrue(SongPackFilter.IsTransferable(SongSidecar.FileName, 512), "指標(sidecar)也要傳");
+            Assert.IsFalse(SongPackFilter.IsTransferable("dance.dps", 4096), "生成的那一支仍然由收端自己重生");
+        }
+
+        [Test]
+        public void A_Custom_Dance_Survives_A_Round_Trip_Through_The_Transfer_Filter()
+        {
+            // 端到端:把「過得了過濾器」的檔案複製到另一個資料夾(= 收端下載後的樣子,檔名依
+            // SafeRelPath.Normalize 全部轉小寫),那邊的 EnsureFor 必須挑到同一支客製編舞。
+            Dps("12951.DPS");
+            File.WriteAllBytes(Path.Combine(_folder, "WDANCE0272.MOT"), new byte[] { 9, 9, 9, 9 });
+            File.WriteAllText(Path.Combine(_folder, "song.osu"), "osu file format v14\n");
+            Sidecar("#VERSION:1;\n#SONG:;\n#DPS:12951.DPS;\n#MOT:WDANCE0272.MOT;\n#DPSOFFSETMS:-3000;\n");
+
+            string dest = Path.Combine(Path.GetTempPath(), "sdo_customdps_rx_" + Path.GetRandomFileName());
+            Directory.CreateDirectory(dest);
+            try
+            {
+                foreach (var abs in Directory.GetFiles(_folder))
+                {
+                    string rel = SafeRelPath.Normalize(Path.GetFileName(abs));
+                    if (!SongPackFilter.IsTransferable(rel, new FileInfo(abs).Length)) continue;
+                    File.Copy(abs, Path.Combine(dest, rel));
+                }
+
+                CollectionAssert.Contains(Directory.GetFiles(dest).Select(Path.GetFileName).ToArray(), "12951.dps");
+                CollectionAssert.Contains(Directory.GetFiles(dest).Select(Path.GetFileName).ToArray(), "wdance0272.mot");
+                CollectionAssert.Contains(Directory.GetFiles(dest).Select(Path.GetFileName).ToArray(), SongSidecar.FileName);
+
+                string got = ExternalDps.EnsureFor(dest, "", "", Map(), 120.0, (int)SongFormat.Osu, 0L, null, null);
+                Assert.AreEqual("12951.DPS", Path.GetFileName(got), "收端要跳作者編的那一支,不是自己生的");
+                Assert.IsTrue(File.Exists(got));
+                Assert.IsFalse(File.Exists(Path.Combine(dest, "dance.dps")), "不該在收端偷生一支");
+
+                // 手調過的舞蹈 offset 也要跟著過去 —— 不然兩邊的舞跟音樂對不在同一個點上。
+                var entry = SongSidecar.Find(SongSidecar.Parse(File.ReadAllText(Path.Combine(dest, SongSidecar.FileName))), "");
+                Assert.AreEqual(-3000f, entry.DpsOffsetMs);
+            }
+            finally
+            {
+                try { Directory.Delete(dest, true); } catch { }
+            }
         }
     }
 }

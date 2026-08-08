@@ -158,6 +158,10 @@ namespace Sdo.Osu
                 var f = files[i];
                 string rel = SafeRelPath.Normalize(f.RelPath);
                 if (rel.Length == 0) continue;
+                // 🔴 companion(sdoinfo.dat)跟著傳,但**不進身分** —— 它是執行期會被改寫的檔
+                // (第一次選歌寫 #CDIMAGE、第一次玩寫 #DPS),算進去的話同一份歌會因為「玩過沒」
+                // 而變成兩個 packId(見 SongPackFilter.NotPartOfTheSong)。
+                if (SongPackFilter.ClassifyPath(rel) == PackFileVerdict.Companion) continue;
 
                 // 只取譜面的 hash —— 見上面的說明。
                 string hash = NeedsContentHash(rel) ? (f.Sha256 ?? string.Empty) : string.Empty;
@@ -281,7 +285,8 @@ namespace Sdo.Osu
                 catch { len = -1; }
 
                 var verdict = SongPackFilter.Classify(rel, len);
-                if (verdict != PackFileVerdict.Include)
+                // companion 要收進清單(它要跟著傳),只是 BuildManifest 不會把它算進 packId。
+                if (verdict != PackFileVerdict.Include && verdict != PackFileVerdict.Companion)
                 {
                     Tally(ref stats, verdict, len);
                     continue;

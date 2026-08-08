@@ -78,11 +78,56 @@ namespace Sdo.Tests
         [Test]
         public void Generated_Files_Are_Excluded()
         {
-            // 收端自己會重新生成(sdoinfo.dat / cd*.png / dance*.dps),傳過去只是浪費。
+            // 收端自己會重新生成(cd*.png / dance*.dps),傳過去只是浪費。
             Write("song.osu", "chart");
-            Write("sdoinfo.dat", "generated");
+            Write("cd.png", "disc");
+            Write("dance.dps", "generated");
             var files = SongPackScan.Enumerate(_dir, hashEverything: false);
             CollectionAssert.AreEquivalent(new[] { "song.osu" }, Names(files));
+        }
+
+        [Test]
+        public void The_Sidecar_And_The_Custom_Dance_It_Names_Are_Included()
+        {
+            // 🔴 側車檔是「這首歌用哪一支編舞/哪張碟」的唯一指標 —— 它跟客製 .dps/.mot 一起走,
+            // 否則收端拿到了檔案卻沒人去指它,照樣生一份自動編舞(實測:房主跳作者編的、別人跳亂數生的)。
+            Write("song.osu", "chart");
+            Write("sdoinfo.dat", "#DPS:12951.DPS;\n#MOT:WDANCE0272.MOT;\n");
+            Write("12951.DPS", "custom dance");
+            Write("WDANCE0272.MOT", "custom clip");
+            var files = SongPackScan.Enumerate(_dir, hashEverything: false);
+            CollectionAssert.AreEquivalent(new[] { "song.osu", "sdoinfo.dat", "12951.dps", "wdance0272.mot" },
+                Names(files));
+        }
+
+        [Test]
+        public void Rewriting_The_Sidecar_Does_Not_Change_The_PackId()
+        {
+            // 🔴 播一次歌就會改寫它。它若進了身分,送端玩過一次自己的 packId 就變了 ——
+            // server 上那包再也對不上,而症狀是「明明剛傳過還是說我沒有這首歌」。
+            Write("song.osu", "chart");
+            Write("sdoinfo.dat", "#SONG:;\n");
+            var before = SongPackScan.Compute(_dir);
+
+            Write("sdoinfo.dat", "#SONG:;\n#CDIMAGE:cd.png;\n#DPS:dance.dps;\n#DPSVER:5;\n");
+            Assert.AreEqual(before, SongPackScan.Compute(_dir));
+        }
+
+        [Test]
+        public void The_Editor_Backup_Folder_Is_Neither_Transferred_Nor_Part_Of_The_Id()
+        {
+            // 🔴 StepMania/ArrowVortex 每存一次譜就往 <歌>/FileBackup/ 丟一個帶時間戳的 .sm(實測一首 24 個)。
+            // 算進 packId 的話,存一次譜這首歌就換一個身分 → 房裡每個人都得重下一遍一份只多了備份的相同歌曲。
+            Write("song.sm", "chart");
+            Write("audio.mp3", "audio");
+            var before = SongPackScan.Compute(_dir);
+
+            Write("FileBackup/2026-04-26_200351.sm", "older chart");
+            Write("FileBackup/2026-04-26_200852.sm", "older chart 2");
+
+            CollectionAssert.AreEquivalent(new[] { "song.sm", "audio.mp3" },
+                Names(SongPackScan.Enumerate(_dir, hashEverything: false)), "備份夾整個不傳");
+            Assert.AreEqual(before, SongPackScan.Compute(_dir), "存一次譜不該換一個 packId");
         }
 
         [Test]

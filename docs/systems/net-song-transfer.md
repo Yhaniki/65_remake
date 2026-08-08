@@ -25,17 +25,55 @@ manifest 每行 = <相對路徑,小寫,'/'> \x1F <位元組數> \x1F <譜面才�
 
 | 類別 | 規則 |
 |---|---|
-| 白名單 | `.osu .sm .gn .mc .tsv .ogg .mp3 .wav .png .jpg .jpeg .bmp .osb .ini` |
+| 白名單 | `.osu .sm .gn .mc .tsv .ogg .mp3 .wav .png .jpg .jpeg .bmp .dds .osb .ini` |
+| 客製編舞 | `.dps .mot .cdt` —— 使用者自己放進歌曲資料夾、sidecar `#DPS`/`#MOT`/`#CAMERA` 指名的那些 |
 | 影片(需求) | 全部排除:`.mp4 .avi .flv .wmv .mkv .mov .webm .mpg .mpeg .m4v .ts .rmvb .asf .ogv .3gp` |
 | 執行檔/壓縮檔 | 排除 `.exe .dll .bat .cmd .sh .ps1 .msi .scr .lnk .com` / `.zip .rar .7z .osz .osk` |
-| 生成物 | 排除 `sdoinfo.dat` / `cd*.png` / `dance*.dps` —— 收端自己會重生 |
+| 生成物 | 排除 `cd*.png` / `dance*.dps` —— 收端自己會重生 |
+| 編輯器備份 | 排除整個 `FileBackup/` —— StepMania/ArrowVortex 的自動存檔,見下 |
+| companion | `sdoinfo.dat`(與舊名 `sdo.header`)**傳,但不進 packId** —— 見下 |
 | 大小 | 單檔 > 32 MB 排除(擋「改名成 .ogg 的影片」);圖 > 4 MB 排除;整包 > 200 MB → `tooBig` |
 | 深度 | 歌曲資料夾本身 + **一層**子夾 |
 | 路徑 | 全部過 `SafeRelPath.IsSafe`(`..` / 絕對 / 磁碟機 / UNC / 控制字元 / `CON`·`NUL`·`COM1`) |
 
 過濾規則是**純函式**(`Sdo.Osu/SongPackFilter.cs`),client 與 server 跑同一份。
 
-🔴 **`dance*.dps` 不傳,但重生出來的必須是同一支舞。** 收端自己跑 `Sdo.Game.ExternalDps` 生一份,
+### 🔴 客製編舞與側車檔:要傳,但只有一個進 packId
+
+歌曲資料夾可以自帶**作者編的舞**:`#DPS:12951.DPS;` 指到自己的 .dps,它點名的 `WDANCE*.MOT` 也躺在同一個
+資料夾(見 `ExternalDps` 與 `ScreenGameplay.TryLoadMotFromSongFolder`)。這一整組必須跟著過去 ——
+不然同一場裡房主跳的是作者編的,下載到這首歌的人跳的是亂數生成的那一支。
+
+要讓它真的生效,**兩樣缺一不可**:
+
+- **檔案本身**(`.dps` / `.mot` / `.cdt` / 客製 CD 圖)進白名單,而且**算進 packId** ——
+  換一支編舞就是換一份歌,對方該重新下載。
+- **`sdoinfo.dat` 本身**要傳(它是「用哪一支編舞、哪張碟、offset 校到多少」的唯一指標:
+  檔案到了收端卻沒人指它,收端照樣生一份自動編舞),但**不能算進 packId** ——
+  它是**執行期會被改寫的**檔(第一次選歌寫 `#CDIMAGE`、第一次玩寫 `#DPS`/`#DPSVER`)。
+  算進身分的話,送端玩過一次自己的 packId 就變了(server 上那包再也對不上),
+  收端下載完玩一次也一樣(「我明明有這首歌」被判定成沒有,每次回房重載一次)。
+
+這就是 `PackFileVerdict.Companion`,與模型包的 `physics.ini` 同一個機制(`ModelPackFilter`)。
+`BuildManifest` 跳過 companion,`ScanFolder`/`Enumerate`/`IsTransferable` 收下它。
+
+指標指到沒傳過去的東西是**安全的降級**:`#CDIMAGE:cd.png` 的檔不在 → `ExternalCdImage` 重新合成一張;
+`#DPS:dance.dps` 的檔不在 → `ExternalDps` 用同一個 seed 重生成一支一樣的(見下)。
+
+### 🔴 `FileBackup/` 整個排除,而且不算進 packId
+
+StepMania / ArrowVortex 每存一次譜就往 `<歌>/FileBackup/` 丟一個帶時間戳的 `.sm`(實測一首編過幾輪的歌
+躺著 24 個)。那是**編輯歷史,不是這首歌**:
+
+- 算進 packId 的話,**每存一次譜這首歌就換一個身分** → 房裡每個人都得重下一遍一份只多了備份檔的相同歌曲,
+  而畫面上完全看不出為什麼。
+- 傳過去也只是浪費頻寬與磁碟,而且備份多的歌會往 `MaxPackFiles`(600)那條上限逼近。
+- 收端拿到更糟:那些 `.sm` 旁邊沒有音檔,`ExternalSongScanner` 本來就刻意不把它當成一首歌,只會佔磁碟。
+
+判定是 `SongPackFilter.IsEditorBackup`(看相對路徑的第一段,不分大小寫)。
+
+🔴 **遊戲自己生的 `dance*.dps` 不傳,但重生出來的必須是同一支舞。**
+(歌曲**自帶**的客製 .dps 是另一回事 —— 那個會傳,見上面一節。)收端自己跑 `Sdo.Game.ExternalDps` 生一份,
 而它的 RNG seed 是**三張難度譜的 SHA-256(當成集合)**,其他一概不看 ——
 
 - **不能是資料夾名**:下載端的資料夾叫 `歌名 - 作者 [packId 前8碼]`,上傳端叫什麼根本沒在協定裡傳

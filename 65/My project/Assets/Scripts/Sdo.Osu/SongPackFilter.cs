@@ -13,7 +13,11 @@ namespace Sdo.Osu
         Executable,
         /// <summary>壓縮檔。又大又冗餘(內容通常就是旁邊那些檔)。</summary>
         Archive,
-        /// <summary>遊戲自己生成的東西(CD 圖 / 舞蹈 / 側車檔)—— 收端會自己重生,傳了是浪費。</summary>
+        /// <summary>
+        /// 工具的產出物,不是這首歌的一部分:遊戲自己生的 CD 圖與舞蹈(收端會自己重生,傳了是浪費),
+        /// 以及譜面編輯器的自動存檔資料夾 <c>FileBackup/</c>(見 <see cref="SongPackFilter.EditorBackupDir"/>)。
+        /// (側車檔 <c>sdoinfo.dat</c> 曾經也在這一類,現在是 <see cref="Companion"/> —— 它要傳,只是不進 packId。)
+        /// </summary>
         Generated,
         /// <summary>
         /// 跟著一起傳,但**不參與 packId**。
@@ -50,15 +54,23 @@ namespace Sdo.Osu
         /// <summary>
         /// 可以傳的副檔名。
         /// 譜面 <c>.osu .sm .gn .mc</c>;歌包索引 <c>.tsv</c>(sdo_pack.tsv);音檔 <c>.ogg .mp3 .wav</c>;
-        /// 圖 <c>.png .jpg .jpeg .bmp</c>;osu 的分鏡 <c>.osb</c> 與 <c>skin.ini</c>。
-        /// 與 <c>ExternalScanCache.Chartish</c> 對齊，另外多收 osu 需要的兩個。
+        /// 圖 <c>.png .jpg .jpeg .bmp .dds</c>;osu 的分鏡 <c>.osb</c> 與 <c>skin.ini</c>;
+        /// **歌自帶的編舞** <c>.dps</c>、它點名的動作 <c>.mot</c>、鏡頭 <c>.cdt</c>。
+        /// 與 <c>ExternalScanCache.Chartish</c> 對齊，另外多收 osu 需要的兩個與客製編舞那一組。
+        ///
+        /// 🔴 <c>.dps</c>/<c>.mot</c>/<c>.cdt</c> 是**使用者自己放進歌曲資料夾**的客製編舞
+        /// (sidecar 的 <c>#DPS</c>/<c>#MOT</c>/<c>#CAMERA</c> 指名的那些)。不傳的話收端只會拿到
+        /// 自動生成的舞 —— 同一首歌、同一場,房主跳的是作者編的,別人跳的是亂數生的。
+        /// 遊戲**自己生的** <c>dance*.dps</c> 仍然不傳(<see cref="IsGenerated"/> 把它擋掉,
+        /// 收端用同一個 seed 重生成,見 <c>Sdo.Game.ExternalDps</c>)。
         /// </summary>
         private static readonly string[] Allowed =
         {
             ".osu", ".sm", ".gn", ".mc", ".tsv",
             ".ogg", ".mp3", ".wav",
-            ".png", ".jpg", ".jpeg", ".bmp",
+            ".png", ".jpg", ".jpeg", ".bmp", ".dds",
             ".osb", ".ini",
+            ".dps", ".mot", ".cdt",
         };
 
         /// <summary>
@@ -83,13 +95,59 @@ namespace Sdo.Osu
         };
 
         /// <summary>圖片(套較嚴的大小上限 —— 4K 背景圖對 800×600 的遊戲毫無意義)。</summary>
-        private static readonly string[] Images = { ".png", ".jpg", ".jpeg", ".bmp" };
+        private static readonly string[] Images = { ".png", ".jpg", ".jpeg", ".bmp", ".dds" };
+
+        /// <summary>
+        /// 跟著歌一起走、但**不屬於歌的身分**的檔(<see cref="PackFileVerdict.Companion"/>)——
+        /// 側車檔 <c>sdoinfo.dat</c>(與改名前的 <c>sdo.header</c>)。兩件事都必須成立:
+        ///
+        /// • <b>要傳</b> —— 它是「這首歌用哪一支編舞、哪一張 CD 圖、offset 校到多少」的**唯一指標**。
+        ///   不傳的話,客製 <c>.dps</c>/<c>.mot</c>/CD 圖就算檔案到了收端也沒人去指它:
+        ///   收端照樣生一份自動編舞、照樣自己合成一張碟,作者編的那一支永遠不會被跳到。
+        ///
+        /// • <b>不算進 packId</b> —— 這個檔是**執行期會被改寫的**:第一次選到這首歌會寫進
+        ///   <c>#CDIMAGE</c>,第一次玩會寫進 <c>#DPS</c>/<c>#DPSVER</c>。算進身分的話,同一份歌會因為
+        ///   「玩過沒」而變成兩個 packId —— 送端玩過一次自己的 id 就變了(server 上那包再也對不上),
+        ///   收端下載完玩一次也一樣(「我明明有這首歌」被判定成沒有,每次回房重載一次)。
+        ///   這與 <see cref="ModelPackFilter.GeneratedFileName"/>(physics.ini)是同一個道理。
+        ///
+        /// 🔴 它同時也是 <see cref="IsGenerated"/> 的成員(那份是給 <c>ExternalScanCache</c> 的:
+        /// 「執行期寫出來的東西不該讓自己的掃描快取失效」)。兩個問題、兩個答案,不要合併 ——
+        /// 「不算來源檔」不等於「不要傳給別人」。
+        /// </summary>
+        private static readonly string[] NotPartOfTheSong = { SongSidecar.FileName, SongSidecar.LegacyFileName };
 
         /// <summary>
         /// 目錄深度上限:歌曲資料夾本身(0)+ 一層子夾(1)。
         /// osu 的資料夾偶爾會有一層 <c>sb/</c> 放分鏡素材,再深就不正常了。
         /// </summary>
         public const int MaxDepth = 1;
+
+        /// <summary>
+        /// 譜面編輯器的自動存檔資料夾(StepMania / ArrowVortex 存進 <c>&lt;歌&gt;/FileBackup/</c>,
+        /// 每存一次一個帶時間戳的 .sm)。
+        ///
+        /// 🔴 <b>整個資料夾不傳,而且不算進 packId。</b> 它是編輯歷史,不是這首歌 ——
+        ///
+        /// • <b>算進 packId 的話,每存一次譜這首歌就換一個身分</b> → 房裡每個人都得重下一遍一份
+        ///   只多了幾個備份檔的相同歌曲,而畫面上完全看不出為什麼。
+        /// • <b>傳過去也只是浪費</b>:實測一首編過幾輪的歌就躺著 24 個 .sm(每個約 11 KB),
+        ///   而且備份多的歌還會往 <see cref="NetPackLimits.MaxPackFiles"/>(600)那條上限逼近。
+        /// • 收端拿到它更糟:那些 .sm 沒有旁邊的音檔,<c>ExternalSongScanner</c> 也已經刻意不把它
+        ///   當成一首歌(見那邊的 <c>Collect</c>),於是它們只會佔磁碟。
+        /// </summary>
+        public const string EditorBackupDir = "filebackup";
+
+        /// <summary>這個相對路徑是躺在編輯器自動存檔資料夾裡的嗎(<see cref="EditorBackupDir"/>)?</summary>
+        public static bool IsEditorBackup(string relPath)
+        {
+            if (string.IsNullOrEmpty(relPath)) return false;
+            int cut = -1;
+            for (int i = 0; i < relPath.Length; i++)
+                if (relPath[i] == '/' || relPath[i] == '\\') { cut = i; break; }
+            if (cut <= 0) return false;                       // 沒有目錄那一段 → 它是根目錄下的檔案
+            return string.Equals(relPath.Substring(0, cut), EditorBackupDir, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>只看路徑與副檔名的判定(不需要知道檔案大小)。</summary>
         public static PackFileVerdict ClassifyPath(string relPath)
@@ -98,7 +156,14 @@ namespace Sdo.Osu
 
             if (Depth(relPath) > MaxDepth) return PackFileVerdict.TooDeep;
 
+            // 編輯器的自動存檔整個資料夾不要 —— 它是編輯歷史,不是這首歌(見 EditorBackupDir)。
+            if (IsEditorBackup(relPath)) return PackFileVerdict.Generated;
+
             string name = FileNameOf(relPath);
+            // 側車檔先判 —— 它也在 IsGenerated 裡(那份是掃描快取的問題),但它要傳,只是不進 packId。
+            for (int i = 0; i < NotPartOfTheSong.Length; i++)
+                if (string.Equals(name, NotPartOfTheSong[i], StringComparison.OrdinalIgnoreCase))
+                    return PackFileVerdict.Companion;
             if (IsGenerated(name)) return PackFileVerdict.Generated;
 
             string ext = ExtensionOf(name);
@@ -114,7 +179,8 @@ namespace Sdo.Osu
         public static PackFileVerdict Classify(string relPath, long lengthBytes)
         {
             var v = ClassifyPath(relPath);
-            if (v != PackFileVerdict.Include) return v;
+            // companion 也要過大小這一關 —— 它會跟著傳,所以「宣稱 200 MB 的 sdoinfo.dat」不能免檢。
+            if (v != PackFileVerdict.Include && v != PackFileVerdict.Companion) return v;
 
             if (lengthBytes < 0) return PackFileVerdict.TooBig;   // 讀不到大小 → 當成不能傳
             if (lengthBytes > NetPackLimits.MaxSingleFileBytes) return PackFileVerdict.TooBig;
@@ -122,11 +188,21 @@ namespace Sdo.Osu
             string ext = ExtensionOf(FileNameOf(relPath));
             if (Has(Images, ext) && lengthBytes > NetPackLimits.MaxImageFileBytes) return PackFileVerdict.TooBig;
 
-            return PackFileVerdict.Include;
+            return v;
         }
 
+        /// <summary>
+        /// 這個檔可以跨網路傳嗎。companion(<c>sdoinfo.dat</c>)**算可以** —— 它跟著歌走,
+        /// 只是不參與 packId(見 <see cref="NotPartOfTheSong"/>)。三端(上傳掃描、server 收檔驗證、
+        /// 下載端收檔驗證)都問這個函式,所以這裡與 <see cref="SongPackScan.Enumerate"/> /
+        /// <see cref="SongPackId.ScanFolder"/> 的判斷必須一致,否則送端傳了、收端拒收,
+        /// 而錯誤訊息會說「這個檔不該傳」。
+        /// </summary>
         public static bool IsTransferable(string relPath, long lengthBytes)
-            => Classify(relPath, lengthBytes) == PackFileVerdict.Include;
+        {
+            var v = Classify(relPath, lengthBytes);
+            return v == PackFileVerdict.Include || v == PackFileVerdict.Companion;
+        }
 
         /// <summary>
         /// 是遊戲自己在歌曲資料夾裡生出來的東西嗎?
@@ -137,6 +213,10 @@ namespace Sdo.Osu
         /// 🔴 這份判定是 <c>ExternalScanCache</c>(快取失效判斷)與本檔(傳輸過濾)**共用的唯一真相**。
         /// 兩邊各寫一份的話,某天新增一種生成物只改了一邊 —— 快取那邊會變成「播完一首歌就讓自己的
         /// 快取失效」,傳輸這邊會變成「把收端自己會重生的東西傳過去」,而且都不會有測試抓到。
+        ///
+        /// 🔴 <b>「是生成物」≠「不要傳」。</b> 側車檔兩者都算生成物,但它是 <see cref="NotPartOfTheSong"/>
+        /// 的成員 → <see cref="ClassifyPath"/> 先把它判成 <see cref="PackFileVerdict.Companion"/>(傳,
+        /// 但不進 packId),只有碟圖與生成的舞真的被排除。
         /// </summary>
         public static bool IsGenerated(string fileName)
         {

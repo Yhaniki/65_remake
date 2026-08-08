@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using Sdo.Osu;
 
@@ -110,12 +111,101 @@ namespace Sdo.Tests
         public void Generated_Artifacts_Are_Skipped()
         {
             // 收端自己會重生這些 —— 傳了是浪費，而且可能蓋掉對方已經校正過的版本。
-            Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("sdoinfo.dat", Small));
-            Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("sdo.header", Small));
             Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("cd.png", Small));
             Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("cd_foo_1a2b.png", Small));
             Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("dance.dps", Small));
             Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("dance_foo.dps", Small));
+        }
+
+        // ---- 客製編舞(使用者自己放進歌曲資料夾的)----
+
+        [Test]
+        public void Custom_Choreography_Is_Transferred()
+        {
+            // 🔴 sidecar 的 #DPS/#MOT/#CAMERA 指名的那些檔。不傳的話收端只會拿到自動生成的舞 ——
+            // 同一場裡房主跳作者編的、別人跳亂數生的。
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify("12951.dps", Small));
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify("WDANCE0272.MOT", Small));
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify("stage.cdt", Small));
+            // 客製 CD 圖也可以是 .dds(見 ExternalCdImage.LoadDdsSprite:#CDIMAGE:12956.DDS)。
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify("12956.dds", Small));
+        }
+
+        [Test]
+        public void Generated_Dance_Is_Still_Not_Transferred()
+        {
+            // .dps 進了白名單,但**遊戲自己生的**那一支仍然不傳:收端用同一個 seed 重生成一份一樣的。
+            Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("dance.dps", Small));
+            Assert.AreEqual(PackFileVerdict.Generated, SongPackFilter.Classify("dance_audio_a_1a2b.dps", Small));
+            Assert.IsFalse(SongPackFilter.IsTransferable("dance.dps", Small));
+            Assert.IsTrue(SongPackFilter.IsTransferable("12951.dps", Small));
+        }
+
+        // ---- companion:側車檔 ----
+
+        [Test]
+        public void Sidecar_Is_A_Companion_Transferred_But_Not_Identity()
+        {
+            // 它是「這首歌用哪一支編舞/哪張碟/offset 多少」的唯一指標 → 要傳;
+            // 但它是執行期會被改寫的檔 → 不能算進 packId。
+            Assert.AreEqual(PackFileVerdict.Companion, SongPackFilter.Classify("sdoinfo.dat", Small));
+            Assert.AreEqual(PackFileVerdict.Companion, SongPackFilter.Classify("SDOINFO.DAT", Small));
+            Assert.AreEqual(PackFileVerdict.Companion, SongPackFilter.Classify("sdo.header", Small));
+            Assert.IsTrue(SongPackFilter.IsTransferable("sdoinfo.dat", Small));
+        }
+
+        [Test]
+        public void Sidecar_Does_Not_Change_The_PackId()
+        {
+            // 🔴 播一次歌就會改寫 sdoinfo.dat。它若進了身分,送端玩過一次自己的 packId 就變了。
+            var bare = new List<PackFileEntry> { new PackFileEntry("a.osu", 10, Sha("a")) };
+            var withSidecar = new List<PackFileEntry>
+            {
+                new PackFileEntry("a.osu", 10, Sha("a")),
+                new PackFileEntry("sdoinfo.dat", 200, Sha("s")),
+            };
+            var rewritten = new List<PackFileEntry>
+            {
+                new PackFileEntry("a.osu", 10, Sha("a")),
+                new PackFileEntry("sdoinfo.dat", 340, Sha("t")),   // 玩過一次 → 多了 #DPS/#DPSVER
+            };
+            Assert.AreEqual(SongPackId.Compute(bare), SongPackId.Compute(withSidecar));
+            Assert.AreEqual(SongPackId.Compute(bare), SongPackId.Compute(rewritten));
+        }
+
+        [Test]
+        public void Custom_Dance_Does_Change_The_PackId()
+        {
+            // 反過來:客製編舞是「這首歌長什麼樣」的一部分 —— 換一支就是換一份歌。
+            var without = new List<PackFileEntry> { new PackFileEntry("a.osu", 10, Sha("a")) };
+            var with = new List<PackFileEntry>
+            {
+                new PackFileEntry("a.osu", 10, Sha("a")),
+                new PackFileEntry("12951.dps", 5000, ""),
+            };
+            Assert.AreNotEqual(SongPackId.Compute(without), SongPackId.Compute(with));
+        }
+
+        private static string Sha(string seed) => seed.PadRight(64, '0');
+
+        [Test]
+        public void The_Editor_Backup_Folder_Is_Skipped_Whole()
+        {
+            // 🔴 StepMania/ArrowVortex 每存一次譜就往 <歌>/FileBackup/ 丟一個帶時間戳的 .sm。
+            // 那是編輯歷史,不是這首歌:算進 packId 的話每存一次就換一個身分,房裡每個人都得重下一遍。
+            Assert.AreEqual(PackFileVerdict.Generated,
+                SongPackFilter.Classify("filebackup/2026-04-26_200351.sm", Small));
+            Assert.AreEqual(PackFileVerdict.Generated,
+                SongPackFilter.Classify("FileBackup/2026-04-26_200351.sm", Small), "資料夾名不分大小寫");
+            Assert.AreEqual(PackFileVerdict.Generated,
+                SongPackFilter.Classify("FileBackup\\old.sm", Small), "反斜線也要認得");
+            Assert.IsFalse(SongPackFilter.IsTransferable("filebackup/old.sm", Small));
+
+            // 別誤殺:同名的**檔案**、名字只是開頭像的資料夾、以及其他一層子夾(osu 的 sb/)都要照傳。
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify("sb/overlay.png", Small));
+            Assert.AreEqual(PackFileVerdict.Include, SongPackFilter.Classify("filebackups/a.sm", Small));
+            Assert.IsFalse(SongPackFilter.IsEditorBackup("filebackup.sm"), "根目錄下的檔案不是備份夾");
+            Assert.IsFalse(SongPackFilter.IsEditorBackup("sb/filebackup/x.png"));
         }
 
         [Test]
