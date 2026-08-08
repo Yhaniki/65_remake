@@ -75,7 +75,27 @@ namespace Sdo.Game
                 res.Submeshes.Add(sm);
                 if (s < submeshCount - 1) { int nx = ScanNextSubmesh(d, p); if (nx >= d.Length) break; p = nx; }
             }
+            HandBackSkinRanges(res.Submeshes);   // mesh 層第二輪:露出的皮膚 submesh 拿回自己的膚色貼圖 (見 ResolveMeshDdsIndices)
             return res.Submeshes.Count > 0 ? res : null;
+        }
+
+        // 用 ResolveMeshDdsIndices 的結果覆寫每個 submesh 的 Dds/DdsFlags (per-submesh 的第一輪挑選看不到同一個 mesh
+        // 的其他 submesh,所以只能在這裡、全部 parse 完之後才修得了)。
+        private static void HandBackSkinRanges(List<SubMesh> subs)
+        {
+            if (subs == null || subs.Count < 2) return;
+            var names = new List<IList<string>>(subs.Count);
+            var ranges = new List<IList<(int Attrib, int FStart, int FCount)>>(subs.Count);
+            foreach (var s in subs) { names.Add(s.DdsNames); ranges.Add(s.Ranges); }
+            var picks = ResolveMeshDdsIndices(names, ranges);
+            for (int i = 0; i < subs.Count; i++)
+            {
+                int p = picks[i];
+                var nm = subs[i].DdsNames;
+                if (nm == null || p < 0 || p >= nm.Length) continue;
+                subs[i].Dds = nm[p];
+                subs[i].DdsFlags = (subs[i].MatFlags != null && p < subs[i].MatFlags.Length) ? subs[i].MatFlags[p] : 0u;
+            }
         }
 
         /// <summary>Read every submesh's material (texture) name WITHOUT building any Unity mesh — the cheap header scan
@@ -167,6 +187,64 @@ namespace Sdo.Game
             for (int i = 0; i < ddsNames.Count; i++)
                 if (!string.IsNullOrEmpty(ddsNames[i]) && ddsNames[i].IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) < 0) return i;
             return 0;
+        }
+
+        /// <summary>官方共用膚色貼圖 (<c>W_Basic_*</c> / <c>M_Basic_*</c> = 裸露的手臂/腿/頸)。</summary>
+        private static bool IsSkinTexName(string name)
+            => !string.IsNullOrEmpty(name) && name.IndexOf("Basic", System.StringComparison.OrdinalIgnoreCase) >= 0;
+
+        /// <summary>Pure: 整個 mesh 的 per-submesh 材質挑選 —— 先逐 submesh 跑 <see cref="PickSubmeshDdsIndex"/>,再把
+        /// 「range attrib 明明指向膚色貼圖、卻被 fallback 搶去畫布料」的 submesh **交還給膚色**。
+        ///
+        /// 為什麼需要 mesh 層的第二輪:<see cref="PickSubmeshDdsIndex"/> 只看得到一個 submesh,所以它遇到「單 range、
+        /// attrib 指向 W/M_Basic」時只能一律 fall through 去挑布料 —— 因為語料裡有一大票**單 submesh** 的衣服其
+        /// range table 指著 Basic,順著它會把整件衣服畫成裸體。但同樣的形狀在**多 submesh** 的件上意義完全相反:
+        /// 布料已經有自己的 submesh 在畫了,這一塊 attrib 說它是皮膚,那它就真的是皮膚(露出的小腿/腳趾/頸胸)。
+        ///
+        /// 判準因此是「這張布料貼圖是不是已經有**別的** submesh 在畫」。是 → 交還膚色;否 → 維持舊行為不動。
+        /// 使用者回報「white heels 鞋子破圖」= <c>001337_WOMAN_SHOES</c>:submesh0 是鞋(attrib→shoes.dds)、submesh1 是
+        /// 小腿(attrib→W_Basic_Pants2),小腿被 fallback 貼上鞋子的 atlas → 腿上多出一截銀白色的破塊。同型的還有
+        /// 露腳趾的涼鞋(000141/002086…)與露頸胸的上衣(000703…)。
+        ///
+        /// 全語料 38,844 個 MSH 只有 60 個 submesh 會被交還(COAT 26 / SHOES 17 / PANT 9 / ONE 7 / 其他 1);另外 19 個
+        /// 「fallback 挑到的是**別件**道具的貼圖」(跨引用,沒有別的 submesh 在畫它)照舊不動。
+        /// </summary>
+        public static int[] ResolveMeshDdsIndices(IList<IList<string>> names,
+                                                  IList<IList<(int Attrib, int FStart, int FCount)>> ranges)
+        {
+            int n = names?.Count ?? 0;
+            var picks = new int[n];
+            for (int i = 0; i < n; i++)
+                picks[i] = PickSubmeshDdsIndex(names[i], ranges != null && i < ranges.Count ? ranges[i] : null);
+            if (n < 2) return picks;
+            for (int i = 0; i < n; i++)
+            {
+                var nm = names[i];
+                var rg = ranges != null && i < ranges.Count ? ranges[i] : null;
+                if (nm == null || rg == null || rg.Count != 1) continue;
+                int a = rg[0].Attrib;
+                if (a < 0 || a >= nm.Count || !IsSkinTexName(nm[a])) continue;      // attrib 沒指向膚色 → 與這條規則無關
+                int cur = picks[i];
+                if (cur < 0 || cur == a || cur >= nm.Count || string.IsNullOrEmpty(nm[cur]) || IsSkinTexName(nm[cur])) continue;
+                bool drawnElsewhere = false;
+                for (int j = 0; j < n && !drawnElsewhere; j++)
+                {
+                    if (j == i || names[j] == null) continue;
+                    var rj = ranges != null && j < ranges.Count ? ranges[j] : null;
+                    if (rj != null && rj.Count > 1)
+                    {   // 多 range submesh 走 per-range 材質分裂 → 它畫的是每個 range 各自的貼圖
+                        foreach (var r in rj)
+                            if (r.Attrib >= 0 && r.Attrib < names[j].Count
+                                && string.Equals(names[j][r.Attrib], nm[cur], System.StringComparison.OrdinalIgnoreCase))
+                            { drawnElsewhere = true; break; }
+                    }
+                    else if (picks[j] >= 0 && picks[j] < names[j].Count
+                             && string.Equals(names[j][picks[j]], nm[cur], System.StringComparison.OrdinalIgnoreCase))
+                        drawnElsewhere = true;
+                }
+                if (drawnElsewhere) picks[i] = a;
+            }
+            return picks;
         }
 
         /// <summary>Pure header scan: every material (Name, Flags) in submesh order, no Unity mesh built — the
