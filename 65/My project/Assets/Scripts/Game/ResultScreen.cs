@@ -297,10 +297,11 @@ namespace Sdo.Game
             if (_bannerLose) _bannerLose.SetActive(bannerVisible && !localWon);
         }
 
-        /// <summary>Cool / Bad / Miss 三欄數字的起始 x —— 對齊烘在背景 (Statis0..3) 上那三個黃色標題的左緣。
-        /// DDRSTATISTIC.XML 寫的是 412 / 467 / 530,但那是官方 NumLabel「靠右填格」的欄位左界,不是字要起頭的位置;
-        /// 我們照左靠畫,所以直接用標題字頭。(測試 <c>ResultStatColumnAlignTests</c> 會回頭量圖驗這三個數。)</summary>
-        public const float CoolX = 416f, BadX = 478f, MissX = 533f;
+        /// <summary>成績五欄的 NumLabel 欄位:起始 x、格數、字寬(Num8 12px / Num3 8px)。值填在最右邊的格子裡,
+        /// 也就是**靠右**排,右緣固定在 x + 格數 × 字寬 —— 官方 DDRSTATISTIC.XML 的 Rank1 就是這樣寫的,
+        /// 老截圖也對得上(Cool 欄的 38 / 3 / 107 右緣切齊、Bad 欄的 0 / 1 與 15 / 16 右緣切齊)。</summary>
+        public const float ComboX = 256f, PerfectX = 345f, CoolX = 412f, BadX = 467f, MissX = 530f;
+        public const int StatCells = 4;
 
         // One ranked row at its design RowY, under its own root so the whole row slides in from the right.
         private void BuildRow(string dir, Row r, float y)
@@ -334,15 +335,13 @@ namespace Sdo.Game
             nick.root.transform.SetParent(rowRoot.transform, true);
             _nicks.Add((nick, y));
 
-            // combo + perfect (Num8, medium), then cool / bad / miss (Num3, small) —— 全部左靠。
-            // Cool/Bad/Miss 的起始 x 刻意不用 XML 的 412/467/530,改成烘在背景上那三個黃色標題的左緣
-            // (量 Statis0..3 的黃色像素得到 416 / 478 / 533)。使用者回報「Bad 底下的數字開頭太靠左」——
-            // 就是 467 比「Bad」的字頭少了 11px,一位數時整欄看起來歪掉。
-            DrawNum(rowRoot, _num8, r.MaxCombo, 256, y + 3, true);
-            DrawNum(rowRoot, _num8, r.Perfect, 345, y + 3, true);
-            DrawNum(rowRoot, _num3, r.Cool, CoolX, y + 6, true);
-            DrawNum(rowRoot, _num3, r.Bad, BadX, y + 6, true);
-            DrawNum(rowRoot, _num3, r.Miss, MissX, y + 6, true);
+            // combo + perfect (Num8, medium), then cool / bad / miss (Num3, small) —— 五欄都是靠右的 NumLabel。
+            // 之前用左靠畫,位數少就整欄往左縮(Bad 只有一位數時偏左快 20px),對不上上面的黃色欄位標題。
+            DrawNumLabel(rowRoot, _num8, r.MaxCombo, ComboX, StatCells, y + 3);
+            DrawNumLabel(rowRoot, _num8, r.Perfect, PerfectX, StatCells, y + 3);
+            DrawNumLabel(rowRoot, _num3, r.Cool, CoolX, StatCells, y + 6);
+            DrawNumLabel(rowRoot, _num3, r.Bad, BadX, StatCells, y + 6);
+            DrawNumLabel(rowRoot, _num3, r.Miss, MissX, StatCells, y + 6);
 
             // hit rate — or the "100" all-combo marker when it's a full combo
             if (r.FullCombo && _allCombo) Child(rowRoot, NewSR("AllCombo", _allCombo, OrderRow), 591, y + 6);

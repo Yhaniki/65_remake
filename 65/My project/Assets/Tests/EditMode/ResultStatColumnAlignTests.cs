@@ -9,25 +9,27 @@ using UnityEngine;
 namespace Sdo.Tests
 {
     /// <summary>
-    /// 結算面板 Cool / Bad / Miss 三欄白色數字的起頭位置。使用者回報「Bad 底下的數字開頭太靠左,
-    /// 要往右一點切齊上面 Bad 的黃色字」—— DDRSTATISTIC.XML 的 412 / 467 / 530 是官方 NumLabel
-    /// 「靠右填格」的欄位左界,拿來當左靠起點就會比標題字頭少 4 / 11 / 3 px。
-    /// 這裡的基準是烘在背景圖上那排黃色標題的**左緣**,直接從美術檔量回來。
+    /// 結算面板成績五欄的對齊。官方 DDRSTATISTIC.XML 的 Rank1 把這幾欄寫成
+    /// <c>NumLabel labelnum="4" hidezero="true"</c> —— 值填在最右邊的格子裡,也就是**靠右**排,
+    /// 右緣固定在 x + 4×字寬。老截圖對得上:Cool 欄的 38 / 3 / 107 右緣切齊、Bad 欄的 0 / 1 與 15 / 16 右緣切齊。
+    /// (曾經誤用左靠畫 —— 位數少就整欄往左縮,Bad 只有一位數時偏左快 20px,對不上黃色欄位標題。)
     /// </summary>
     public class ResultStatColumnAlignTests
     {
-        // 欄名、起始 x(ResultScreen 用的)、對應的黃色標題、標題在整排裡的序號
+        private const float Num8 = 12f, Num3 = 8f;   // Num8.an 12×16 / Num3.an 8×11 的字寬 = NumLabel 的 cell pitch
+
+        // 欄名、字寬、起始 x、黃色標題、標題在整排裡的序號
         // (由左而右:排名0 暱稱1 最高連擊2 Perfect3 Cool4 Bad5 Miss6 命中率7 總積分8 成績9)。
-        private static readonly (string Name, float X, string Header, int HeaderIndex)[] Columns =
+        private static readonly (string Name, float Pitch, float X, string Header, int HeaderIndex)[] Columns =
         {
-            ("cool", ResultScreen.CoolX, "Cool", 4),
-            ("bad",  ResultScreen.BadX,  "Bad",  5),
-            ("miss", ResultScreen.MissX, "Miss", 6),
+            ("combo",   Num8, ResultScreen.ComboX,   "最高連擊", 2),
+            ("perfect", Num8, ResultScreen.PerfectX, "Perfect",  3),
+            ("cool",    Num3, ResultScreen.CoolX,    "Cool",     4),
+            ("bad",     Num3, ResultScreen.BadX,     "Bad",      5),
+            ("miss",    Num3, ResultScreen.MissX,    "Miss",     6),
         };
 
-        private const float Num3 = 8f;   // Num3.an 的字寬(8×11)—— 用來框出一欄最多 4 位數的範圍
-
-        // 這一列刻意讓 Cool 兩位、Bad / Miss 各一位 —— 「開頭在哪」只有位數少的時候看得出來。
+        // 這一列刻意用「不滿 4 位」的值 —— 左靠與右靠只有在位數不滿時才分得出來。
         private static readonly ResultScreen.Row SampleRow = new ResultScreen.Row
         {
             Rank = 1, DisplayRank = 1, Name = "me", IsLocal = true,
@@ -35,38 +37,42 @@ namespace Sdo.Tests
         };
 
         [Test]
-        public void CoolBadMiss_DigitsStartAtTheirColumnX()
+        public void StatDigits_RightAlignedInTheirNumLabelField()
         {
             RunOnRow(row =>
             {
                 foreach (var c in Columns)
                 {
-                    var digits = DigitsIn(row, c.X, c.X + 4f * Num3);
+                    float want = c.X + ResultScreen.StatCells * c.Pitch;   // 欄位右緣 = 靠右排的基準
+                    var digits = DigitsIn(row, c.X, want);
                     Assert.IsNotEmpty(digits, c.Name + " 欄一個數字都沒畫出來");
-                    Assert.AreEqual(c.X, digits.Min(), 0.51f,
-                        c.Name + " 欄的第一個數字沒有從 " + c.X + " 起頭 —— 對不上「" + c.Header + "」標題的字頭");
+                    Assert.AreEqual(want, digits.Max(), 0.51f,
+                        c.Name + " 欄沒有靠右排 —— 位數不滿 4 位時整欄會往左縮,對不上「" + c.Header + "」標題");
                 }
             });
         }
 
         [Test]
-        public void ColumnX_MatchTheBakedYellowHeaderLeftEdge()
+        public void NumLabelFields_CentreOnTheirBakedYellowHeader()
         {
-            // 直接量背景圖(Statis0..3 橫向拼成 800 寬,貼在 design y=115)那排黃字的左緣,
-            // 證明上面那三個常數不是硬湊的 —— 它們就是標題字頭。
-            var left = MeasureHeaderLeftEdges();
-            if (left == null) Assert.Ignore("STATISTIC art not present in this environment.");
-            Assert.AreEqual(10, left.Count,
+            // 量背景圖(Statis0..3 橫向拼成 800 寬,貼在 design y=115)上那排黃字的水平範圍,
+            // 證明官方欄位框確實是對著標題置中的 —— 這是上面那個「靠右」要求的理由。
+            var centres = MeasureHeaderCentres();
+            if (centres == null) Assert.Ignore("STATISTIC art not present in this environment.");
+            Assert.AreEqual(10, centres.Count,
                 "黃色標題應該有 10 欄(排名/暱稱/最高連擊/Perfect/Cool/Bad/Miss/命中率/總積分/成績)");
 
             foreach (var c in Columns)
-                Assert.AreEqual(left[c.HeaderIndex], c.X, 1f,
-                    c.Name + " 的起始 x 沒對上「" + c.Header + "」標題的左緣");
+            {
+                float field = c.X + ResultScreen.StatCells * c.Pitch / 2f;
+                Assert.AreEqual(centres[c.HeaderIndex], field, 8f,
+                    c.Name + " 的 NumLabel 欄位框沒對準「" + c.Header + "」標題");
+            }
         }
 
         // ---------------------------------------------------------------- helpers
 
-        // rowRoot 底下所有名為 "d" 的數字,取落在 [x-1, rightEdge+1] 這一欄裡的,回傳它們的 design 左緣。
+        // rowRoot 底下所有名為 "d" 的數字,取落在 [x-1, rightEdge+1] 這一欄裡的,回傳它們的 design 右緣。
         private static List<float> DigitsIn(GameObject rowRoot, float x, float rightEdge)
         {
             var found = new List<float>();
@@ -76,7 +82,7 @@ namespace Sdo.Tests
                 float w = sr.sprite.bounds.size.x;
                 // 子物件是以 worldPositionStays 掛上去的,rowRoot 掛的時候在原點 → localPosition 就是 design 世界座標。
                 float leftPx = sr.transform.localPosition.x + SdoLayout.Width / 2f - w / 2f;
-                if (leftPx >= x - 1f && leftPx + w <= rightEdge + 1f) found.Add(leftPx);
+                if (leftPx >= x - 1f && leftPx + w <= rightEdge + 1f) found.Add(leftPx + w);
             }
             return found;
         }
@@ -110,8 +116,8 @@ namespace Sdo.Tests
             }
         }
 
-        // 找 design y 122..142 那條裡的黃色像素,回傳每一段(欄位標題)的左緣 x。
-        private static List<float> MeasureHeaderLeftEdges()
+        // 找 design y 122..142 那條裡的黃色像素,回傳每一段(欄位標題)的中心 x。
+        private static List<float> MeasureHeaderCentres()
         {
             const int Tile = 256, BandTop = 7, BandBottom = 27;   // 背景貼在 design y=115 → local 7..27 = design 122..142
             string dir = SdoExtracted.ResultStatisDir;
@@ -134,15 +140,17 @@ namespace Sdo.Tests
             }
 
             // 連續的黃色像素算一段;中間空 4px 以內還算同一段(字與字之間的縫)。
-            var edges = new List<float>();
+            var centres = new List<float>();
             int start = -1, gap = 0;
             for (int x = 0; x <= yellow.Length; x++)
             {
                 bool on = x < yellow.Length && yellow[x];
-                if (on) { if (start < 0) { start = x; edges.Add(x); } gap = 0; continue; }
-                if (start >= 0 && ++gap > 4) start = -1;
+                if (on) { if (start < 0) start = x; gap = 0; continue; }
+                if (start < 0) continue;
+                if (++gap > 4) { centres.Add((start + x - gap) / 2f); start = -1; }
             }
-            return edges;
+            if (start >= 0) centres.Add((start + yellow.Length - 1) / 2f);
+            return centres;
         }
     }
 }
