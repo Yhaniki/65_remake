@@ -202,6 +202,67 @@ namespace Sdo.Game
         public static bool ShouldSynthGarment(ItemSex sex, EquipSlot slot, int modelId, ISet<(ItemSex, int)> namedBodyOutfitIds)
             => !(IsBodyOutfitSlot(slot) && namedBodyOutfitIds != null && namedBodyOutfitIds.Contains((sex, modelId)));
 
+        /// <summary>
+        /// Pure: 這個 <c>_SHOES</c> mesh 其實是「下半身 companion 幾何」而不是鞋子嗎？判準 = 它自己的
+        /// <c>{id}_{G}_SHOES.dds</c> 與同 id 同性別的 <c>{id}_{G}_{PANT|COAT|ONE}.dds</c> **位元組完全相同**
+        /// —— 美術只是把下裝那張貼圖複製一份改名，沒有畫任何鞋子。
+        ///
+        /// 使用者回報：商城鞋子分頁的「003541」「003542」兩張卡是空的(沒顯示/透明)。這兩個
+        /// <c>*_WOMAN_SHOES.MSH</c> 根本不是鞋，是具名下裝「熱舞短褲」(modelId 3541/3542) 的 companion 幾何：
+        /// 同一條牛仔短褲+腰帶(186 verts vs PANT 的 140)，材質旗標/UV 都正常，只是長在**臀部**。鞋子卡片的官方取景
+        /// 框對準腳踝(<c>ShopScreen.FrameFor(Shoes)</c> pos.y=-60 / scale 6.5)，這塊幾何整個落在鏡頭外 → 卡片全空。
+        /// 官方 iteminfo 沒登錄它們(官方商城從來沒這兩張卡)，是我們的 mesh-only 合成把它們當鞋上架的。
+        ///
+        /// 全語料實測(<c>H:\65_remake_clean\DATA\AVATAR</c>，4170 個 <c>_SHOES.MSH</c>)：只有 7 個鞋子的 id 同時有
+        /// 同性別的 PANT/COAT/ONE 貼圖，其中**只有這 2 個**貼圖是位元組相同的；027643(有同 id PANT mesh)、024141、
+        /// 024411、015281、026400 的鞋貼圖都是自己畫的真鞋，不受影響。所以這條規則不需要黑名單，也不會誤殺。
+        /// </summary>
+        public static bool ShoesTextureIsBottomCopy(byte[] shoesDds, byte[] bottomDds)
+        {
+            if (shoesDds == null || bottomDds == null || shoesDds.Length == 0) return false;
+            if (shoesDds.Length != bottomDds.Length) return false;
+            for (int i = 0; i < shoesDds.Length; i++) if (shoesDds[i] != bottomDds[i]) return false;
+            return true;
+        }
+
+        // 與鞋子貼圖比對的「下半身/連身」貼圖 token，依 companion 幾何常見的出處排序。
+        private static readonly string[] BottomCompanionTokens = { "PANT", "COAT", "ONE" };
+        // "{id6}_{G}" → 這個 SHOES mesh 是不是下裝 companion。整個 session 只算一次(shipped data 的固定性質)。
+        private static readonly Dictionary<string, bool> _bottomCompanionShoes = new Dictionary<string, bool>();
+
+        /// <summary>Disk side of <see cref="ShoesTextureIsBottomCopy"/>：這個 (modelId, 性別) 的 <c>_SHOES</c> mesh 是不是
+        /// 下裝 companion。先用已建好的貼圖家族集合(<see cref="TexFamilies"/>)當免費的預篩，只有「鞋+下裝貼圖都在」的
+        /// 極少數(全語料 7 個)才真的讀檔比對位元組。</summary>
+        public static bool IsBottomCompanionShoes(int modelId, string g)
+        {
+            string stem = modelId.ToString("D6") + "_" + g;
+            if (_bottomCompanionShoes.TryGetValue(stem, out var cached)) return cached;
+            bool companion = false;
+            var fams = TexFamilies();
+            if (fams.Contains((stem + "_SHOES").ToUpperInvariant()))
+                foreach (var tok in BottomCompanionTokens)
+                {
+                    if (!fams.Contains((stem + "_" + tok).ToUpperInvariant())) continue;
+                    if (DdsBytesEqual(stem + "_SHOES.DDS", stem + "_" + tok + ".DDS")) { companion = true; break; }
+                }
+            _bottomCompanionShoes[stem] = companion;
+            return companion;
+        }
+
+        // 兩個 AVATAR 貼圖檔名(同一目錄下)的內容是否相同。找第一個「兩檔都在」的 avatar 目錄比對；讀不到當作不同
+        // (寧可讓那件上架,也不要因為 IO 失敗而默默少一件鞋)。
+        private static bool DdsBytesEqual(string aName, string bName)
+        {
+            foreach (var dir in AvatarDirs())
+            {
+                string a = Path.Combine(dir, aName), b = Path.Combine(dir, bName);
+                if (!VfsFile.Exists(a) || !VfsFile.Exists(b)) continue;
+                try { return ShoesTextureIsBottomCopy(VfsFile.ReadAllBytes(a), VfsFile.ReadAllBytes(b)); }
+                catch { return false; }
+            }
+            return false;
+        }
+
         private static readonly Dictionary<string, bool> _clothResolveCache = new Dictionary<string, bool>();
 
         /// <summary>True if this garment's mesh has a resolvable CLOTH texture on disk. Fast path: if any texture of the
@@ -496,6 +557,7 @@ namespace Sdo.Game
             string g = sex == ItemSex.Male ? "MAN" : "WOMAN";
             string suffix = "_" + g + "_" + token + ".MSH";
             bool isExpr = slot == EquipSlot.Expression;
+            bool isShoes = slot == EquipSlot.Shoes;
             var have = new HashSet<int>();
             foreach (var it in named) have.Add(it.ModelId);
             var extra = new List<ShopItem>();
@@ -508,6 +570,7 @@ namespace Sdo.Game
                 if (!have.Add(modelId)) continue;
                 if (!ShouldSynthGarment(sex, slot, modelId, NamedBodyOutfitIds())) continue;   // 跨部位同一套 → 不重複合成 (使用者:001278/002247)
                 if (isExpr && !IsGoodExpressionModel(modelId, g)) continue;   // 濾掉會渲染成 空白/破圖/假臉 的異常表情 (user)
+                if (isShoes && IsBottomCompanionShoes(modelId, g)) continue;  // 不是鞋:下裝 companion 幾何 → 卡片全空 (使用者:003541/003542)
                 var syn = new ShopItem
                 {
                     Id = SynthId(slot, sex, modelId), Name = SynthName(cat, modelId), Price = 100, PriceCategoryRaw = 1,   // 1=Coins→M 幣 (100M；user:無名 翅膀/髮型/上衣/下裝/鞋子 改100M/序號當名字); 名字優先用 TW 繁體, 無則 6 位序號

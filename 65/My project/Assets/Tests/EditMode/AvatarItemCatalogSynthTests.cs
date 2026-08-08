@@ -69,6 +69,36 @@ namespace Sdo.Tests
             Assert.IsTrue(AvatarItemCatalog.ShouldSynthGarment(ItemSex.Female, EquipSlot.Top, 2247, null));
         }
 
+        // ---- 「假鞋子」: 下裝 companion 幾何被合成成鞋子 (使用者: 003541/003542 卡片空白) ----
+
+        [Test]
+        public void ShoesTextureIsBottomCopy_IdenticalBytes_IsCompanion()
+        {
+            // 003541/003542 的 {id}_WOMAN_SHOES.DDS 與 {id}_WOMAN_PANT.DDS 位元組完全相同 = 沒畫鞋、只複製了下裝貼圖。
+            var pant = new byte[] { 0x44, 0x44, 0x53, 0x20, 1, 2, 3, 4 };
+            var shoes = (byte[])pant.Clone();
+            Assert.IsTrue(AvatarItemCatalog.ShoesTextureIsBottomCopy(shoes, pant));
+        }
+
+        [Test]
+        public void ShoesTextureIsBottomCopy_RealShoeTexture_IsNot()
+        {
+            // 對照組 (027643 女鞋同 id 也有 PANT，但鞋貼圖是自己畫的)：內容不同 → 照常上架。
+            var pant = new byte[] { 0x44, 0x44, 0x53, 0x20, 1, 2, 3, 4 };
+            var shoes = new byte[] { 0x44, 0x44, 0x53, 0x20, 1, 2, 3, 9 };
+            Assert.IsFalse(AvatarItemCatalog.ShoesTextureIsBottomCopy(shoes, pant));
+            Assert.IsFalse(AvatarItemCatalog.ShoesTextureIsBottomCopy(shoes, new byte[] { 0x44 }));   // 長度不同 → 先擋掉
+        }
+
+        [Test]
+        public void ShoesTextureIsBottomCopy_MissingOrEmpty_IsNot()
+        {
+            // 讀不到貼圖不能被當成 companion，否則 IO 失敗會默默讓整批鞋子從商城消失。
+            Assert.IsFalse(AvatarItemCatalog.ShoesTextureIsBottomCopy(null, new byte[] { 1 }));
+            Assert.IsFalse(AvatarItemCatalog.ShoesTextureIsBottomCopy(new byte[] { 1 }, null));
+            Assert.IsFalse(AvatarItemCatalog.ShoesTextureIsBottomCopy(new byte[0], new byte[0]));
+        }
+
         // ---- 套装拆件用到的 mesh 檔名 → 部位 / synth id 來回 ----
 
         [Test]
