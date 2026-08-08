@@ -637,6 +637,9 @@ namespace Sdo.Game
         private void Pose(float t)
         {
             int bc = _hrc.Names.Length;
+            // 「同一根骨兩份 node」的 clip(翅膀/尾巴 _G rig 有 16 支)要照這副骨架的 rest 挑掉殘留的那份,
+            // 否則白色九尾狐(021089/021090)的尾巴會整組轉 180° 跑到臉前面。無重複的 clip 這行是 O(1) 空轉。
+            _mot?.ResolveDuplicateNodes(_hrc);
             float blendW = 1f;
             bool blending = _blendStart >= 0f && _blendDur > 1e-4f && _haveDisp;
             if (blending)

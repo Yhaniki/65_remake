@@ -16,6 +16,14 @@ namespace Sdo.Game
         public readonly Dictionary<int, Node> Bones = new Dictionary<int, Node>();
         public float MaxTime;
 
+        // 同一個 bone_id 在檔案裡出現不只一次時,這裡留下**全部**候選 (依檔案順序);沒有重複的檔案永遠是 null。
+        // 官方 7,389 支 MOT 只有 16 支這樣,全是掛件 (翅膀/尾巴) 的 _G rig。挑法見 ResolveDuplicateNodes。
+        private Dictionary<int, List<Node>> _dupes;
+        private HrcLoader _resolvedFor;   // Bones 目前這組選擇是照哪副骨架挑的 (冪等用)
+
+        /// <summary>這支 clip 裡有沒有「同一根骨兩份 node」(需要 <see cref="ResolveDuplicateNodes"/> 才能定案)。</summary>
+        public bool HasDuplicateNodes => _dupes != null;
+
         public static MotLoader Load(byte[] d)
         {
             if (d == null || d.Length < 16 || System.Text.Encoding.ASCII.GetString(d, 0, 9) != "Animation") return null;
@@ -32,10 +40,56 @@ namespace Sdo.Game
                 for (int i = 0; i < rc * 5; i++) { n.Rot[i] = BitConverter.ToSingle(d, o); o += 4; }
                 for (int i = 0; i < sc * 4; i++) { n.Scl[i] = BitConverter.ToSingle(d, o); o += 4; }
                 for (int i = 0; i < pc * 4; i++) { n.Pos[i] = BitConverter.ToSingle(d, o); o += 4; }
+                if (m.Bones.TryGetValue(bid, out var prev))   // 同一根骨的第二份 node → 兩份都留著,等 ResolveDuplicateNodes 挑
+                {
+                    if (m._dupes == null) m._dupes = new Dictionary<int, List<Node>>();
+                    if (!m._dupes.TryGetValue(bid, out var cands)) { cands = new List<Node> { prev }; m._dupes[bid] = cands; }
+                    cands.Add(n);
+                }
                 m.Bones[bid] = n;
             }
             m.MaxTime = o + 4 <= d.Length ? BitConverter.ToSingle(d, o) : 0f;
             return m;
+        }
+
+        /// <summary>
+        /// 決定「同一根骨被寫了兩份 node」時要用哪一份:**position 首鍵最接近該骨 HRC rest 平移**的那一份。
+        ///
+        /// 官方 7,389 支 MOT 裡有 16 支重複 (全是翅膀/尾巴的 _G rig,美術存檔時留下的殘骨)。其中 14 支「檔案裡後面
+        /// 那份」剛好就等於 rest,所以單純「後者覆寫」看不出問題;但 021089/021090 (MOTION White Gumiho 白色九尾狐
+        /// 男/女) 最後那份 root (Bip01) 是別的掛點留下的殘留 —— pos (0,37.01,0) 而 rest 是 (0,33.92,3.97)、繞 Y 還差
+        /// 180°。照後者覆寫,五條尾巴會整組轉到身體前面蓋住臉 (使用者回報「翅膀的 motion 方向前後相反、畫到臉的
+        /// 前面」)。以「對得上 rest」當判準,16 支全部都選到正確的那一份。
+        ///
+        /// 兩份都對得上時 (025924/025925 是整份 node 複製) 維持原本的「取最後一份」。這副骨架沒有的骨也維持原樣。
+        /// 冪等 —— 同一副骨架只算一次,所以可以每幀從 <see cref="SdoAvatar"/> 呼叫。
+        /// </summary>
+        public void ResolveDuplicateNodes(HrcLoader hrc)
+        {
+            if (_dupes == null || hrc == null || hrc.LocalRest == null || ReferenceEquals(_resolvedFor, hrc)) return;
+            _resolvedFor = hrc;
+            foreach (var kv in _dupes)
+            {
+                int bone = kv.Key;
+                if (bone < 0 || bone >= hrc.LocalRest.Length) continue;   // 這副骨架沒這根骨 → 沒判準可用,維持原樣
+                Vector3 rest = hrc.LocalRest[bone].GetColumn(3);
+                var cands = kv.Value;
+                var best = cands[cands.Count - 1];                        // 基準 = 原本的行為 (後者覆寫)
+                float bestD = RestDistance(best, rest);
+                for (int i = 0; i < cands.Count - 1; i++)
+                {
+                    float d = RestDistance(cands[i], rest);
+                    if (d < bestD - 1e-3f) { best = cands[i]; bestD = d; }   // 嚴格更近才換 → 平手保留最後一份
+                }
+                Bones[bone] = best;
+            }
+        }
+
+        // 這份 node 的起始 position 離骨頭 rest 平移多遠 (重複的那些 node 位移軌都是單一靜態 key)。
+        private static float RestDistance(Node n, Vector3 rest)
+        {
+            if (n == null || n.Pc < 1 || n.Pos == null || n.Pos.Length < 3) return float.MaxValue;
+            return Vector3.Distance(new Vector3(n.Pos[0], n.Pos[1], n.Pos[2]), rest);
         }
 
         // sample rotation quaternion (qx,qy,qz,qw) at frame t — NLERP with sign fix
