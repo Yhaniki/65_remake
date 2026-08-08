@@ -44,6 +44,31 @@ namespace Sdo.Tests
                     "第 0 格是「隨機」,所以清單位置要 +1");
         }
 
+        /// <summary>
+        /// ◄ ► 只是在選擇器上挪一格(隨機那格也在環裡),兩端環繞。
+        ///
+        /// 🔴 配套的行為是:翻場景**不寫 session** —— 換場景要按「確定」才生效
+        /// (<c>SongSelectScreen.ApplySceneToSession</c> 只有 <c>OnConfirm</c> 呼叫)。
+        /// 曾經是一按 ◄ ► 就套用,症狀是房主還在翻場景、外面房間 win2 的場景縮圖就跟著一格一格跳,
+        /// 而且沒按確定就關掉也回不去原本的場景。
+        /// </summary>
+        [Test]
+        public void Scene_Step_Wraps_Through_The_Random_Slot()
+        {
+            int n = Stages().Count;
+            Assert.AreEqual(1, SongSelectScreen.SceneStepIndex(0, +1, n), "隨機 → 第一個場景");
+            Assert.AreEqual(n, SongSelectScreen.SceneStepIndex(0, -1, n), "隨機往回 → 最後一個場景");
+            Assert.AreEqual(0, SongSelectScreen.SceneStepIndex(n, +1, n), "最後一個場景 → 繞回隨機");
+            Assert.AreEqual(0, SongSelectScreen.SceneStepIndex(1, -1, n), "第一個場景往回 → 隨機");
+            // 走完一整圈回到原點:每一格都走得到,沒有卡住或跳過的位置。
+            int pos = 0;
+            for (int i = 0; i < n + 1; i++) pos = SongSelectScreen.SceneStepIndex(pos, +1, n);
+            Assert.AreEqual(0, pos);
+            // 沒有任何場景時只剩隨機那格,怎麼按都待在 0(不會除以零)。
+            Assert.AreEqual(0, SongSelectScreen.SceneStepIndex(0, +1, 0));
+            Assert.AreEqual(0, SongSelectScreen.SceneStepIndex(0, -1, 0));
+        }
+
         [Test]
         public void An_Unknown_Scene_Falls_Back_To_Random()
         {

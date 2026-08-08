@@ -1221,22 +1221,35 @@ namespace Sdo.UI.Screens
             _sceneIndex = SceneSelectorIndex(_stages, s.StageRandom, s.StageId);
         }
 
+        /// <summary>
+        /// ◄ ► 把選擇器位置往前/後挪一格,兩端環繞。位置 0 = 隨機,1..stageCount = 第 pos-1 個場景。
+        /// (抽成 static 純函式是為了讓環繞與「隨機那格也在環裡」可以單元測試。)
+        /// </summary>
+        public static int SceneStepIndex(int index, int delta, int stageCount)
+        {
+            int n = (stageCount < 0 ? 0 : stageCount) + 1;   // +1 for the random slot
+            return ((index + delta) % n + n) % n;
+        }
+
         // Scene selector positions: 0 = 隨機 (random); 1.._stages.Count = _stages[pos-1].
         private void SceneStep(int delta)
         {
-            int n = _stages.Count + 1;   // +1 for the random slot
-            _sceneIndex = ((_sceneIndex + delta) % n + n) % n;
+            _sceneIndex = SceneStepIndex(_sceneIndex, delta, _stages.Count);
+            // ◄ ► 只動這個對話框裡的預覽(縮圖 + 場景名)。**不寫 session** —— 見 ApplySceneToSession
+            // 的說明:換場景是按「確定」才生效的,中途翻場景不該讓外面房間的縮圖跟著一直跳。
             UpdateScene();
-            ApplySceneToSession();   // 場景是**房主設定**,按下去就生效(同模式/隊形/旁觀那三個下拉)
         }
 
         /// <summary>
         /// 把場景選擇寫進 session(+持久化 +線上推給 server),並叫房間面板重畫。
         ///
-        /// 🔴 這件事以前只在「確認選歌」時做,而場景與模式/隊形/旁觀一樣是**房主設定**、和選哪首歌無關 ——
-        /// 房主只是進來把場景改成隨機、沒有重選歌就關掉對話框時,設定整個被丟掉:房間 win2 外面那張場景縮圖
-        /// 還是舊場景,線上其他人收到的房間設定也沒變(<see cref="NetRoomSettingsPublisher"/> 是拿 session 去比對的)。
-        /// 所以改成一按 ◄ ► 就套用,與底部那三個下拉的行為一致。
+        /// 🔴 只有「確定」會呼叫這個(<see cref="OnConfirm"/>)。換場景是**要按確定才算數**的:
+        ///   - 房主用 ◄ ► 一路翻過去挑場景時,外面房間 win2 的場景縮圖(以及線上其他人收到的房間設定)
+        ///     不該跟著一格一格跳 —— 那是還沒決定的中間狀態。
+        ///   - 沒按確定就 Cancel/關閉/ESC 離開 → 什麼都沒寫,房間留在原本的場景;下次再開對話框
+        ///     <see cref="SyncRoomSettingWidgets"/> 會把選擇器拉回 session 目前的值。
+        /// (曾經改成一按 ◄ ► 就套用,理由是「只改場景沒重選歌就關掉會被丟掉」—— 現在那是刻意的行為:
+        ///  要留下就按確定。底部模式/隊形/旁觀那三個下拉仍是按下即生效,官方本來就那樣。)
         /// </summary>
         private void ApplySceneToSession()
         {
@@ -1656,8 +1669,8 @@ namespace Sdo.UI.Screens
                 Sdo.Game.GameplaySongAudioCache.Prefetch(_selected.audioPath, Sdo.Game.ScreenGameplay.Mp3SyncFor(_selected.chartFormat));
                 EnsureExternalDuration(_selected);               // 進遊戲時才量真正音檔長度(選歌瀏覽時保持譜長不跳);寫回目錄,下次回選歌顯示真長度
             }
-            // scene: 按 ◄ ► 當下就已經套進 session 了(見 ApplySceneToSession)；這裡再套一次是為了
-            // 「完全沒碰過場景選擇器就按確認」的情況(初值來自 session/config，套用等於原值，不會改到東西)。
+            // scene: **只有這裡**會把場景選擇寫進 session(見 ApplySceneToSession)——
+            // 按確定才生效;沒碰過選擇器的話初值就是 session/config 目前的值,套用等於原值。
             ApplySceneToSession();
             // mode/formation/looker are written live by the dropdown callbacks.
 
