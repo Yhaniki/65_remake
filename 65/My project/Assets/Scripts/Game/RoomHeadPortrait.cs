@@ -223,10 +223,28 @@ namespace Sdo.Game
             if (fly == _flyClips) return;
             _flyClips = fly;
             LoadMirrorClips();
+            SnapMirrorPose();   // 鏡射本體時 SetClip 沒有用(下一幀就被本體的 clip 蓋掉)→ 走重新接上那條硬切
             if (_avatar == null || _idleMot == null || _mirrorWalking || _chatActionUntil > 0f) return;
             _avatar.SnapNextClip();
             _avatar.SetClip(_idleMot);
         }
+
+        /// <summary>
+        /// 本體剛做了一次**硬切**換動作(按「旁觀」/「進入」換 slot:座位待機 ↔ cat-0x21 看戲姿勢,
+        /// 見 <see cref="RoomScene3D.SetLocalSeat"/>)—— 頭貼要跟著硬切。
+        ///
+        /// 為什麼不會自動跟:鏡射路徑每幀對頭貼的分身呼叫 <see cref="SdoAvatar.SetClip"/>,而 SetClip 一律
+        /// 混 <see cref="SdoAvatar.BlendSec"/>。本體那邊是先 <see cref="SdoAvatar.SnapNextClip"/> 才 SetClip,
+        /// 頭貼沒收到那個訊息 → 使用者回報:「從旁觀出來,人物的動作平滑關掉了,可是上面大頭貼的平滑沒關」。
+        ///
+        /// 作法是把「第一次接上本體」的旗標重設 → 下一次 LateUpdate 走 <see cref="SdoAvatar.PoseInitialClip"/>:
+        /// 硬切,而且**不留一次性旗標**。(改成在頭貼身上呼叫 SnapNextClip 就會踩到本體那邊已知的坑:
+        /// 沒被這一次切換消耗掉的話,會留到下一次真的換動作 —— 開始走路 —— 那一下突然不混色。)
+        /// </summary>
+        public void SnapMirrorPose() { _mirrorPrimed = false; }
+
+        /// <summary>頭貼自己那隻分身(檢查/測試用:鏡射之後它該不該混色是唯一的觀測點)。</summary>
+        public SdoAvatar AvatarForTest => _avatar;
 
         /// <summary>Mirror a room-chat action on the framed head — play the SAME one-shot motion the room avatar plays
         /// (see RoomScene3D.PlayChatAction), so the 頭貼 做動作 too when the local player types a keyword. LateUpdate
@@ -253,18 +271,8 @@ namespace Sdo.Game
         private void LateUpdate()
         {
             var body = MirrorSourceProvider != null ? MirrorSourceProvider() : null;
-            if (_avatar != null && body != null && body.CurrentClip != null)
+            if (MirrorBody(body))
             {
-                // Same clip + same frame => same pose. The body's LateUpdate may run after ours, in which case this is
-                // the body's previous frame; that is one frame of lag on a breathing loop, i.e. invisible - and unlike
-                // the old mirror it cannot accumulate drift.
-                if (_chatActionUntil > 0f) { _avatar.ClearOneShot(); _chatActionUntil = -1f; }
-                // 🔴 **第一次**接上本體是硬切:頭貼自己建出來時掛的是站立 idle,本體卻可能已經在別的姿勢
-                // (以旁觀身分進房 → cat-0x21 看戲姿勢),SetClip 會讓頭貼從立正混 0.5 秒過去 = 一進畫面就晃一下。
-                // 之後照舊 SetClip —— 本體真的換動作(idle↔walk)時頭貼要跟著混,不然頭跟身體對不上。
-                if (!_mirrorPrimed) { _mirrorPrimed = true; _avatar.PoseInitialClip(body.CurrentClip, body.CurrentPoseTime); }
-                else _avatar.SetClip(body.CurrentClip);
-                _avatar.FrameOverride = body.CurrentPoseTime;
                 // keep the fallback path's latch in step, so if the body ever goes away mid-session the walk/idle
                 // mirror resumes with the right clip instead of the one it happened to hold before mirroring started
                 if (WalkingProvider != null) _mirrorWalking = WalkingProvider();
@@ -293,6 +301,30 @@ namespace Sdo.Game
                 }
             }
             if (_cam != null && _avatar != null) UpdateCam();
+        }
+
+        /// <summary>
+        /// 把本體這一幀的姿勢照抄到頭貼的分身上。回傳 false = 沒有本體可鏡射(還沒建好/被拆掉),
+        /// 呼叫端就走自己的 walk/idle 那條。
+        ///
+        /// Same clip + same frame =&gt; same pose. The body's LateUpdate may run after ours, in which case this is
+        /// the body's previous frame; that is one frame of lag on a breathing loop, i.e. invisible — and unlike
+        /// the old mirror it cannot accumulate drift.
+        ///
+        /// 🔴 <b>接上本體的那一次是硬切</b>(<see cref="SdoAvatar.PoseInitialClip"/>):頭貼自己建出來時掛的是
+        /// 站立 idle,本體卻可能已經在別的姿勢(以旁觀身分進房 → cat-0x21 看戲姿勢),SetClip 會讓頭貼從立正混
+        /// 0.5 秒過去 = 一進畫面就晃一下。之後照舊 SetClip —— 本體真的換動作(idle↔walk)時頭貼要跟著混,
+        /// 不然頭跟身體對不上。本體那邊做了**硬切**換動作時,呼叫端要用 <see cref="SnapMirrorPose"/> 讓這裡
+        /// 再走一次接上那條路(旁觀 ↔ 座位)。
+        /// </summary>
+        public bool MirrorBody(SdoAvatar body)
+        {
+            if (_avatar == null || body == null || body.CurrentClip == null) return false;
+            if (_chatActionUntil > 0f) { _avatar.ClearOneShot(); _chatActionUntil = -1f; }
+            if (!_mirrorPrimed) { _mirrorPrimed = true; _avatar.PoseInitialClip(body.CurrentClip, body.CurrentPoseTime); }
+            else _avatar.SetClip(body.CurrentClip);
+            _avatar.FrameOverride = body.CurrentPoseTime;
+            return true;
         }
 
         // Head cam: size + position come from the FACE alone (ComputeFraming) → 換什麼髮型頭都一樣大、一樣位置。

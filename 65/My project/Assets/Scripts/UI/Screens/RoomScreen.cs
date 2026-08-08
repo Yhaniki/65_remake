@@ -4906,10 +4906,16 @@ namespace Sdo.UI.Screens
                 if (_localMoveSlot != int.MinValue && _localMoveSlot != mySlot)
                     _moveThrottle.Reset();
                 _localMoveSlot = mySlot;
-                _scene.SetLocalSeat(mySlot);
+                bool idleHardCut = _scene.SetLocalSeat(mySlot);
                 // 頭貼鏡射的是同一隻角色的動作 → 旁觀席那條「不飛」也要一起套,
                 // 不然穿翅膀旁觀時會變成「頭在飛、身體在看戲」(見 RoomHeadPortrait.SetSpectating)。
-                if (_localHead != null) _localHead.SetSpectating(RoomScene3D.IsSpectatorSlot(mySlot));
+                if (_localHead != null)
+                {
+                    _localHead.SetSpectating(RoomScene3D.IsSpectatorSlot(mySlot));
+                    // 本體換 slot 是**硬切**(座位待機 ↔ 看戲姿勢),而頭貼的鏡射路徑走的是會混色的 SetClip ——
+                    // 不轉告的話就是使用者回報的「從旁觀出來,人物的動作平滑關掉了,大頭貼的平滑卻沒關」。
+                    if (idleHardCut) _localHead.SnapMirrorPose();
+                }
             }
             _remoteBuf.Clear();
             for (int i = 0; i < snap.Seats.Length; i++)

@@ -145,28 +145,33 @@ namespace Sdo.Game
         /// 順便重挑 idle:旁觀席各有自己的 cat-0x21 觀看姿勢,而且**贏過飛行翅膀的 flystay**
         /// (見 <see cref="ResolveIdleMot"/>);換過去是硬切,不混色。
         /// </summary>
-        public void SetLocalSeat(int seat)
+        /// <returns>這一次換 slot 有沒有讓本機 avatar **硬切**換動作。頭上那格大頭貼鏡射的是這隻角色,
+        /// 但鏡射路徑走的是會混色的 SetClip → 呼叫端要把這件事轉告頭貼
+        /// (<see cref="RoomHeadPortrait.SnapMirrorPose"/>),否則「人物瞬間換好了,大頭貼還在慢慢扭過去」。</returns>
+        public bool SetLocalSeat(int seat)
         {
-            if (seat < 0 || !_ready) return;
+            if (seat < 0 || !_ready) return false;
             bool first = !_slotConfirmed;
             _slotConfirmed = true;
-            if (seat == _localSeat) return;
+            if (seat == _localSeat) return false;
             _localSeat = seat;
             var prevIdle = _idleMot;
             ApplyOutfitMotion();                       // slot 換了 → idle 可能換一支(座位待機 ↔ 觀看姿勢)
+            bool hardCut = false;
             if (_avatar != null && _idleMot != null && !_walking)
             {
                 // 🔴 換 slot 的 idle **硬切,不混色**(使用者需求):座位待機 ↔ 看戲姿勢是兩個差很多的姿勢,
                 // 混 1 秒過去看起來像慢動作扭過去,而不是「換了一個狀態」。官方也是按下去就換好。
                 // 只在 clip 真的換了才 Snap:座位↔座位是同一支 idle,那時 SnapNextClip 會**留到下一次**
                 // clip 切換(= 開始走路)才被消耗 → 變成走路那一下沒有混色。
-                if (!ReferenceEquals(prevIdle, _idleMot)) _avatar.SnapNextClip();
+                hardCut = !ReferenceEquals(prevIdle, _idleMot);
+                if (hardCut) _avatar.SnapNextClip();
                 _avatar.SetClip(_idleMot);
             }
             // 高度跟著硬切:動作瞬間換、身體卻慢慢從 +10 飄下來的話,會有一段人跟姿勢對不上的空窗。
             _hoverCur = SpecialMotionItems.HoverY(_flying);
             ApplyAvatarTransform();                    // 位置不動的那條路徑也要把新高度寫進去(TickHover 已經沒事做了)
-            if (first && _hasWalked) return;           // 晚到的快照 + 已經自己走過 → 位置不動
+            if (first && _hasWalked) return hardCut;   // 晚到的快照 + 已經自己走過 → 位置不動
             Vector3 spawn = SpawnSpot(seat);
             _walkPos = new Vector3(spawn.x, floorY, spawn.z);
             // 搬到新 slot → 相機錨點跟著搬。旁觀席之後就靠方向鍵自己推(UpdateCamera 不再寫回人的位置),
@@ -175,6 +180,7 @@ namespace Sdo.Game
             _camPanX = Mathf.Clamp(_walkPos.x, cameraBoundsMin.x, cameraBoundsMax.x);
             _camEyeZ = Mathf.Max(CamAnchorZ + cameraBackDistance, cameraEyeMinZ);
             ApplyAvatarTransform();
+            return hardCut;
         }
 
         /// <summary>
