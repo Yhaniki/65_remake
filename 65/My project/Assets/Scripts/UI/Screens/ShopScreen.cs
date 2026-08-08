@@ -1437,53 +1437,12 @@ namespace Sdo.UI.Screens
         private IEnumerable<string> CurrentDisplayedParts()
             => _tryOnOutfitParts != null ? (IEnumerable<string>)_tryOnOutfitParts : AvatarOutfit.ResolveParts(_sex, EquippedItems());
 
-        // 表情臉統一用「最白」膚色變體 (huan0)。官方 FACE_HUAN mesh 的 material[0] 各自綁不同深淺膚色——不少綁最深的 huan4
-        // (亮度~51,看起來像黑人),另有一批綁到打錯字/不存在的檔名 (haun4/huan_1) → 回退平塗膚色。強制改用該 model 的
-        // *_FACE_HUAN0.DDS (亮度~190,同一表情最白膚色) → 一次修好深膚色與檔名回退兩種。231 件中僅 1 件無任何 huan 貼圖。
+        // 表情臉統一用「最白」膚色變體 (huan0)。實作在 Sdo.Game.ExpressionFaceSkin —— 儲物櫃也要套同一份修正
+        // (使用者:「商城看都是好的,放到儲物櫃後顯示錯誤」= Devil Neko F/深邃的眸 臉黑、032585 沒表情)。
         private void ForceLightExpressionFace(GameObject root, ShopItem item)
         {
-            if (root == null || item == null || item.EquipSlot != EquipSlot.Expression) return;
-            var rel = item.MshRelPath;
-            if (rel == null) return;
-            string dir = System.IO.Path.GetDirectoryName(SdoAvatarBuilder.ResolveAvatarFile(rel));
-            string id = item.ModelId.ToString("D6"), g = item.GenderFolder;
-            Texture2D tex = null;
-            foreach (var cand in new[] { id + "_" + g + "_FACE_HUAN0.DDS", id + "_" + g + "_FACE_HUAN_0.DDS", id + "_" + g + "_FACE_HUAN.DDS" })
-                if ((tex = SdoAvatarBuilder.ResolveDds(dir, cand)) != null) break;
-            if (tex == null) return;
-            // 25 個表情 mesh 的 material[0] 貼圖名打錯字 (haun/huan_1…) → LoadParts resolve 失敗、退回 Unlit/Color(無 _MainTex 取樣器)
-            // → 我們設的 mainTexture 被忽略 → 臉變平塗「空白」。連 shader 一起改成會取樣貼圖的 cutout,臉才顯示出來 (N3)。
-            var faceShader = Shader.Find("Sdo/UnlitDoubleSided") ?? Shader.Find("Unlit/Texture");
-            foreach (var mr in root.GetComponentsInChildren<MeshRenderer>())
-                if (mr.name.IndexOf("FACE_HUAN", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    var mats = mr.sharedMaterials;   // 每卡 material 都是新建實例 → 直接改安全
-                    for (int s = 0; s < mats.Length; s++)
-                        // 把「膚色臉底」統一成最白 huan0,但**保留裝飾疊層**(面具/口罩/腮紅 = base …_face_huan)自己的貼圖。
-                        // 要壓白的兩種:①膚色底=材質名有數字尾 huan[0-4](含深膚 huan4 與打錯字 haun4/huan_1);②貼圖**解不到**
-                        // 的破損材質(mainTexture==null → LoadParts 退回平塗色 = 白頭)——如 030252,mesh 的兩個 submesh 都引到
-                        // 磁碟不存在的 base huan、但 huan0-4 都在 → 必須回退到 huan0(原本 ForceLightExpressionFace 無差別壓白
-                        // 有救到它,我改成只壓數字尾後它變全白 = 迴歸)。要保留的:有解到貼圖的裝飾疊層(面具/口罩,base huan
-                        // DDS 存在)與有效 base 膚色(012882)。否則疊層被膚色蓋掉,疊層幾何(眼周/口鼻)帶臉底 UV → 帶鬼影五官
-                        // 的素臉(使用者回報 017675 化妝舞會眼罩 / 015353 貓咪口罩「貼圖錯誤」)。
-                        if (mats[s] != null && (IsFaceSkinVariant(mats[s].name) || mats[s].mainTexture == null))
-                        { if (faceShader != null) mats[s].shader = faceShader; mats[s].mainTexture = tex; }
-                }
-        }
-
-        // 表情 mesh 的膚色臉底材質貼圖名 = …_face_huan[0-4].dds (含打錯字 haun[0-4]、分隔底線 huan_0)。裝飾疊層
-        // (面具/口罩/腮紅) 貼圖名 = base …_face_huan.dds (無數字尾) → 回傳 false 讓 ForceLightExpressionFace 略過、
-        // 保留疊層原貼圖。非 huan/haun 材質 (W_Basic_ 頸/耳膚色…) 也回傳 false (本來就是膚色,不需再壓白)。
-        private static bool IsFaceSkinVariant(string matName)
-        {
-            if (string.IsNullOrEmpty(matName)) return false;
-            string n = matName.ToLowerInvariant();
-            int i = n.IndexOf("huan", System.StringComparison.Ordinal);
-            if (i < 0) i = n.IndexOf("haun", System.StringComparison.Ordinal);   // 打錯字檔名 haun
-            if (i < 0) return false;
-            int j = i + 4;
-            if (j < n.Length && n[j] == '_') j++;   // huan_0 / haun_4 的分隔底線
-            return j < n.Length && n[j] >= '0' && n[j] <= '9';   // 有數字尾 = 膚色底;base huan = 裝飾疊層 → 略過
+            if (item == null || item.EquipSlot != EquipSlot.Expression) return;
+            ExpressionFaceSkin.ForceLightSkin(root, item.MshRelPath, item.ModelId, item.GenderFolder);
         }
 
         private void DestroyCardPreviews()

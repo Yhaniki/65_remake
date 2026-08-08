@@ -188,7 +188,9 @@ namespace Sdo.Game
                             if (t == null && texAnim == null && !string.IsNullOrEmpty(nm)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{nm}' unresolved → fallback colour {PartColor(rel)}");
                             // 「補身體」件的布料 range → 單色皮膚 (與 builder 同一支,見 SdoAvatarBuilder.BodyFillSkinColor)
                             if (skinOnly && !SdoAvatarBuilder.IsSkinMaterialName(nm)) { mats[s] = SdoAvatarBuilder.NewBodyFillMaterial(bodyShader); continue; }
-                            mats[s] = t != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = t } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
+                            // name = 材質的貼圖名:解析成功時也要帶上(商城 builder 一直都有,房間這條漏了) —— 表情臉底
+                            // 的膚色正規化 (ExpressionFaceSkin.IsFaceSkinVariant) 就是靠它認出 …_face_huan4 這種深膚底。
+                            mats[s] = t != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = t, name = nm ?? "" } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = nm ?? "" });
                             // 透明衣物 renderer 間的前後改固定順序 (距離排序逐幀翻轉=褲子閃爍;與商城 builder 同一支)
                             if (isGarment && mats[s].renderQueue >= 3000) mats[s].renderQueue = SdoAvatarBuilder.TransparentGarmentQueue(transparentOrder++);
                             // 真紗 vs 實心去背布料 — 卡片縮圖靠它決定要不要換成雙面 cutout (見 SdoAvatarBuilder.IsSheerFabric)
@@ -207,7 +209,7 @@ namespace Sdo.Game
                         if (tex == null && texAnim == null && !string.IsNullOrEmpty(dds)) Debug.LogWarning($"[avtex] item='{SdoAvatarBuilder.LogLabel}' {rel}: material '{dds}' unresolved → fallback colour {PartColor(rel)}");
                         if (skinOnly && !SdoAvatarBuilder.IsSkinMaterialName(dds)) mr.sharedMaterial = SdoAvatarBuilder.NewBodyFillMaterial(bodyShader);
                         else
-                        mr.sharedMaterial = tex != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = tex } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
+                        mr.sharedMaterial = tex != null ? new Material(am == DdsAlphaMode.Blend ? sheerShader : am == DdsAlphaMode.Cutout ? hairShader : sh) { mainTexture = tex, name = dds ?? "" } : (texAnim ?? new Material(fallback) { color = PartColor(rel), name = dds ?? "" });
                         // 透明衣物 renderer 間的前後改固定順序 (距離排序逐幀翻轉=褲子閃爍;與商城 builder 同一支)
                         if (isGarment && mr.sharedMaterial.renderQueue >= 3000) mr.sharedMaterial.renderQueue = SdoAvatarBuilder.TransparentGarmentQueue(transparentOrder++);
                         // 真紗 vs 實心去背布料 — 卡片縮圖靠它決定要不要換成雙面 cutout (見 SdoAvatarBuilder.IsSheerFabric)
@@ -226,6 +228,9 @@ namespace Sdo.Game
             }
             if (parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
 
+            // 表情臉統一最白膚色 (huan0) —— 與商城/儲物櫃同一份修正,否則「商城看是白臉、穿著走回房間變回 mesh
+            // 自己綁的深膚 huan4 黑臉」(使用者回報 Devil Neko F / 深邃的眸)。見 ExpressionFaceSkin。
+            ExpressionFaceSkin.ApplyToParts(parent, bodyParts);
             av.PoseInitialIdle();           // arm the idle so the first frame isn't the bind/T-pose
             foreach (var wrp in wingRigs) BuildWingRig(parent, av, wrp, useCutout);   // 動畫翅膀:掛獨立會拍動的 _G rig(跟身體背骨動)
             SetLayerRecursive(parent, layer);   // 也把翅膀 rig 一起收進 layer(它是 parent 的子物件)
@@ -379,6 +384,7 @@ namespace Sdo.Game
                 portraitOpaque ? SdoAvatarBuilder.SkinStyle.Portrait : SdoAvatarBuilder.SkinStyle.Gameplay);
             if (built.Parts == 0) { Debug.LogWarning("[room-avatar] no parts loaded"); Object.Destroy(av); return null; }
 
+            ExpressionFaceSkin.ApplyToParts(parent, parts ?? WomanParts);   // 表情臉統一最白膚色 (見上一個 overload 的註解)
             if (bindPoseNoIdle) av.PoseFrame(0f);   // skin the bind pose now (retargets T-pose-authored garments onto the mannequin)
             else av.PoseInitialIdle();              // arm the idle so the first frame isn't the bind/T-pose
             SetLayerRecursive(parent, layer);

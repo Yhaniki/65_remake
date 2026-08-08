@@ -580,6 +580,9 @@ namespace Sdo.UI.Screens
                 var av = SdoRoomAvatar.Build(_avatarRoot, PreviewLayer, false, parts.ToArray(), AvatarOutfit.HrcFor(_sex), bodyWeight: bodyB);
                 if (av == null) { Destroy(_avatarRoot); _avatarRoot = null; return; }
                 ApplyLeftPose(av);
+                foreach (var it in EquippedItems())   // 穿在身上的表情也統一最白膚色 (同商城左側預覽)
+                    if (it.EquipSlot == EquipSlot.Expression)
+                        ExpressionFaceSkin.ForceLightSkin(_avatarRoot, it.MshRelPath, it.ModelId, it.GenderFolder);
                 _previewFeetY = av.FeetYAt(0f);
                 _previewHeight = RefHeight * (_sex == ItemSex.Male ? MaleBodyRatio : 1f);
                 ApplyCamera();
@@ -711,6 +714,11 @@ namespace Sdo.UI.Screens
                 ApplyCardCutoutShader(root);
                 if (item.EquipSlot != EquipSlot.Hair && item.EquipSlot != EquipSlot.Expression && item.EquipSlot != EquipSlot.Outfit)
                     HideSkinSubmeshes(root);
+                // 表情臉統一最白膚色 (huan0) —— 跟商城同一份修正。少了這行:mesh 自己綁的深膚 huan4 直接畫出來 = 臉黑的
+                // (Devil Neko F 002012 / 深邃的眸(女) 008354),或貼圖名根本解不到 (032585 的 …_face_new_huan0.dds) →
+                // 退平塗 = 沒有五官的素臉 (使用者:「商城看都是好的,放到儲物櫃後顯示錯誤」)。
+                if (item.EquipSlot == EquipSlot.Expression)
+                    ExpressionFaceSkin.ForceLightSkin(root, item.MshRelPath, item.ModelId, item.GenderFolder);
 
                 Vector3 framePos, frameScale;
                 var slot = item.EquipSlot;
