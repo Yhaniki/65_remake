@@ -297,6 +297,11 @@ namespace Sdo.Game
             if (_bannerLose) _bannerLose.SetActive(bannerVisible && !localWon);
         }
 
+        /// <summary>Cool / Bad / Miss 三欄數字的起始 x —— 對齊烘在背景 (Statis0..3) 上那三個黃色標題的左緣。
+        /// DDRSTATISTIC.XML 寫的是 412 / 467 / 530,但那是官方 NumLabel「靠右填格」的欄位左界,不是字要起頭的位置;
+        /// 我們照左靠畫,所以直接用標題字頭。(測試 <c>ResultStatColumnAlignTests</c> 會回頭量圖驗這三個數。)</summary>
+        public const float CoolX = 416f, BadX = 478f, MissX = 533f;
+
         // One ranked row at its design RowY, under its own root so the whole row slides in from the right.
         private void BuildRow(string dir, Row r, float y)
         {
@@ -329,12 +334,15 @@ namespace Sdo.Game
             nick.root.transform.SetParent(rowRoot.transform, true);
             _nicks.Add((nick, y));
 
-            // combo + perfect (Num8, medium), then cool / bad / miss (Num3, small)
+            // combo + perfect (Num8, medium), then cool / bad / miss (Num3, small) —— 全部左靠。
+            // Cool/Bad/Miss 的起始 x 刻意不用 XML 的 412/467/530,改成烘在背景上那三個黃色標題的左緣
+            // (量 Statis0..3 的黃色像素得到 416 / 478 / 533)。使用者回報「Bad 底下的數字開頭太靠左」——
+            // 就是 467 比「Bad」的字頭少了 11px,一位數時整欄看起來歪掉。
             DrawNum(rowRoot, _num8, r.MaxCombo, 256, y + 3, true);
             DrawNum(rowRoot, _num8, r.Perfect, 345, y + 3, true);
-            DrawNum(rowRoot, _num3, r.Cool, 412, y + 6, true);
-            DrawNum(rowRoot, _num3, r.Bad, 467, y + 6, true);
-            DrawNum(rowRoot, _num3, r.Miss, 530, y + 6, true);
+            DrawNum(rowRoot, _num3, r.Cool, CoolX, y + 6, true);
+            DrawNum(rowRoot, _num3, r.Bad, BadX, y + 6, true);
+            DrawNum(rowRoot, _num3, r.Miss, MissX, y + 6, true);
 
             // hit rate — or the "100" all-combo marker when it's a full combo
             if (r.FullCombo && _allCombo) Child(rowRoot, NewSR("AllCombo", _allCombo, OrderRow), 591, y + 6);
@@ -577,7 +585,9 @@ namespace Sdo.Game
             if (digits == null || digits.Length < 10) return;
             float pitch = digits[0].bounds.size.x;
             string s = (value < 0 ? 0 : value).ToString();
-            for (int k = 0; k < s.Length && k < labelnum; k++)        // k = 0 → rightmost (lowest) digit
+            // k = 0 → rightmost (lowest) digit. 位數超過 labelnum 時官方會吃掉高位;這裡改成往左長出去,
+            // 右緣不動 —— 對齊照舊,又不會把 1234567 分畫成 234567(總積分只有 6 格,ShowTime ×8 是破得了的)。
+            for (int k = 0; k < s.Length; k++)
             {
                 int d = s[s.Length - 1 - k] - '0';
                 float cellLeft = baseX + (labelnum - 1 - k) * pitch;  // fill rightmost cells; leading cells stay blank
