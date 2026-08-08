@@ -166,6 +166,23 @@ namespace Sdo.Net
             }
         }
 
+        /// <summary>
+        /// 這間房**開著**的座位數(可坐的 + 已坐的;被房主鎖起來的不算)。
+        ///
+        /// 🔴 這才是大廳房卡與「房間信息」上「1/6」的分母 —— <see cref="Capacity"/> 是座位**陣列長度**
+        ///    (恆為 <see cref="NetLimits.RoomCapacity"/>),房主雙擊鎖格子時它不會變。以前列表送的是後者,
+        ///    症狀是「房主把房間關到剩兩格,外面還是寫 1/6」。
+        /// </summary>
+        public int OpenSeatCount
+        {
+            get
+            {
+                int n = 0;
+                for (int i = 0; i < Seats.Length; i++) if (Seats[i] != null && !Seats[i].IsClosed) n++;
+                return n;
+            }
+        }
+
         /// <summary>還有沒有可坐的空位?(被關閉的不算)</summary>
         public bool HasOpenSeat => FirstOpenSeat() >= 0;
 

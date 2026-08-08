@@ -66,7 +66,7 @@ namespace Sdo.UI.Screens
         private static readonly Color32 ValueCol = new Color32(0x2B, 0x1D, 0x61, 0xFF);
         private static readonly Color32 RowCol = new Color32(0x53, 0x19, 0x5B, 0xFF);
         private const float RowFont = 12f;
-        /// <summary>官方的觀戰欄是「0/10」——旁觀席固定 10 個位置。</summary>
+        /// <summary>觀戰欄分母的退路 —— 官方旁觀席是 10 個位置(房主調得動,見 RoomInfo.SpectatorCapacity)。</summary>
         private const int AudienceCapacity = 10;
 
         private CanvasGroup _cg;
@@ -301,8 +301,12 @@ namespace Sdo.UI.Screens
             // 模式字走 RoomLabels.ModeKey —— 三種模式都要分(ShowTime 以前寫成「普通模式」)。
             _mode.text = L(RoomLabels.ModeKey(r.Mode));
             _players.text = r.Count + "/" + r.Capacity;
-            // 旁觀人數:房間快照沒帶旁觀者,官方那格是「0/10」。
-            _audience.text = "0/" + AudienceCapacity;
+            // 觀戰:現在有幾個人在旁觀 / 房主設定的上限。
+            // 🔴 兩個數字都要走 RoomInfo(以前整格寫死「0/10」)—— 房間列表的封包帶得到人數與上限,
+            //    而這個框開的時候人還在大廳,除了那份列表沒有第二個來源。
+            //    上限 0 是合法的(房主可以把旁觀關掉)→ 只有負數才退回官方預設的 10。
+            int look = r.SpectatorCapacity < 0 ? AudienceCapacity : r.SpectatorCapacity;
+            _audience.text = r.SpectatorCount + "/" + look;
             _music.text = SongLabel(r);
 
             TakePeople(r);

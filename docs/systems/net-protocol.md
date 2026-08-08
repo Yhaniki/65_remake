@@ -261,7 +261,7 @@ randomTitle    → title 是「隨機難度 X」的標籤,收端不要拿 gn 去
 | # | 規則 |
 |---|---|
 | R1 | 房號 `10000..99999`,洗牌池 O(1) 配發、關房回收(不用 `Random.Next` 重試) |
-| R2-R3 | `capacity=6`;join → index 最小的 `Open` 座位,沒有 → `full` |
+| R2-R3 | `capacity=6`;join → index 最小的 `Open` 座位,沒有 → `full`。⚠️ `roomListResult` 的 `capacity` **不是這個 6**,是**開著的座位數**(房主鎖格子後會變小 —— 大廳房卡的「1/2」靠它);同一列還有 `spectators`(現在幾個人在旁觀)與 `lookerCount`(房主設的旁觀上限),那兩個是「房間信息」觀戰欄的唯一來源 |
 | R4 | host = `hostUserId`,**不是 seat 0** |
 | R5 | host 離開 → 轉給剩下座位 index 最小者;沒有座位玩家 → `hostUserId=0`(無房主);**房間只在一個人都不剩時關閉**(旁觀者算人) |
 | R5b | **第一個坐上座位的人自動成為房主**;無房主期間所有 host-only 操作回 `notHost` |

@@ -40,7 +40,10 @@ namespace Sdo.UI.Services
             info.Name = snap.Name ?? "";
             info.Rev = snap.Rev;
             info.HostUserId = snap.HostUserId;
-            info.Capacity = snap.Capacity;
+            // 🔴 分母是**開著的座位數**(房主鎖掉的格子不算)—— 與大廳房卡/房間信息那格同一個算法。
+            //    座位陣列本身照樣是 6 格(RoomScreen 畫的是 Seats,不是這個數字)。
+            info.Capacity = snap.OpenSeatCount;
+            info.SpectatorCapacity = snap.Settings != null ? snap.Settings.LookerCount : NetLimits.MaxSpectators;
 
             info.Mode = ToUiMode(snap.Settings != null ? snap.Settings.GameMode : 0);
 
@@ -73,6 +76,9 @@ namespace Sdo.UI.Services
                         Gender = sp.Look != null ? sp.Look.Gender : 0,
                     });
                 }
+
+            // 在房裡拿得到完整名單 → 人數就是名單長度(列表那條路只拿得到數字,見 RoomInfo.SpectatorCount)。
+            info.SpectatorCount = info.Spectators.Count;
 
             return info;
         }
@@ -128,7 +134,12 @@ namespace Sdo.UI.Services
             info.Seq = e.Seq;   // 大廳房卡顯示的門牌(3 位數);Id 是 5 位數的加入鑰匙,兩者不同
             info.Name = e.Name ?? "";
             info.HostName = e.HostName ?? "";
+            // 列表送的 capacity 已經是「開著的座位數」(房主鎖掉的格子不算)—— 房卡的「1/2」靠它。
             info.Capacity = e.Capacity;
+            // 🔴 旁觀者只拿得到**數量**:名單要 roomSnapshot,而這個框是在大廳(還沒進房)開的。
+            //    以前這裡整個丟掉,於是「房間信息」的觀戰欄永遠寫 0/10,房裡明明有人在旁觀。
+            info.SpectatorCount = e.Spectators;
+            info.SpectatorCapacity = e.LookerCount;
             info.Mode = ToUiMode(e.Mode);
             info.Status = e.Status == NetRoomStatus.Open ? UiRoomStatus.Waiting : UiRoomStatus.InGame;
             info.SongTitle = string.IsNullOrEmpty(e.SongTitle) ? null : e.SongTitle;

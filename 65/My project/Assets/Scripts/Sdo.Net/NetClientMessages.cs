@@ -373,7 +373,18 @@ namespace Sdo.Net
         public string Name;
         public string HostName;
         public RoomStatus Status;
+        /// <summary>
+        /// <c>Count</c> = 坐著的人;<c>Capacity</c> = **開著的座位數**(房主鎖掉的格子不算 ——
+        /// 所以關到剩兩格的房間送的是 2,大廳房卡就寫「1/2」);<c>Spectators</c> = 現在有幾個人在旁觀。
+        /// </summary>
         public int Count, Capacity, Spectators;
+
+        /// <summary>
+        /// 旁觀上限(房主可調 0..<see cref="NetLimits.MaxSpectators"/>)。「房間信息」的觀戰欄寫成「現有/上限」。
+        /// 舊版 server 不送 → <see cref="Decode"/> 填 <see cref="NetLimits.MaxSpectators"/>(官方那格的預設就是 10)。
+        /// 🔴 這是 struct,欄位不能有初始值 —— 退路寫在 Decode 裡,不要改成在這裡給預設值(編不過)。
+        /// </summary>
+        public int LookerCount;
         public int Mode;
         public string SongTitle;
 
@@ -418,6 +429,8 @@ namespace Sdo.Net
             int cap = NetJson.Int(node, "capacity", NetLimits.RoomCapacity);
             e.Capacity = cap > 0 ? cap : NetLimits.RoomCapacity;
             e.Spectators = NetJson.Int(node, "spectators");
+            int look = NetJson.Int(node, "lookerCount", NetLimits.MaxSpectators);
+            e.LookerCount = look < 0 ? 0 : (look > NetLimits.MaxSpectators ? NetLimits.MaxSpectators : look);
             e.Mode = NetJson.Int(node, "mode");
             e.SongTitle = NetJson.Str(node, "songTitle");
             // 舊版 server 不送這個欄位 → NetJson.Int 回 0,而 0 的語意就是「不知道」(見 SongLevel 的 doc)。

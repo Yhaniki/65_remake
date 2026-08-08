@@ -358,6 +358,46 @@ namespace Sdo.Tests
         }
 
         [Test]
+        public void Room_List_Counts_Open_Seats_And_Spectators()
+        {
+            // 大廳看到的兩個數字,兩個都只有這條路送得到(那個框在房間**外面**開):
+            //   • 參與人數的分母 = 開著的座位數 —— 房主鎖格子時 s.Capacity 不會變(它是陣列長度),
+            //     送它的症狀是「關到剩兩格,外面還是 1/6」;
+            //   • 觀戰 = 現在幾個人在旁觀 / 房主設的上限 —— 以前 client 那格整個寫死「0/10」。
+            var a = Connect("房主");
+            int code = CreateRoom(a, "人數測試");
+
+            // 旁觀上限調成 4,然後把座位 2..5 鎖掉 → 剩座位 0(房主)與座位 1。
+            a.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.SetRoomSettings)
+                .Int(NetProto.FieldRequest, 80)
+                .Put("settings", JObj.New().Int("lookerCount", 4)));
+            for (int seat = 2; seat < NetLimits.RoomCapacity; seat++)
+                a.Send(JObj.New()
+                    .Str(NetProto.FieldType, NetProto.SetSeatClosed)
+                    .Int(NetProto.FieldRequest, 80 + seat)
+                    .Int("seat", seat)
+                    .Bool("closed", true));
+            WaitForState(a, s => s.OpenSeatCount == 2 && s.Settings.LookerCount == 4, "房主關到剩兩格");
+
+            var b = Connect("旁觀者");
+            b.Send(JObj.New()
+                .Str(NetProto.FieldType, NetProto.Spectate)
+                .Int(NetProto.FieldRequest, 90)
+                .Int("code", code));
+            WaitForState(a, s => s.SpectatorIndexOf(b.UserId) >= 0, "B 站上旁觀席");
+
+            var c = Connect("路人");
+            c.Send(JObj.New().Str(NetProto.FieldType, NetProto.RoomList).Int(NetProto.FieldRequest, 91));
+            var rooms = NetJson.Arr(c.WaitFor(NetProto.RoomListResult), "rooms");
+
+            Assert.AreEqual(1, NetJson.Int(rooms[0], "count"));
+            Assert.AreEqual(2, NetJson.Int(rooms[0], "capacity"), "🔴 開著的座位數,不是座位陣列長度");
+            Assert.AreEqual(1, NetJson.Int(rooms[0], "spectators"), "🔴 房裡有一個人在旁觀");
+            Assert.AreEqual(4, NetJson.Int(rooms[0], "lookerCount"), "上限是房主設的");
+        }
+
+        [Test]
         public void User_List_Shows_Who_Is_Online_And_Where()
         {
             // 大廳玩家名單(全部/好友/家族三個分頁的資料來源)。server 只回事實:誰在線上、幾等、

@@ -153,6 +153,18 @@ namespace Sdo.UI.Services
         /// <summary>旁觀者(離線永遠是空的)。</summary>
         public List<SpectatorInfo> Spectators = new List<SpectatorInfo>();
 
+        /// <summary>
+        /// 現在有幾個人在旁觀。
+        ///
+        /// 🔴 **不能用 <see cref="Spectators"/>.Count 代替**:大廳的房間列表只送得到「有幾個」,
+        ///    送不到名單(那是進房後 roomSnapshot 才有的),而「房間信息」那個框正是在大廳開的。
+        ///    在房裡時這個值與名單長度一致(見 NetRoomMapping)。
+        /// </summary>
+        public int SpectatorCount;
+
+        /// <summary>旁觀上限(房主可調 0..10)。「房間信息」的觀戰欄寫成「現有/上限」。</summary>
+        public int SpectatorCapacity = 10;
+
         public int Count
         {
             get { int n = 0; foreach (var s in Seats) if (!s.IsEmpty) n++; return n; }
