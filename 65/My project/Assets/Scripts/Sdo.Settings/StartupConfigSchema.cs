@@ -58,6 +58,10 @@ namespace Sdo.Settings
         /// <summary>Choice 專用：選項要到執行期才知道（例：裝了哪些 MMD 模型 —— 那是掃資料夾掃出來的）。
         /// 有設就蓋掉 <see cref="Choices"/>；<see cref="ChoiceLabelKeys"/> 這時不適用（顯示原字串）。</summary>
         public Func<string[]> ChoicesProvider;
+        /// <summary>Choice 專用：把一個選項值翻成畫面上的名字（null＝顯示原字串）。動態選項用的
+        /// —— <see cref="ChoiceLabelKeys"/> 是「固定幾個選項、每個一個 localization key」，對「執行期掃出來 300 張
+        /// 擋板圖」那種清單不適用（值是相對路徑 <c>1/img_customize_051.jpg</c>，要顯示的是曲名）。</summary>
+        public Func<string, string> ChoiceDisplay;
         /// <summary>Choice 專用：目前值不在選項清單裡時要顯示什麼（null＝直接顯示原字串）。
         /// 動態選項才有意義：模型被刪掉/還沒掃到時，設定檔裡的名字要照實顯示，不能默默跳成別的。</summary>
         public Func<string, string> UnknownChoiceText;
@@ -154,8 +158,8 @@ namespace Sdo.Settings
         {
             var opts = Options();
             if (i < 0 || i >= opts.Length) return "";
-            return ChoiceLabelKeys != null && i < ChoiceLabelKeys.Length
-                 ? StartupConfigSchema.L(ChoiceLabelKeys[i]) : opts[i];
+            if (ChoiceLabelKeys != null && i < ChoiceLabelKeys.Length) return StartupConfigSchema.L(ChoiceLabelKeys[i]);
+            return ChoiceDisplay != null ? ChoiceDisplay(opts[i]) : opts[i];
         }
 
         /// <summary>Choice：目前值的顯示名稱。</summary>
@@ -250,6 +254,15 @@ namespace Sdo.Settings
         /// 沒接上時（單元測試）那一列的按鈕按了不做事。
         /// </summary>
         public static Func<string> MmdProfileSave, MmdProfileDelete, MmdProfileState;
+
+        /// <summary>
+        /// 裝了哪些**擋板圖**（掃 DATA/ADDON/LANE 得到的相對路徑，第一個是「不使用」），以及一個 Id 要顯示成
+        /// 什麼名字。跟 <see cref="MmdModelsProvider"/> 一樣是注入的 —— 清單在 Sdo.Game 的 <c>LaneCoverCatalog</c>，
+        /// 而 Sdo.Settings 不能反向參照 Sdo.Game。沒接上（單元測試）時那一列只剩「照設定檔的字串顯示」。
+        /// </summary>
+        public static Func<string[]> LaneCoversProvider;
+        /// <summary>擋板 Id → 顯示名稱（見 <see cref="LaneCoversProvider"/>）。</summary>
+        public static Func<string, string> LaneCoverDisplay;
 
         private static List<ConfigField> _fields;
 
@@ -391,6 +404,28 @@ namespace Sdo.Settings
                 Key = "rankBasedFormation", Category = CatPlay, Kind = ConfigFieldKind.Toggle,
                 LabelKey = "cfg.rank_based_formation.label", HelpKey = "cfg.rank_based_formation.help",
                 Get = () => B(RoomConfig.rankBasedFormation), Set = v => RoomConfig.rankBasedFormation = ParseBool(v),
+            });
+            // 擋板（lane cover）：選哪一張 + 伸出來多長。純本機顯示，不傳給同房的人。
+            f.Add(new ConfigField
+            {
+                Key = "laneCover", Category = CatPlay, Kind = ConfigFieldKind.Choice,
+                LabelKey = "cfg.lane_cover.label", HelpKey = "cfg.lane_cover.help",
+                HelpArgs = new object[] { RoomConfig.laneCoverNone },
+                ChoicesProvider = () => LaneCoversProvider?.Invoke(),
+                ChoiceDisplay = id => LaneCoverDisplay != null ? LaneCoverDisplay(id) : id,
+                // 圖被刪掉/還沒掃到：照實顯示設定檔裡的字串，不要默默跳成別張。
+                UnknownChoiceText = cur => RoomConfig.IsLaneCoverNone(cur)
+                                         ? RoomConfig.laneCoverNone : L("cfg.lane_cover.not_found", cur),
+                Get = () => RoomConfig.laneCover ?? RoomConfig.laneCoverNone,
+                Set = v => RoomConfig.laneCover = (v ?? "").Trim(),
+            });
+            f.Add(new ConfigField
+            {
+                Key = "laneCoverAmount", Category = CatPlay, Kind = ConfigFieldKind.Slider,
+                LabelKey = "cfg.lane_cover_amount.label", HelpKey = "cfg.lane_cover_amount.help",
+                Min = 0f, Max = 100f, Step = 1f, Unit = "%",
+                Get = () => Num(RoomConfig.laneCoverAmount),
+                Set = v => RoomConfig.laneCoverAmount = ParseFloat(v, RoomConfig.laneCoverAmount),
             });
             f.Add(new ConfigField
             {

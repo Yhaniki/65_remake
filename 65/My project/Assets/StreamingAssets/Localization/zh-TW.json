@@ -1288,6 +1288,26 @@
    "v": "開＝跳舞完全不受 combo/miss/血量影響。關（預設）＝官方玩法，斷 combo 會停舞。"
   },
   {
+   "k": "cfg.lane_cover.label",
+   "v": "擋板圖"
+  },
+  {
+   "k": "cfg.lane_cover.help",
+   "v": "蓋在音符板**遠端**（音符進場那一頭）的一張圖，讓音符最後一刻才冒出來 —— 就是 IIDX 的 lane cover。「{0}」＝不蓋（預設）。圖丟進 DATA/ADDON/LANE/（開發樹 assets/LANE/）就會出現在這裡，名字讀同層的 names.tsv。純本機顯示：別人看不到，判定也完全不受影響。"
+  },
+  {
+   "k": "cfg.lane_cover.not_found",
+   "v": "{0}(找不到)"
+  },
+  {
+   "k": "cfg.lane_cover_amount.label",
+   "v": "擋板長度"
+  },
+  {
+   "k": "cfg.lane_cover_amount.help",
+   "v": "擋板伸出來多長，單位是「遠端到受擊器」的百分比（100＝伸到最深，剛好不咬到受擊箭頭；0＝等於沒有擋板）。圖是固定尺寸的一張畫，拉桿只決定露出它下面多少，不會被壓扁。向下模式時擋板改蓋在板頂，但圖本身不會上下顛倒。"
+  },
+  {
    "k": "cfg.load_external_songs.label",
    "v": "載入外部歌曲"
   },

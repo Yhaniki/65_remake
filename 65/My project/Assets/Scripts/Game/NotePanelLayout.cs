@@ -106,6 +106,58 @@ namespace Sdo.Game
             bottomY = Bottom ? BoardHeight - ClickStripTopMargin : BoardHeight;
         }
 
+        /// <summary>受擊圖示(JUDGELINE，100×100 畫 1:1)的一半高 —— 它是**繞著判定線置中**的，所以判定區實際佔
+        /// [judgeLineY ± 50]（向上＝[20,120]）。擋板的深度上限要看這個邊緣，不是判定線本身。</summary>
+        public const float ReceptorHalf = 50f;
+
+        /// <summary>擋板(lane cover)最深能伸到哪：從板子的**遠端**(音符進場那一頭)量到**受擊圖示的外緣**
+        /// （600 − (70+50) = 480），不是量到判定線。停在判定線(530)的話滿檔會把 100×100 的受擊箭頭切掉一半 ——
+        /// 那是玩家用來瞄準的東西，任何設定都不該蓋掉它。向下只是整塊繞 y300 鏡射，兩個方向一樣深。</summary>
+        public const float LaneCoverMaxDepth = BoardHeight - TopJudgeY - ReceptorHalf;   // 480
+
+        /// <summary>擋板的長度百分比(0..100，＝設定面板那根拉桿) → 深度 design px。純函式。</summary>
+        public static float LaneCoverDepth(float percent)
+            => Clamp(percent, 0f, 100f) / 100f * LaneCoverMaxDepth;
+
+        /// <summary>
+        /// 擋板圖要露出來的比例(0..1)——**從圖的下緣往上算**。
+        ///
+        /// 🔴 擋板不是「把整張圖壓扁塞進帶子」，而是像官方一樣：圖是**固定尺寸的一張畫**，拉桿只決定
+        /// 露出它下面多少。證據是 iidx.org 對幾張圖的註記 ——「Initiation 的**下半部**整片全黑
+        /// (up to white number 126)」「Exhaust Hype 的下半部是深藍」「獅子霞麗ノ舞 的**下面 30%** 幾乎全白」：
+        /// 擋板短的時候看到的是**圖的下面那一段**，所以是裁切、不是縮放。
+        ///
+        /// 素材(290×484)本來就照滿檔的帶子(276×480)畫的，所以裁出來那一段直接鋪進帶子，
+        /// 縱向比例在任何長度下都一樣(480/484)，不會有壓扁感。
+        /// </summary>
+        /// <param name="depth">目前的深度(design px)，見 <see cref="LaneCoverDepth"/>。</param>
+        public static float LaneCoverVisibleFraction(float depth)
+            => LaneCoverMaxDepth <= 0f ? 0f : Clamp(depth, 0f, LaneCoverMaxDepth) / LaneCoverMaxDepth;
+
+        /// <summary>
+        /// 擋板(lane cover)佔的縱向帶(design-Y)。它從板子的**遠端** —— 音符進場的那一頭、受擊線的對面 ——
+        /// 往判定區長 <paramref name="depth"/> px：
+        /// <list type="bullet">
+        ///   <item>向上(受擊線在頂)：音符由下往上跑 → 擋板在**板底**，帶 = [600−depth, 600]。</item>
+        ///   <item>向下(受擊線在底)：音符由上往下掉 → 擋板鏡射到**板頂**，帶 = [0, depth]。</item>
+        /// </list>
+        /// 🔴 <b>只有位置鏡射，圖本身不鏡射</b>：呼叫端畫這張圖時 <c>flipY</c> 永遠是 false。板子/軌條光/紅幕那幾張
+        /// 是「亮端要對著受擊線」的漸層，翻轉才對；擋板是一張獨立的**畫**（IIDX 那種 lane cover），翻過來就是
+        /// 一張上下顛倒的畫，兩個方向都該照原樣看。
+        /// <para>圖怎麼貼進這條帶子：**畫面朝上、下緣釘在帶子的下緣**（design-Y 較大的那一端），只露出
+        /// <see cref="LaneCoverVisibleFraction"/> 那麼多。兩個方向都是「短擋板＝看到圖的下面一段」，跟官方一致：
+        /// 向上時圖釘在板底、往上長出來；向下時圖跟著前緣一起往下滑，上面超出板頂的部分裁掉。</para>
+        /// </summary>
+        /// <param name="depth">伸出來多長(design px)；自動夾在 [0, <see cref="LaneCoverMaxDepth"/>]。</param>
+        /// <param name="topY">帶的上緣(較小的 design-Y)。</param>
+        /// <param name="bottomY">帶的下緣(較大的 design-Y)。</param>
+        public void LaneCoverBand(float depth, out float topY, out float bottomY)
+        {
+            depth = Clamp(depth, 0f, LaneCoverMaxDepth);
+            topY = Bottom ? 0f : BoardHeight - depth;
+            bottomY = Bottom ? depth : BoardHeight;
+        }
+
         /// <summary>Resolve the panel layout from the two player settings.</summary>
         /// <param name="drop">掉落方式 (向上/向下/傾斜).</param>
         /// <param name="panelLeft">OPTION「NOTES面板位置」：<c>true</c>=屏幕左邊 / <c>false</c>=屏幕中央.</param>
@@ -154,5 +206,7 @@ namespace Sdo.Game
         public static bool EffectivePanelLeft(bool panelLeft, bool showtime) => panelLeft || showtime;
 
         private static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
+
+        private static float Clamp(float v, float lo, float hi) => v < lo ? lo : (v > hi ? hi : v);
     }
 }

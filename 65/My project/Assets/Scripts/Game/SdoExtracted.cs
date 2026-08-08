@@ -143,6 +143,9 @@ namespace Sdo.Game
         public static string AddonNoteskinDir => Path.Combine(AddonDir, "NOTESKIN");
         public static string AddonThemeDir => Path.Combine(AddonDir, "THEME");
         public static string AddonModelDir => Path.Combine(AddonDir, "MODEL");
+        /// <summary>擋板圖(lane cover)：&lt;ADDON&gt;/LANE。玩家把圖丟這裡就會出現在設定面板的擋板清單
+        /// （見 <see cref="Sdo.Game.LaneCoverCatalog"/>）。跟 MODEL 一樣在 ADDON 底下 → 永遠不進 pak。</summary>
+        public static string AddonLaneDir => Path.Combine(AddonDir, "LANE");
 
         /// <summary>Primary user-songs folder: <see cref="AddonSongsDir"/> = &lt;ADDON&gt;/SONG, where ADDON defaults to
         /// <see cref="Root"/>/ADDON (built: &lt;exe&gt;/DATA/ADDON) but can be redirected by config's <c>AddonFolder=</c>.
@@ -159,7 +162,7 @@ namespace Sdo.Game
         /// missing data tree just means the folders aren't pre-created — the scan still copes with them being absent.</summary>
         public static void EnsureAddonDirs()
         {
-            foreach (var d in new[] { AddonSongsDir, AddonNoteskinDir, AddonThemeDir, AddonModelDir })
+            foreach (var d in new[] { AddonSongsDir, AddonNoteskinDir, AddonThemeDir, AddonModelDir, AddonLaneDir })
                 try { Directory.CreateDirectory(d); } catch { /* read-only data tree — fine */ }
         }
 

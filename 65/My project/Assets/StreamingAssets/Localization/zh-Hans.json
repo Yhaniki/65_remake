@@ -1288,6 +1288,26 @@
    "v": "开＝跳舞完全不受 combo/miss/血量影响。关（默认）＝官方玩法，断 combo 会停舞。"
   },
   {
+   "k": "cfg.lane_cover.label",
+   "v": "挡板图"
+  },
+  {
+   "k": "cfg.lane_cover.help",
+   "v": "盖在音符板**远端**（音符进场那一头）的一张图，让音符最后一刻才冒出来 —— 就是 IIDX 的 lane cover。「{0}」＝不盖（默认）。图丢进 DATA/ADDON/LANE/（开发树 assets/LANE/）就会出现在这里，名字读同层的 names.tsv。纯本机显示：别人看不到，判定也完全不受影响。"
+  },
+  {
+   "k": "cfg.lane_cover.not_found",
+   "v": "{0}(找不到)"
+  },
+  {
+   "k": "cfg.lane_cover_amount.label",
+   "v": "挡板长度"
+  },
+  {
+   "k": "cfg.lane_cover_amount.help",
+   "v": "挡板伸出来多长，单位是「远端到受击器」的百分比（100＝伸到最深，刚好不咬到受击箭头；0＝等于没有挡板）。图是固定尺寸的一张画，拉杆只决定露出它下面多少，不会被压扁。向下模式时挡板改盖在板顶，但图本身不会上下颠倒。"
+  },
+  {
    "k": "cfg.load_external_songs.label",
    "v": "加载外部歌曲"
   },

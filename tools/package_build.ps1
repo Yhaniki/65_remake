@@ -12,6 +12,7 @@
         <Extracted contents> + SE/ + BGM/ + MUSIC/ + REPLAY/
         PROFILE/            <- SEEDED only (existing saves/settings are NEVER overwritten by re-packaging)
         ADDON/MODEL/<name>/*.pmx  <- MMD models (from assets\MODEL); one folder per model, picked in the 設定 panel
+        ADDON/LANE/*.png          <- lane covers (from assets\LANE) + names.tsv; picked in the 設定 panel
         UI/MUSIC/ICONS      <- overlaid with the FULL online (DatasSDO) icon set
         UI/STATIS/STATISTIC <- overlaid with the online result-screen art (safety; usually already in Extracted)
 
@@ -241,14 +242,19 @@ Copy-Tree (Join-Path $assetsDir 'MODEL') (Join-Path $Data 'ADDON\MODEL') 'MMD mo
 $mmdLegacy = Join-Path $assetsDir 'IkaHatunemiku2025'
 if (Test-Path $mmdLegacy) { Copy-Tree $mmdLegacy (Join-Path $Data 'ADDON\MODEL\IkaHatunemiku2025') 'MMD model (legacy folder)' }
 
+# 3c) 擋板圖 (lane cover) -> DATA/ADDON/LANE。蓋在音符板遠端、把音符壓到最後一刻才冒出來的那張圖；
+#     編輯器讀 assets\LANE，打包後讀 <exe>\DATA\ADDON\LANE，兩邊同一份版型(圖 + 同層的 names.tsv)。
+#     跟 MODEL 一樣落在 ADDON 底下 → reserved 目錄，永遠不進 pak，玩家自己丟圖也是丟這裡。
+Copy-Tree (Join-Path $assetsDir 'LANE') (Join-Path $Data 'ADDON\LANE') 'lane covers'
+
 # 4) Writable folders: replay saves (under DATA) and screenshots (beside the exe)
 New-Item -ItemType Directory -Force -Path (Join-Path $Data 'REPLAY')   | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $BuildDir 'screensave') | Out-Null
 
 # 4b) ADDON plugin tree — empty folders the player drops into: SONG (osu/StepMania songs, scanned at boot),
-#     plus reserved NOTESKIN / THEME / MODEL for future plugin loaders. Runtime also creates these on first launch
+#     plus LANE (lane-cover images) and reserved NOTESKIN / THEME / MODEL. Runtime also creates these on first launch
 #     (SdoExtracted.EnsureAddonDirs); shipping them means a fresh build already shows where things go.
-foreach ($sub in 'SONG','NOTESKIN','THEME','MODEL') {
+foreach ($sub in 'SONG','NOTESKIN','THEME','MODEL','LANE') {
     New-Item -ItemType Directory -Force -Path (Join-Path $Data (Join-Path 'ADDON' $sub)) | Out-Null
 }
 

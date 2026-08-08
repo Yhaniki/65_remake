@@ -28,6 +28,128 @@ namespace Sdo.Tests
             Assert.AreEqual(600f - NotePanelLayout.TopJudgeY, NotePanelLayout.BottomJudgeY, 1e-4f);
         }
 
+        // ---- 擋板 (lane cover)：從**遠端**往受擊線長；位置隨掉落方式鏡射，圖不鏡射 ----
+
+        [Test]
+        public void LaneCover_MaxDepth_Stops_At_The_Receptor_Edge_Not_The_Judge_Line()
+        {
+            // 600 − (70 + 50)：滿檔停在受擊圖示的外緣，不是判定線 —— 停在 530 會把 100×100 的受擊箭頭切一半。
+            Assert.AreEqual(480f, NotePanelLayout.LaneCoverMaxDepth, 1e-4f);
+        }
+
+        [Test]
+        public void LaneCoverDepth_Maps_Percent_Onto_MaxDepth_And_Clamps()
+        {
+            Assert.AreEqual(0f, NotePanelLayout.LaneCoverDepth(0f), 1e-4f);
+            Assert.AreEqual(240f, NotePanelLayout.LaneCoverDepth(50f), 1e-4f);
+            Assert.AreEqual(480f, NotePanelLayout.LaneCoverDepth(100f), 1e-4f);
+            Assert.AreEqual(0f, NotePanelLayout.LaneCoverDepth(-20f), 1e-4f);      // 夾回 0
+            Assert.AreEqual(480f, NotePanelLayout.LaneCoverDepth(1000f), 1e-4f);   // 夾回 100%
+        }
+
+        [Test]
+        public void LaneCoverVisibleFraction_Tracks_Depth_Over_MaxDepth()
+        {
+            // 擋板是「固定尺寸的一張畫，露出下面 frac」，不是把整張壓扁 —— frac 就是深度佔滿檔的比例。
+            Assert.AreEqual(0f, NotePanelLayout.LaneCoverVisibleFraction(0f), 1e-4f);
+            Assert.AreEqual(0.5f, NotePanelLayout.LaneCoverVisibleFraction(240f), 1e-4f);
+            Assert.AreEqual(1f, NotePanelLayout.LaneCoverVisibleFraction(NotePanelLayout.LaneCoverMaxDepth), 1e-4f);
+            Assert.AreEqual(0f, NotePanelLayout.LaneCoverVisibleFraction(-10f), 1e-4f);
+            Assert.AreEqual(1f, NotePanelLayout.LaneCoverVisibleFraction(9999f), 1e-4f);
+        }
+
+        [Test]
+        public void LaneCover_Picture_Keeps_Its_Aspect_At_Every_Length()
+        {
+            // 這是「裁切」與「壓扁」的分水嶺：帶高 = 滿檔帶高 × frac、露出的圖高 = 原圖高 × frac，
+            // 兩者同比例 → 縱向縮放在任何長度下都一樣，圖不會被壓扁。
+            const float artH = 484f;   // 附的素材高(290×484)
+            float baseScale = -1f;
+            for (float pct = 5f; pct <= 100f; pct += 5f)
+            {
+                float depth = NotePanelLayout.LaneCoverDepth(pct);
+                float frac = NotePanelLayout.LaneCoverVisibleFraction(depth);
+                float scale = depth / (artH * frac);      // 帶高 ÷ 露出的圖高
+                if (baseScale < 0f) baseScale = scale;
+                Assert.AreEqual(baseScale, scale, 1e-4f, pct + "% 的縱向縮放跟其它長度不一致＝圖被壓扁了");
+            }
+            Assert.AreEqual(NotePanelLayout.LaneCoverMaxDepth / artH, baseScale, 1e-4f);
+        }
+
+        [Test]
+        public void LaneCoverBand_Up_Grows_From_The_Board_Bottom()   // 向上：音符由下進場 → 擋板在板底
+        {
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            up.LaneCoverBand(200f, out float top, out float bottom);
+            Assert.AreEqual(400f, top, 1e-4f);                                   // 600 − 200
+            Assert.AreEqual(NotePanelLayout.BoardHeight, bottom, 1e-4f);         // 貼齊板底
+        }
+
+        [Test]
+        public void LaneCoverBand_Down_Mirrors_To_The_Board_Top()   // 向下：音符由上進場 → 擋板鏡射到板頂
+        {
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
+            down.LaneCoverBand(200f, out float top, out float bottom);
+            Assert.AreEqual(0f, top, 1e-4f);
+            Assert.AreEqual(200f, bottom, 1e-4f);
+        }
+
+        [Test]
+        public void LaneCoverBand_Up_And_Down_Are_Mirrors_About_The_Board_Centre()
+        {
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: false);
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: false);
+            for (float depth = 0f; depth <= NotePanelLayout.LaneCoverMaxDepth; depth += 53f)
+            {
+                up.LaneCoverBand(depth, out float ut, out float ub);
+                down.LaneCoverBand(depth, out float dt, out float db);
+                // 繞 y300 鏡射：向上的上緣 ↔ 向下的下緣。
+                Assert.AreEqual(NotePanelLayout.BoardHeight - ut, db, 1e-4f, "depth " + depth);
+                Assert.AreEqual(NotePanelLayout.BoardHeight - ub, dt, 1e-4f, "depth " + depth);
+                Assert.AreEqual(depth, ub - ut, 1e-4f, "向上帶長 depth " + depth);
+                Assert.AreEqual(depth, db - dt, 1e-4f, "向下帶長 depth " + depth);
+            }
+        }
+
+        [Test]
+        public void LaneCoverBand_Full_Never_Clips_The_Receptor_Graphic()
+        {
+            float full = NotePanelLayout.LaneCoverMaxDepth;
+            // 向上：受擊圖示佔 [20,120]，擋板內緣要停在 120（＝判定線 70 + 半高 50）。
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            up.LaneCoverBand(full, out float ut, out _);
+            Assert.AreEqual(up.JudgeLineY + NotePanelLayout.ReceptorHalf, ut, 1e-4f);
+            // 向下：受擊圖示佔 [480,580]，擋板內緣停在 480。
+            var down = NotePanelLayout.Resolve(NoteDropDirection.Down, panelLeft: true);
+            down.LaneCoverBand(full, out _, out float db);
+            Assert.AreEqual(down.JudgeLineY - NotePanelLayout.ReceptorHalf, db, 1e-4f);
+        }
+
+        [Test]
+        public void LaneCoverBand_Clamps_Depth_Into_The_Board()
+        {
+            var up = NotePanelLayout.Resolve(NoteDropDirection.Up, panelLeft: true);
+            up.LaneCoverBand(-50f, out float t0, out float b0);
+            Assert.AreEqual(0f, b0 - t0, 1e-4f);                       // 負的 → 沒有帶
+            up.LaneCoverBand(9999f, out float t1, out float b1);
+            Assert.AreEqual(NotePanelLayout.LaneCoverMaxDepth, b1 - t1, 1e-4f);
+            // 再深也不會咬進受擊圖示（判定線 70 + 半高 50 = 120）
+            Assert.AreEqual(NotePanelLayout.TopJudgeY + NotePanelLayout.ReceptorHalf, t1, 1e-4f);
+        }
+
+        [Test]
+        public void LaneCoverBand_Stays_Inside_The_Note_Clip_Band()
+        {
+            // 擋板不掛 NoteClip 遮罩（它自己算帶子），所以「本來就落在音符可見帶內」要有測試盯著。
+            foreach (var drop in new[] { NoteDropDirection.Up, NoteDropDirection.Down })
+            {
+                var l = NotePanelLayout.Resolve(drop, panelLeft: true);
+                l.LaneCoverBand(NotePanelLayout.LaneCoverMaxDepth, out float t, out float b);
+                Assert.GreaterOrEqual(t, l.ClipTopY, drop + " 擋板上緣跑出音符可見帶");
+                Assert.LessOrEqual(b, l.ClipBottomY, drop + " 擋板下緣跑出音符可見帶");
+            }
+        }
+
         // ---- note clip band: the hidden strip mirrors with the drop direction ----
 
         [Test]

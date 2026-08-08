@@ -185,6 +185,78 @@ namespace Sdo.Tests
             }
         }
 
+        // ---------------------------------------------------------------- 動態選項（擋板圖）
+        //
+        // 擋板那一列的選項值是**相對路徑**（1/img_customize_051.jpg），要顯示的卻是曲名 —— 這是
+        // ChoiceLabelKeys（固定選項、每個一個 localization key）辦不到的，所以走 ChoiceDisplay。
+        [Test]
+        public void LaneCover_Choice_Shows_The_Display_Name_Not_The_Path()
+        {
+            var f = StartupConfigSchema.ByKey("laneCover");
+            Assert.IsNotNull(f);
+            Assert.AreEqual(ConfigFieldKind.Choice, f.Kind);
+            var savedOpts = StartupConfigSchema.LaneCoversProvider;
+            var savedName = StartupConfigSchema.LaneCoverDisplay;
+            try
+            {
+                StartupConfigSchema.LaneCoversProvider =
+                    () => new[] { RoomConfig.laneCoverNone, "lane001.png" };
+                StartupConfigSchema.LaneCoverDisplay =
+                    id => id == "lane001.png" ? "sigsig" : id;
+
+                f.SelectChoice(1);
+                Assert.AreEqual("lane001.png", RoomConfig.laneCover, "存進 config.ini 的是路徑");
+                Assert.AreEqual("sigsig", f.ChoiceText(), "畫面上顯示的是曲名");
+                Assert.AreEqual("sigsig", f.ChoiceTextAt(1));
+
+                f.SelectChoice(0);
+                Assert.IsTrue(RoomConfig.IsLaneCoverNone(RoomConfig.laneCover), "第一列＝不使用");
+            }
+            finally
+            {
+                StartupConfigSchema.LaneCoversProvider = savedOpts;
+                StartupConfigSchema.LaneCoverDisplay = savedName;
+            }
+        }
+
+        [Test]
+        public void LaneCover_Keeps_Showing_A_Deleted_Image_Instead_Of_Silently_Switching()
+        {
+            var f = StartupConfigSchema.ByKey("laneCover");
+            var savedOpts = StartupConfigSchema.LaneCoversProvider;
+            var savedName = StartupConfigSchema.LaneCoverDisplay;
+            try
+            {
+                StartupConfigSchema.LaneCoversProvider = () => new[] { RoomConfig.laneCoverNone };
+                StartupConfigSchema.LaneCoverDisplay = id => id;
+                RoomConfig.laneCover = "gone.png";
+                Assert.AreEqual(-1, f.SelectedChoiceIndex(), "不在清單裡 → 下拉不該把任何一列標成選中");
+                StringAssert.Contains("gone.png", f.ChoiceText());
+                Assert.AreEqual("gone.png", RoomConfig.laneCover, "只是顯示，不能默默改掉設定值");
+            }
+            finally
+            {
+                StartupConfigSchema.LaneCoversProvider = savedOpts;
+                StartupConfigSchema.LaneCoverDisplay = savedName;
+            }
+        }
+
+        [Test]
+        public void LaneCoverAmount_Is_A_Percent_Slider()
+        {
+            var f = StartupConfigSchema.ByKey("laneCoverAmount");
+            Assert.IsNotNull(f);
+            Assert.AreEqual(ConfigFieldKind.Slider, f.Kind);
+            Assert.AreEqual(0f, f.Min, 1e-4f);
+            Assert.AreEqual(100f, f.Max, 1e-4f);
+            f.SetNumber(42.4f);
+            Assert.AreEqual(42f, RoomConfig.laneCoverAmount, 1e-4f, "Step=1 → 吸附到整數");
+            f.SetNumber(999f);
+            Assert.AreEqual(100f, RoomConfig.laneCoverAmount, 1e-4f);
+            f.SetNumber(-5f);
+            Assert.AreEqual(0f, RoomConfig.laneCoverAmount, 1e-4f);
+        }
+
         // ---------------------------------------------------------------- 動態選項（MMD 模型）
         [Test]
         public void Dynamic_Choice_Cycles_Through_Whatever_Is_Installed()

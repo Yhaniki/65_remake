@@ -147,5 +147,91 @@ namespace Sdo.Tests
             Assert.AreEqual(40 - StartupConfigPanel.DropMaxRows, StartupConfigPanel.ClampDropTop(999, 40));
             Assert.AreEqual(0, StartupConfigPanel.ClampDropTop(3, 2), "選項不到一頁就沒得捲");
         }
+
+        // ---- 下拉右緣的捲軸：以前只是一條 3px 的裝飾線（畫得出來、抓不到），現在要真的拖得動 ----
+
+        [Test]
+        public void Drop_Bar_Only_Appears_When_There_Is_Something_To_Scroll()
+        {
+            Assert.IsFalse(StartupConfigPanel.DropNeedsBar(StartupConfigPanel.DropMaxRows), "剛好一頁＝不用捲軸");
+            Assert.IsTrue(StartupConfigPanel.DropNeedsBar(StartupConfigPanel.DropMaxRows + 1));
+            Assert.IsTrue(StartupConfigPanel.DropNeedsBar(248));
+        }
+
+        [Test]
+        public void Drop_Bar_Is_Wide_Enough_To_Grab()
+        {
+            // 使用者回報「slider bar 太小沒辦法用滑鼠拉動」—— 原本 3px。設計像素下 3px 在 1080p 也才 5 螢幕 px。
+            Assert.GreaterOrEqual(StartupConfigPanel.DropBarW, 8f, "捲軸窄到抓不住就等於沒有");
+            var d = StartupConfigPanel.DropRect(Row(120f), 248);
+            var track = StartupConfigPanel.DropBarTrack(d);
+            Assert.That(track.xMax, Is.EqualTo(d.xMax - StartupConfigPanel.DropPad).Within(0.01f), "軌道要貼在清單右緣內側");
+            Assert.That(track.height, Is.EqualTo(d.height - 2f * StartupConfigPanel.DropPad).Within(0.01f));
+        }
+
+        [Test]
+        public void Drop_Bar_Knob_Stays_Grabbable_And_Inside_The_Track()
+        {
+            const int N = 248;   // ＝擋板圖的數量級：比例算出來的滑塊只有 1~2px
+            var d = StartupConfigPanel.DropRect(Row(120f), N);
+            var track = StartupConfigPanel.DropBarTrack(d);
+            int max = N - StartupConfigPanel.DropMaxRows;
+            foreach (int top in new[] { 0, 1, max / 2, max - 1, max })
+            {
+                var knob = StartupConfigPanel.DropBarKnob(d, top, N);
+                Assert.GreaterOrEqual(knob.height, StartupConfigPanel.MinKnobH, $"top={top} 的滑塊短到抓不住");
+                Assert.GreaterOrEqual(knob.y, track.y - 0.01f, $"top={top} 的滑塊跑出軌道上緣");
+                Assert.LessOrEqual(knob.yMax, track.yMax + 0.01f, $"top={top} 的滑塊跑出軌道下緣");
+                Assert.That(knob.x, Is.EqualTo(track.x).Within(0.01f));
+                Assert.That(knob.width, Is.EqualTo(track.width).Within(0.01f));
+            }
+            // 兩端要真的貼齊，不然拖到底看起來像還沒到底
+            Assert.That(StartupConfigPanel.DropBarKnob(d, 0, N).y, Is.EqualTo(track.y).Within(0.01f));
+            Assert.That(StartupConfigPanel.DropBarKnob(d, max, N).yMax, Is.EqualTo(track.yMax).Within(0.01f));
+        }
+
+        [Test]
+        public void Drop_Bar_Drag_Maps_Mouse_To_Scroll_Position()
+        {
+            const int N = 248;
+            var d = StartupConfigPanel.DropRect(Row(120f), N);
+            var track = StartupConfigPanel.DropBarTrack(d);
+            int max = N - StartupConfigPanel.DropMaxRows;
+
+            Assert.AreEqual(0, StartupConfigPanel.DropTopFromBarY(d, track.y, N), "拖到頂＝第一個");
+            Assert.AreEqual(0, StartupConfigPanel.DropTopFromBarY(d, track.y - 50f, N), "拖出去也夾在頂");
+            Assert.AreEqual(max, StartupConfigPanel.DropTopFromBarY(d, track.yMax, N), "拖到底＝最後一頁");
+            Assert.AreEqual(max, StartupConfigPanel.DropTopFromBarY(d, track.yMax + 50f, N), "拖出去也夾在底");
+
+            // 中間：滑塊中心對齊游標，所以正中央 ≈ 一半
+            int mid = StartupConfigPanel.DropTopFromBarY(d, track.center.y, N);
+            Assert.That(mid, Is.EqualTo(max / 2).Within(1), "拖到正中央應該落在清單中段");
+
+            // 單調遞增：往下拖不能有任何一步倒退
+            int prev = -1;
+            for (float y = track.y; y <= track.yMax; y += 1f)
+            {
+                int top = StartupConfigPanel.DropTopFromBarY(d, y, N);
+                Assert.GreaterOrEqual(top, prev, $"y={y} 往下拖卻倒退了");
+                prev = top;
+            }
+        }
+
+        [Test]
+        public void Drop_Bar_Drag_Is_A_Noop_When_Everything_Fits()
+        {
+            var d = StartupConfigPanel.DropRect(Row(120f), 3);
+            Assert.AreEqual(0, StartupConfigPanel.DropTopFromBarY(d, d.y, 3));
+            Assert.AreEqual(0, StartupConfigPanel.DropTopFromBarY(d, d.yMax, 3), "一頁放得下就沒得捲，不能算出非 0");
+        }
+
+        [Test]
+        public void Drop_Wheel_Moves_More_Than_One_Row()
+        {
+            // 擋板圖 200 多張，一格一列要滾 30 次才到底。
+            Assert.GreaterOrEqual(StartupConfigPanel.DropWheelRows, 2);
+            Assert.LessOrEqual(StartupConfigPanel.DropWheelRows, StartupConfigPanel.DropMaxRows,
+                               "一格捲超過一頁會整段跳過看不到的選項");
+        }
     }
 }

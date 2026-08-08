@@ -111,6 +111,27 @@ namespace Sdo.Settings
         public static float comboTextPop = 2f;
         public static float judgeTextPop = 2f;
 
+        // ---- 擋板（lane cover）：蓋在音符板**遠端**（音符進場那一頭、受擊線的對面）的一張圖，
+        //      把音符壓到最後一刻才冒出來 —— IIDX 的 lane cover。圖放 DATA/ADDON/LANE/
+        //      （開發樹 assets/LANE/），清單見 Sdo.Game 的 LaneCoverCatalog，UI 在開場設定面板「遊玩」分頁。
+        //      🔴 純本機顯示：**不進連線協定**，遠端玩家看不到你的擋板，也不影響判定/分數。
+        //      向下模式時擋板整塊鏡射到板頂（位置翻），但**圖本身不翻**（見 NotePanelLayout.LaneCoverBand）。----
+        /// <summary>「不蓋擋板」在 <see cref="laneCover"/> 裡長什麼樣（＝清單的第一個選項）。</summary>
+        public const string laneCoverNone = "(不使用)";
+
+        /// <summary>目前這個值等於「不蓋擋板」嗎（空字串也算）。</summary>
+        public static bool IsLaneCoverNone(string cover)
+        {
+            var s = (cover ?? "").Trim();
+            return s.Length == 0 || string.Equals(s, laneCoverNone, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>用哪張擋板圖＝ LANE 資料夾底下的相對路徑（例 <c>lane001.png</c>）；預設不使用。</summary>
+        public static string laneCover = laneCoverNone;
+
+        /// <summary>擋板伸出來多長（0~100 %，100＝伸到最深、剛好不咬到受擊箭頭）。0＝等於沒有擋板。</summary>
+        public static float laneCoverAmount = 0f;
+
         // ---- MMD 模型顯示（[Mmd] 區）：把場上每一隻角色（跳舞的、房間走路的、以及三個各自渲一張 RT 的頭貼/預覽）
         //      的身體換成一個 MMD .pmx 模型。SDO 的 SdoAvatar 仍然活著當「動作驅動器」，所以跳的還是同一套 MOT/DPS，
         //      只是畫出來的身體換人。整組設定由 Sdo.Game 的 MmdAvatarSwap 每幀比對這裡的值套用（改了立刻看得到），
@@ -579,6 +600,8 @@ namespace Sdo.Settings
                     case "judgeTextAlpha": judgeTextAlpha = ParseFloat(val, judgeTextAlpha); hasTextAlphaKeys = true; break;
                     case "comboTextPop": comboTextPop = ParseFloat(val, comboTextPop); hasTextPopKeys = true; break;
                     case "judgeTextPop": judgeTextPop = ParseFloat(val, judgeTextPop); hasTextPopKeys = true; break;
+                    case "laneCover": laneCover = val; break;
+                    case "laneCoverAmount": laneCoverAmount = ParseFloat(val, laneCoverAmount); break;
                     // [Mmd]
                     // 淘汰的總開關：只讀進來給 Load 搬進 mmdModel（見 mmdModelNone），Serialize 已經不輸出它。
                     case "mmdEnabled": legacyMmdEnabled = ParseBool(val, legacyMmdEnabled); hasMmdEnabledKey = true; break;
@@ -676,6 +699,9 @@ namespace Sdo.Settings
             judgeTextAlpha = Mathf.Clamp01(judgeTextAlpha);
             comboTextPop = Mathf.Clamp(comboTextPop, 1f, 4f);                // 1=不彈跳；>4 峰值會衝出面板
             judgeTextPop = Mathf.Clamp(judgeTextPop, 1f, 4f);
+            laneCover = (laneCover ?? "").Trim();
+            if (laneCover.Length == 0) laneCover = laneCoverNone;             // 空＝不使用（清單的第一個選項）
+            laneCoverAmount = Mathf.Clamp(laneCoverAmount, 0f, 100f);        // %：0＝沒有擋板，100＝一路蓋到受擊線
             if (optUiScale <= 0f) optUiScale = 1f;
             optUiScale = Mathf.Clamp(optUiScale, 0.5f, 3f);                  // 同 DisplaySettingsManager.Sanitize 的範圍
             if (optBrightness <= 0f) optBrightness = DisplaySettings.DefaultBrightness;   // 0/沒寫 → 回 1，不然畫面全黑
@@ -803,6 +829,13 @@ namespace Sdo.Settings
             sb.Append("# 1.0＝完全不彈跳，範圍 1.0~4.0）。收回速度是官方寫死的，這裡只調幅度。\n");
             sb.Append("comboTextPop=").Append(comboTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
             sb.Append("judgeTextPop=").Append(judgeTextPop.ToString("0.0##", CultureInfo.InvariantCulture)).Append('\n');
+            sb.Append("# 擋板（lane cover）：蓋在音符板遠端（音符進場那一頭）的一張圖，把音符壓到最後一刻才冒出來。\n");
+            sb.Append("# 圖放 DATA/ADDON/LANE/（開發樹 assets/LANE/），值＝那底下的相對路徑，\n");
+            sb.Append("# 例 laneCover=lane001.png；").Append(laneCoverNone).Append("＝不蓋（預設）。名字對照表是同層的 names.tsv。\n");
+            sb.Append("# 純本機顯示：不會傳給同房的人，也不影響判定與分數。向下模式時擋板改蓋板頂，但圖不會上下顛倒。\n");
+            sb.Append("laneCover=").Append(laneCover ?? laneCoverNone).Append('\n');
+            sb.Append("# 擋板伸出來多長（0~100 %，100＝伸到最深，剛好不咬到受擊箭頭；0＝等於沒有擋板）。\n");
+            sb.Append("laneCoverAmount=").Append(laneCoverAmount.ToString("0.##", CultureInfo.InvariantCulture)).Append('\n');
 
             // MMD 模型顯示。設定入口在開場設定面板的「MMD」分頁；改了不用重開，MmdAvatarSwap 每幀比對這些值。
             sb.Append('\n').Append("[Mmd]\n");

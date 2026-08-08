@@ -61,8 +61,14 @@ namespace Sdo.UI.Screens
         public const int DropMaxRows = 8;
         /// <summary>下拉清單外框到內容的留白。</summary>
         public const float DropPad = 1f;
-        /// <summary>選項多到要捲時，右緣那條捲動指示條的寬度。</summary>
-        private const float DropBarW = 3f;
+        /// <summary>選項多到要捲時，右緣那條捲軸的寬度。
+        /// 🔴 以前是 3px 而且**只畫不接事件** —— 純裝飾的指示條，滑鼠根本抓不到（使用者回報「擋板圖右邊
+        /// slider bar 太小沒辦法用滑鼠拉動」）。現在它是真的捲軸（見 <see cref="DropBarKnob"/> /
+        /// <see cref="DropTopFromBarY"/>），寬度就得抓得住。</summary>
+        public const float DropBarW = 9f;
+
+        /// <summary>滾輪一格捲幾列。擋板圖有 200 多張，一格一列要滾 30 次才到底。</summary>
+        public const int DropWheelRows = 3;
 
         /// <summary>
         /// 把一個高 <paramref name="h"/> 的東西擺在這一列的**上下正中間**（x / 寬另外給）。純幾何 —— 有單元測試。
@@ -120,7 +126,8 @@ namespace Sdo.UI.Screens
         private Rect _dropRect;                 // 上一趟 Repaint 畫出來的清單矩形（設計像素）＝這一幀的命中範圍
         private int _dropTop;                   // 捲到第幾個選項在最上面
         private bool _dropSeen;                 // 這一幀那一列有沒有被畫到（切分頁之後就不會了 → 自動收起來）
-        private Texture2D _texDropBg, _texDropHot, _texDropSel, _texDropBar;
+        private bool _dropDragBar;              // 正按著右邊的捲軸在拖
+        private Texture2D _texDropBg, _texDropHot, _texDropSel, _texDropBar, _texDropTrack;
 
         private GUIStyle _title, _label, _value, _choice, _unit, _help, _status_, _tabStyle, _arrow;
 
@@ -155,6 +162,7 @@ namespace Sdo.UI.Screens
             _drop = null;
             _dropRect = default;
             _dropTop = 0;
+            _dropDragBar = false;
         }
 
         /// <summary>畫面每幀從 OnGUI 呼叫。<paramref name="content"/> ＝ 800×600 內容區在螢幕上的矩形。
@@ -484,24 +492,80 @@ namespace Sdo.UI.Screens
         public static int ClampDropTop(int top, int count)
             => Mathf.Clamp(top, 0, Mathf.Max(0, count - Mathf.Min(count, DropMaxRows)));
 
+        /// <summary>選項多到一頁放不下嗎（＝要不要畫捲軸、要不要留寬度給它）。</summary>
+        public static bool DropNeedsBar(int count) => count > DropMaxRows;
+
+        /// <summary>右緣捲軸**整條軌道**的矩形（命中範圍就是它 —— 點軌道會跳過去、按著拖會跟著捲）。
+        /// 純幾何 —— 有單元測試。</summary>
+        public static Rect DropBarTrack(Rect drop)
+            => new Rect(drop.xMax - DropPad - DropBarW, drop.y + DropPad, DropBarW, drop.height - DropPad * 2f);
+
+        /// <summary>捲軸**滑塊**的矩形：長度＝看得到的比例，位置＝捲到哪。純幾何 —— 有單元測試。</summary>
+        public static Rect DropBarKnob(Rect drop, int scrollTop, int count)
+        {
+            var track = DropBarTrack(drop);
+            int shown = Mathf.Min(Mathf.Max(count, 1), DropMaxRows);
+            float knobH = Mathf.Clamp(track.height * shown / Mathf.Max(1, count), MinKnobH, track.height);
+            int max = Mathf.Max(1, count - shown);
+            float t = Mathf.Clamp01(ClampDropTop(scrollTop, count) / (float)max);
+            return new Rect(track.x, track.y + (track.height - knobH) * t, track.width, knobH);
+        }
+
+        /// <summary>滑鼠 Y 落在捲軸上 → 要捲到第幾個選項在最上面（**滑塊中心對齊游標**，跟一般捲軸手感一致：
+        /// 抓著滑塊拖，滑塊就跟著走）。已夾好範圍。純幾何 —— 有單元測試。</summary>
+        public static int DropTopFromBarY(Rect drop, float mouseY, int count)
+        {
+            var track = DropBarTrack(drop);
+            int shown = Mathf.Min(Mathf.Max(count, 1), DropMaxRows);
+            float knobH = Mathf.Clamp(track.height * shown / Mathf.Max(1, count), MinKnobH, track.height);
+            float travel = track.height - knobH;                       // 滑塊上緣能走的距離
+            if (travel <= 0.01f) return 0;                             // 一頁放得下 → 不用捲
+            float t = Mathf.Clamp01((mouseY - track.y - knobH * 0.5f) / travel);
+            return ClampDropTop(Mathf.RoundToInt(t * (count - shown)), count);
+        }
+
+        /// <summary>滑塊的最短長度：選項幾百個時比例算出來會只剩幾 px，抓不住。</summary>
+        public const float MinKnobH = 12f;
+
         // 下拉展開中的滑鼠/滾輪：**在這一幀畫任何東西之前**處理掉。清單是最後才畫的，照 IMGUI 的順序它只拿得到
         // 別人挑剩的事件（點在清單上會被底下那一列的鈕先吃掉）。命中範圍用上一趟 Repaint 算出來的矩形。
         private void HandleDropEvents()
         {
             var e = Event.current;
             if (_dropRect.width <= 0f) return;          // 還沒畫過（剛按開那一幀）
-            bool inside = _dropRect.Contains(e.mousePosition);
             var opts = _drop.Options();
+            bool hasBar = DropNeedsBar(opts.Length);
+
+            // 捲軸拖曳中：不管游標橫向跑到哪都繼續（一般捲軸就是這個手感），放開才結束。
+            // 這一段要在「點選項」之前 —— 拖過選項上方時不能被當成挑了那一列。
+            if (_dropDragBar)
+            {
+                if (e.type == EventType.MouseDrag) { _dropTop = DropTopFromBarY(_dropRect, e.mousePosition.y, opts.Length); e.Use(); return; }
+                if (e.type == EventType.MouseUp) { _dropDragBar = false; e.Use(); return; }
+                if (e.type == EventType.MouseDown) { e.Use(); return; }
+                return;
+            }
+
+            bool inside = _dropRect.Contains(e.mousePosition);
+            bool onBar = hasBar && DropBarTrack(_dropRect).Contains(e.mousePosition);
 
             if (e.type == EventType.MouseDown)
             {
+                if (onBar)
+                {
+                    // 按在捲軸上：滑塊立刻跳到游標（點軌道＝跳過去），並進入拖曳。**不關下拉**。
+                    _dropDragBar = true;
+                    _dropTop = DropTopFromBarY(_dropRect, e.mousePosition.y, opts.Length);
+                    e.Use();
+                    return;
+                }
                 if (inside) _drop.SelectChoice(DropIndexAt(_dropRect, e.mousePosition.y, _dropTop, opts.Length));
                 CloseDrop();
                 e.Use();                                // 點外面＝關掉就好，不要順便按到底下的東西
             }
             else if (e.type == EventType.ScrollWheel && inside)
             {
-                _dropTop = ClampDropTop(_dropTop + (e.delta.y > 0f ? 1 : -1), opts.Length);
+                _dropTop = ClampDropTop(_dropTop + (e.delta.y > 0f ? DropWheelRows : -DropWheelRows), opts.Length);
                 e.Use();
             }
         }
@@ -521,7 +585,7 @@ namespace Sdo.UI.Screens
             // 不透明底：底下就是設定清單，用半透明的 skin box 會兩層字疊在一起看不清。
             GUI.DrawTexture(_dropRect, _texDropBg);
             GUI.Box(_dropRect, GUIContent.none);
-            bool bar = opts.Length > shown;
+            bool bar = DropNeedsBar(opts.Length);
             float itemW = _dropRect.width - DropPad * 2f - (bar ? DropBarW + 1f : 0f);
             for (int i = 0; i < shown; i++)
             {
@@ -532,11 +596,10 @@ namespace Sdo.UI.Screens
                 GUI.Label(new Rect(ir.x + 3f, ir.y, Mathf.Max(0f, ir.width - 3f), ir.height), _drop.ChoiceTextAt(idx), _choice);
             }
             if (!bar) return;
-            // 右緣那條：看得出來「上面/下面還有」。長度＝看得到的比例，位置＝捲到哪。
-            float trackH = _dropRect.height - DropPad * 2f;
-            float knobH = Mathf.Max(6f, trackH * shown / opts.Length);
-            float knobY = _dropRect.y + DropPad + (trackH - knobH) * _dropTop / Mathf.Max(1, opts.Length - shown);
-            GUI.DrawTexture(new Rect(_dropRect.xMax - DropPad - DropBarW, knobY, DropBarW, knobH), _texDropBar);
+            // 右緣的捲軸：軌道先畫出來（看得到才知道可以抓），再畫滑塊。兩者的矩形都由純函式算，
+            // HandleDropEvents 用的是**同一組** —— 畫到哪就抓得到哪。
+            GUI.DrawTexture(DropBarTrack(_dropRect), _texDropTrack);
+            GUI.DrawTexture(DropBarKnob(_dropRect, _dropTop, opts.Length), _texDropBar);
         }
 
         private void DrawText(ConfigField f, Rect r)
@@ -621,7 +684,8 @@ namespace Sdo.UI.Screens
             _texDropBg = Solid(new Color(0.13f, 0.13f, 0.14f, 1f));
             _texDropSel = Solid(new Color(0.24f, 0.34f, 0.45f, 1f));
             _texDropHot = Solid(new Color(0.33f, 0.45f, 0.58f, 1f));
-            _texDropBar = Solid(new Color(0.55f, 0.55f, 0.58f, 1f));
+            _texDropBar = Solid(new Color(0.72f, 0.72f, 0.76f, 1f));    // 滑塊：要比軌道亮，看得出來是可以抓的那塊
+            _texDropTrack = Solid(new Color(0.22f, 0.22f, 0.24f, 1f));  // 軌道：比清單底色亮一階，點它會跳過去
         }
 
         /// <summary>下拉清單自己畫底色用的 1×1 貼圖（skin 的 box 是半透明的，疊在設定清單上兩層字會糊在一起）。</summary>

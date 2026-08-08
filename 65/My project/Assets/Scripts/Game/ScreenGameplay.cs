@@ -709,6 +709,13 @@ namespace Sdo.Game
         private Texture2D _boardSrc;            // cached ORIGINAL board texture (kept so alpha can be re-scaled live)
         private Texture2D _boardGenTex;         // last generated (alpha-scaled) texture, destroyed before regen
         private float _boardAlphaApplied = -1f; // tracks the boardAlpha last baked into _board's sprite
+        // ---- 擋板 (lane cover)：蓋在音符板**遠端**(音符進場那一頭)的一張圖，把音符壓到最後一刻才冒出來。
+        //      圖與長度都是本機設定(config.ini laneCover / laneCoverAmount，UI 在開場設定面板「遊玩」分頁)，
+        //      **不進連線協定** —— 遠端玩家看不到你的擋板，判定/分數也完全不受影響。
+        private SpriteRenderer _laneCover;      // 擋板；沒選圖/長度 0 時整個 disabled
+        private Texture2D _laneCoverTex;        // 目前這張的原始貼圖(SdoExtracted 依路徑全域快取的，**不可** Destroy)
+        private string _laneCoverIdApplied;     // 上次載的是哪個 id(＝ RoomConfig.laneCover)；null＝還沒載過
+        private float _laneCoverFracApplied = -1f;   // 上次裁出來的是圖的下面幾成(換長度才要重裁)
         // DEBUG tuning sliders (toggle with F4). Drag in-game to tune; values apply live.
         public float boardAlpha = 1.4f;     // board alpha MULTIPLIER on the original texture: 1=native (~62%, the
                                             // original look), ~1.4=official (deep but inner detail still shows),
@@ -2821,7 +2828,64 @@ namespace Sdo.Game
             _missOverlay.transform.localScale = new Vector3(1f, glowH > 1e-4f ? (missBottom - missTop) / glowH : 1f, 1f);
             _missOverlay.transform.position = SdoLayout.ToWorld(PX(LaneLeftX[0] + trackW / 2f), (missTop + missBottom) / 2f, 9f);
             _missOverlay.color = new Color(1f, 0f, 0f, 0f); _missOverlay.enabled = false;
+            BuildLaneCover();
             BuildNoteClip();
+        }
+
+        /// <summary>擋板(lane cover)：一張蓋在音符板遠端的圖。order 9 —— 蓋得住音符(2D 頭尾 5、3D highway 6)與
+        /// 炸彈爆(8)，但在血條(16)/集氣(24~27)/判定字(41) 底下，HUD 不會被它壓掉。
+        /// 它**不掛 NoteClip 遮罩**：帶子是自己照 <see cref="NotePanelLayout.LaneCoverBand"/> 算的，本來就落在板內。</summary>
+        private void BuildLaneCover()
+        {
+            _laneCover = NewSR("LaneCover", null, 9);
+            _laneCover.enabled = false;
+            _laneCoverIdApplied = null;
+            UpdateLaneCover();
+        }
+
+        /// <summary>把目前的「哪一張 + 伸多長」套到擋板上。每幀呼叫，但只有值真的變了才做事：換圖才重讀檔、
+        /// 換長度才重裁一次 sprite。所以設定改完不必重開一局；掉落方式/面板位置改了也會跟著鏡射。</summary>
+        private void UpdateLaneCover()
+        {
+            if (_laneCover == null) return;
+            string id = RoomConfig.laneCover ?? RoomConfig.laneCoverNone;
+            if (!string.Equals(id, _laneCoverIdApplied, StringComparison.Ordinal))
+            {
+                _laneCoverIdApplied = id;
+                string path = LaneCoverCatalog.PathOf(id);
+                // 拿**原始貼圖**(不是 sprite)：長度一動就要照新的比例重裁一張 sprite 出來。
+                // 貼圖本身是 SdoExtracted 依路徑全域快取的(_texCache)，**絕對不能** Destroy。
+                _laneCoverTex = string.IsNullOrEmpty(path)
+                              ? null
+                              : SdoExtracted.LoadTextureRaw(Path.GetDirectoryName(path), Path.GetFileName(path));
+                _laneCoverFracApplied = -1f;   // 換了圖 → 一定要重裁
+            }
+            float depth = NotePanelLayout.LaneCoverDepth(RoomConfig.laneCoverAmount);
+            bool on = _trackVisible && _laneCoverTex != null && depth >= 1f;
+            _laneCover.enabled = on;
+            if (!on) return;
+            // 圖是**固定尺寸的一張畫**，拉桿只決定露出它下面多少 —— 不是把整張壓扁塞進帶子(見
+            // NotePanelLayout.LaneCoverVisibleFraction 的考據)。裁切用貼圖的下緣：Sprite.Create 的 rect
+            // 是貼圖座標、**y=0 在貼圖底部**，所以 [0, h*frac) 正好是「圖的下面那一段」。
+            float frac = NotePanelLayout.LaneCoverVisibleFraction(depth);
+            if (!Mathf.Approximately(frac, _laneCoverFracApplied))
+            {
+                int h = Mathf.Clamp(Mathf.RoundToInt(_laneCoverTex.height * frac), 1, _laneCoverTex.height);
+                var old = _laneCover.sprite;
+                _laneCover.sprite = Sprite.Create(_laneCoverTex, new Rect(0, 0, _laneCoverTex.width, h),
+                                                  new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);
+                if (old != null) Destroy(old);   // 只丟自己裁的 sprite，貼圖留給快取
+                _laneCoverFracApplied = frac;
+            }
+            // 🔴 位置鏡射、**圖不鏡射**：向下模式時帶子整個翻到板頂(LaneCoverBand 自己處理)，但 flipY 永遠 false ——
+            //    擋板是一張獨立的畫，翻過來就是一張上下顛倒的畫。(板子/軌條光/紅幕那幾張是「亮端對著受擊線」的
+            //    漸層，才需要跟著 _scrollSign 翻。)
+            //    裁出來那一段直接鋪滿帶子：帶高＝滿檔帶高×frac、圖高＝原圖高×frac，所以縱向比例恆定，
+            //    任何長度下都不會壓扁 —— 等於「圖的下緣釘在帶子下緣、露出下面 frac」。
+            _laneCover.flipY = false;
+            _panelLayout.LaneCoverBand(depth, out float top, out float bottom);
+            float trackW = LaneLeftX[Keys - 1] + 69f - LaneLeftX[0];   // 四條軌道，不含板子外框
+            SdoLayout.PlaceBox(_laneCover, PX(LaneLeftX[0]), top, trackW, bottom - top, 9f);
         }
 
         // a SpriteMask spanning the board's play band [_clipTopY, _clipBottomY] (向上 [30,600] / 向下 [0,570], mirrored
@@ -2867,6 +2931,7 @@ namespace Sdo.Game
             bool trackOn = on && !spectatorMode;
             _trackVisible = trackOn;   // UpdateHpBar 讀它早退 → 旁觀時不會被重新打開
             if (_board) _board.enabled = trackOn;
+            UpdateLaneCover();         // 擋板跟著板子一起藏/現(它自己讀 _trackVisible)
             // ShowTime mode has no HP bar (only the 集氣 energy gauge) — keep the whole HP widget hidden even when the
             // track is shown. UpdateHpBar also early-outs in ShowTime so it can't re-enable _hpGlow.
             bool hpOn = trackOn && !showtimeMode;
@@ -5539,6 +5604,7 @@ namespace Sdo.Game
             TickAmbient();      // intermittent per-scene ambience (sea/stadium/underwater/garden)
             UpdateFlyHover();   // 飛行翅膀:整場常駐懸浮(待機/跳舞/定格同高)
             if (_board) { if (!Mathf.Approximately(boardAlpha, _boardAlphaApplied)) ApplyBoardAlpha(); _board.flipY = _scrollSign < 0; SdoLayout.PlaceTopLeft(_board, PX(boardX), 0f, 10f); }   // live board opacity + X nudge + 向下上下翻 (PX = 面板位置 左/中)
+            UpdateLaneCover();   // 擋板:換圖/拉長度即時生效(圖只在 id 真的變了才重讀)
             // 測試用（已停用）：F9 開流速測試面板；Shift+F9 舞台背景上下翻轉的保險開關（RenderTexture 的 V 方向已依
             // graphicsUVStartsAtTop 自動判斷，但萬一這台機器仍然上下顛倒就用它救）。遊玩時會誤觸，需要時再解開。
             // if (Input.GetKeyDown(KeyCode.F9))

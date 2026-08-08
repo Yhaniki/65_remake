@@ -62,6 +62,56 @@ namespace Sdo.Tests
             RoomConfig.scrollBaseBpm = 130f;
             RoomConfig.hasScrollBaseBpmKey = false;
             RoomConfig.rankBasedFormation = true;
+            RoomConfig.laneCover = RoomConfig.laneCoverNone;
+            RoomConfig.laneCoverAmount = 0f;
+        }
+
+        // ---- 擋板（lane cover）：本機顯示設定，不進連線協定 ----
+
+        [Test]
+        public void LaneCover_Defaults_To_None_And_Zero_Length()
+        {
+            Assert.AreEqual(RoomConfig.laneCoverNone, RoomConfig.laneCover, "預設不蓋擋板");
+            Assert.AreEqual(0f, RoomConfig.laneCoverAmount, 1e-4f);
+            Assert.IsTrue(RoomConfig.IsLaneCoverNone(RoomConfig.laneCover));
+        }
+
+        [Test]
+        public void IsLaneCoverNone_Treats_Empty_As_None()
+        {
+            Assert.IsTrue(RoomConfig.IsLaneCoverNone(null));
+            Assert.IsTrue(RoomConfig.IsLaneCoverNone(""));
+            Assert.IsTrue(RoomConfig.IsLaneCoverNone("   "));
+            Assert.IsTrue(RoomConfig.IsLaneCoverNone(RoomConfig.laneCoverNone));
+            Assert.IsFalse(RoomConfig.IsLaneCoverNone("lane001.png"));
+        }
+
+        [Test]
+        public void LaneCover_Parses_And_RoundTrips()
+        {
+            RoomConfig.ParseInto("[Room]\nlaneCover=lane001.png\nlaneCoverAmount=42\n");
+            Assert.AreEqual("lane001.png", RoomConfig.laneCover);
+            Assert.AreEqual(42f, RoomConfig.laneCoverAmount, 1e-4f);
+
+            string ini = RoomConfig.Serialize();
+            Reset();
+            RoomConfig.ParseInto(ini);
+            Assert.AreEqual("lane001.png", RoomConfig.laneCover);
+            Assert.AreEqual(42f, RoomConfig.laneCoverAmount, 1e-4f);
+        }
+
+        [Test]
+        public void Sanitize_Clamps_LaneCover_Amount_And_Fills_Empty_Name()
+        {
+            RoomConfig.laneCover = "  ";
+            RoomConfig.laneCoverAmount = 500f;
+            RoomConfig.Sanitize();
+            Assert.AreEqual(RoomConfig.laneCoverNone, RoomConfig.laneCover, "空字串 → 清單的第一個選項");
+            Assert.AreEqual(100f, RoomConfig.laneCoverAmount, 1e-4f);
+
+            RoomConfig.laneCoverAmount = -30f;
+            RoomConfig.Sanitize();
+            Assert.AreEqual(0f, RoomConfig.laneCoverAmount, 1e-4f);
         }
 
         [Test]
