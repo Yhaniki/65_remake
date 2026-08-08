@@ -28,6 +28,13 @@ namespace Sdo.Game
         // DDRLOBBYSEL's AvtShow slot is 400×600 within the logical 800×600 frame → 2:3. Drives both the RT size and the
         // pinned camera aspect (see BuildCamera / RtSizing).
         public const float SlotW = 400f, SlotH = 600f;
+        // 這個實例實際用的槽位(預設 = 官方的 400×600)。**要在 Build 之前設定** —— BuildCamera 拿它算 RT 像素數
+        // 與釘死的 _cam.aspect,顯示端的 RawImage rect 比例必須跟它一致,否則角色會被拉扁。
+        //
+        // 為什麼要能改:官方槽位只有 400 邏輯 px 寬,而大型翅膀/道具展開後比那還寬 → 左右直接被 RT 邊界切掉
+        // (使用者回報:選男女畫面的翅膀被切)。呼叫端可以把槽位加寬(同時把 RawImage 一起加寬,中心不動)來換取
+        // 更大的水平視野:垂直 FOV 沒變 → **角色的大小與落點完全不動**,只是左右多看得到一些。
+        public float slotW = SlotW, slotH = SlotH;
         public float previewSupersample = RtSizing.DefaultSupersample;   // set to 1 for window-native resolution
 
         // off-stage park spot (own layer + own camera → no conflict with anything; a far spot is just tidy)
@@ -328,7 +335,7 @@ namespace Sdo.Game
             // RT follows the WINDOW (oversampled), not the slot's 2:3 aspect — the AvtShow slot is 400×600 of the logical
             // 800×600 frame, and Stretch mode scales those two axes by DIFFERENT factors, so a 2:3 RT ends up narrower
             // than the pixels it's shown across (see RtSizing). The 2:3 PROJECTION is pinned below instead.
-            RtSizing.SlotRtSize(Screen.width, Screen.height, SlotW, SlotH, previewSupersample, out int rtW, out int rtH);
+            RtSizing.SlotRtSize(Screen.width, Screen.height, slotW, slotH, previewSupersample, out int rtW, out int rtH);
             _rtTrack.Reset(Screen.width, Screen.height);
             _rt = new RenderTexture(rtW, rtH, 24) { name = "genderPreviewRT", antiAliasing = 4, filterMode = FilterMode.Bilinear };
             var camGo = new GameObject("GenderPreviewCam") { layer = PreviewLayer };
@@ -341,17 +348,17 @@ namespace Sdo.Game
             _cam.targetTexture = _rt;
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = new Color(0f, 0f, 0f, 0f);   // transparent → only the dancer shows over the LOBBYSEL art
-            _cam.aspect = SlotW / SlotH;                        // pin the slot's 2:3 (the RT is window-shaped now)
+            _cam.aspect = slotW / slotH;                        // pin the slot aspect (the RT is window-shaped now)
         }
 
         /// <summary>Window resize → re-allocate the preview RT (same instance, so the screen's RawImage stays wired).
         /// Debounced via <see cref="RtResizeTracker"/>; the aspect pin is re-applied in case anything reset it.</summary>
         private void MaintainRt()
         {
-            if (_cam != null) _cam.aspect = SlotW / SlotH;
+            if (_cam != null) _cam.aspect = slotW / slotH;
             if (_rt == null) return;
             if (!_rtTrack.Tick(Screen.width, Screen.height, Time.unscaledTime)) return;
-            RtSizing.SlotRtSize(Screen.width, Screen.height, SlotW, SlotH, previewSupersample, out int w, out int h);
+            RtSizing.SlotRtSize(Screen.width, Screen.height, slotW, slotH, previewSupersample, out int w, out int h);
             RtSizing.Apply(_rt, w, h);
         }
 

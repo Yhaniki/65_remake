@@ -25,8 +25,17 @@ namespace Sdo.UI.Screens
         public override ScreenId Id => ScreenId.GenderSel;
 
         // DDRLOBBYSEL.XML win5 coords (top-left pixel).
-        private static readonly Vector2 AvatarView = new Vector2(150f, 0f);   // AvtShow x/y
-        private static readonly Vector2 AvatarSize = new Vector2(400f, 600f); // AvtShow w/h
+        //
+        // 🔴 **3D 預覽的槽位比官方寬。** 官方 AvtShow 是 x=150 w=400(中心 x=350),但那 400 邏輯 px 就是這張
+        //    預覽 RT 的**取景邊界** —— 穿大型翅膀(天使翼那類)時翅膀比人寬得多,左右直接被切掉一截
+        //    (使用者回報)。改成以官方那個中心為心、往兩邊撐到**整個 800 邏輯寬都涵蓋得到**:
+        //    半寬 = max(350, 800−350) = 450 → 900×600(左緣 −100、右緣 800)。
+        //    加寬的是**水平視野**,不是人:GenderPreview3D 的取景是用垂直 FOV 算距離的,槽位變寬只會讓
+        //    相機左右多看到一些(見 GenderPreview3D.slotW 的註解),角色的大小與落點(中心仍在 x=350)完全不動。
+        public const float AvatarCenterX = 150f + 400f * 0.5f;                // 官方 AvtShow 槽位中心
+        public static readonly Vector2 AvatarSize =
+            new Vector2(2f * Mathf.Max(AvatarCenterX, RtSizing.LogicalW - AvatarCenterX), 600f);
+        public static readonly Vector2 AvatarView = new Vector2(AvatarCenterX - AvatarSize.x * 0.5f, 0f);
         private const float MaleX = 20f, FemaleX = 74f, CheckY = 530f;        // male/female CheckBox x/y
         private const float EnterX = 586f, QuitX = 684f, BtnY = 527f;         // 商城 / 登入 x/y
 
@@ -103,8 +112,11 @@ namespace Sdo.UI.Screens
             UiSfx.AttachClick(shop);    // 按下 → SE_0001
             UIKit.SetAlphaHit(shop.targetGraphic);
 
-            // Official AvtShow is composited over the lobby chrome; keep the transparent RT on top.
-            if (_previewImg != null) _previewImg.transform.SetAsLastSibling();
+            // 🔴 **3D 預覽壓在 UI 底下** —— 它建在 BG 之後、上面這些 UI 之前,所以什麼都不用做
+            //    (以前這裡有一行 SetAsLastSibling 把它拉到最上層,已經拿掉)。
+            //    理由:預覽槽位加寬到整個 800 寬之後(見 AvatarSize),那張透明 RT 覆蓋的是**全畫面** ——
+            //    留在最上層的話,展開的翅膀會蓋掉右側的輸入模式面板與右下角的登入/商城鈕。
+            //    官方 AvtShow 疊在 chrome 之上是因為它只有 400 寬、碰不到那些 UI;槽位一加寬,那個順序就不成立了。
         }
 
         public override void OnShow()
@@ -122,6 +134,10 @@ namespace Sdo.UI.Screens
             {
                 var go = new GameObject("GenderPreview3D");
                 _preview = go.AddComponent<GenderPreview3D>();
+                // 槽位一定要在 Build(建相機+RT)**之前**定下來:它同時決定 RT 的像素數與釘死的相機 aspect,
+                // 而那個 aspect 必須等於底下 _previewImg 的 rect 比例,否則角色會被拉扁(見 AvatarSize 的註解)。
+                _preview.slotW = AvatarSize.x;
+                _preview.slotH = AvatarSize.y;
                 _preview.Build(_gender, fParts, mParts, _bodyIndex[0], _bodyIndex[1]);
             }
             else
